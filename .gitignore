@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 数据库文件（代码与数据分离：所有 .db 永不进 git）
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# 备份归档与导出产物
+backups/
+exports/
+
+# 环境变量与密钥
+.env
+.env.*
+
+# IDE / 编辑器
+.idea/
+.vscode/
+
+# 操作系统杂项
+Thumbs.db
+.DS_Store
+
+# ZCode 临时文件夹
+.XMTEMP/
+
+# 注：static/ 下的 pico.css 与 chart.umd.js 为有意提交的本地依赖，勿加入忽略
