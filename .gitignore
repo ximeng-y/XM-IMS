@@ -8,6 +8,7 @@ build/
 venv/
 
 # 数据库文件（代码与数据分离：所有 .db 永不进 git）
+data/
 *.db
 *.db-wal
 *.db-shm
