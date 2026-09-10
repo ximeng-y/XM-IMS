@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}单品{% endblock %}
+{% block nav %}items{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>单品（SKU）管理</h1>
+    <div class="sub">库存 = SUM(movements)；自定义字段值随表单动态生成，percent 收发用百分数值（25 = 25%）</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>新建单品</h2>
+  <form novalidate id="fCreate">
+    <div class="form-grid">
+      <div>
+        <label>SKU 名称 <span class="fieldreq">*</span></label>
+        <input id="itName" maxlength="200" placeholder="如：白 / L 码" autocomplete="off">
+      </div>
+      <div>
+        <label>SPU 归属 <span class="fieldreq">*</span></label>
+        <select id="itSpuMode">
+          <option value="pick">选择已有 SPU</option>
+          <option value="name">输入名称（不存在则自动创建）</option>
+        </select>
+      </div>
+      <div>
+        <label id="itSpuPickLabel" for="itSpuPick">已有 SPU</label>
+        <select id="itSpuPick"></select>
+        <input id="itSpuName" maxlength="200" placeholder="如：纯棉 T 恤" autocomplete="off" style="display:none">
+      </div>
+    </div>
+    <div id="itValueGrid" class="form-grid" style="margin-top:.9rem"></div>
+    <div style="margin-top:1rem"><button type="submit" class="btn-sm">创建单品</button></div>
+    <div class="hint">留空的字段值不会提交；创建响应会提示 SPU 是否为自动新建</div>
+  </form>
+  <div id="createResult"></div>
+</div>
+
+<div class="panel">
+  <h2>单品列表</h2>
+  <div class="form-grid" style="margin-bottom:1rem">
+    <div>
+      <label for="fltQ">名称搜索（子串模糊）</label>
+      <input id="fltQ" placeholder="输入后回车或点查询" autocomplete="off">
+    </div>
+    <div>
+      <label for="fltSpu">按 SPU 筛选</label>
+      <select id="fltSpu"><option value="">全部 SPU</option></select>
+    </div>
+    <div style="padding-bottom:.2rem"><button id="btnFilter" type="button" class="btn-outline btn-sm">查询</button></div>
+  </div>
+  <div class="table-scroll">
+    <table>
+      <thead id="itemHead"><tr><th class="num">ID</th><th>名称</th><th>SPU</th><th class="num">库存</th><th style="width:90px">操作</th></tr></thead>
+      <tbody id="itemRows"><tr><td colspan="5" class="t-empty">加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="itemPager"></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/pages/items.js"></script>{% endblock %}

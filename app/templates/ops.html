@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}库存操作{% endblock %}
+{% block nav %}ops{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>库存操作</h1>
+    <div class="sub">入库 / 出库 / 盘点调整 —— 追加不可变流水；支持 dry_run 预览与幂等键防重</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:1.5rem;align-items:start">
+
+  <!-- 入库 -->
+  <div class="panel" style="margin-bottom:0">
+    <h2>入库（POST /inbound）</h2>
+    <form novalidate id="fIn">
+      <div class="form-grid" style="grid-template-columns:1fr">
+        <div><label>单品 <span class="fieldreq">*</span></label><select id="inItem" class="itemPick"></select><div class="hint" data-qty></div></div>
+        <div><label>数量 <span class="fieldreq">*</span></label><input id="inQty" type="number" min="1" step="1" value="1"></div>
+        <div><label>采购单价（元）</label><input id="inPrice" type="number" min="0" step="0.01" placeholder="可空"></div>
+        <div><label>批次号</label><input id="inBatch" maxlength="100" autocomplete="off"></div>
+        <div><label>供应商</label><input id="inSupplier" maxlength="100" autocomplete="off"></div>
+        <div><label>备注</label><input id="inNote" maxlength="200" autocomplete="off"></div>
+      </div>
+      <div class="form-check" style="margin-top:.8rem"><input id="inDry" type="checkbox"><label for="inDry" style="margin:0">dry_run 预览（只校验不落库）</label></div>
+      <div style="display:flex;align-items:center;gap:.6rem;margin-top:.4rem">
+        <button type="submit" class="btn-sm">提交入库</button>
+        <span class="muted" style="font-size:.75rem">幂等键 <code class="mono" data-key></code></span>
+        <button type="button" class="btn-outline btn-sm" data-regen title="重新生成幂等键">↻</button>
+      </div>
+    </form>
+    <div data-result></div>
+  </div>
+
+  <!-- 出库 -->
+  <div class="panel" style="margin-bottom:0">
+    <h2>出库（POST /outbound）</h2>
+    <form novalidate id="fOut">
+      <div class="form-grid" style="grid-template-columns:1fr">
+        <div><label>单品 <span class="fieldreq">*</span></label><select id="outItem" class="itemPick"></select><div class="hint" data-qty></div></div>
+        <div><label>数量 <span class="fieldreq">*</span></label><input id="outQty" type="number" min="1" step="1" value="1"></div>
+        <div><label>成交单价（元）</label><input id="outPrice" type="number" min="0" step="0.01" placeholder="可空"></div>
+        <div><label>销售渠道</label><input id="outChannel" maxlength="100" autocomplete="off" placeholder="如：闲鱼 / 微信"></div>
+        <div><label>客户信息</label><input id="outCustomer" maxlength="100" autocomplete="off"></div>
+        <div><label>备注</label><input id="outNote" maxlength="200" autocomplete="off"></div>
+      </div>
+      <div class="form-check" style="margin-top:.8rem"><input id="outDry" type="checkbox"><label for="outDry" style="margin:0">dry_run 预览（只校验不落库）</label></div>
+      <div style="display:flex;align-items:center;gap:.6rem;margin-top:.4rem">
+        <button type="submit" class="btn-sm">提交出库</button>
+        <span class="muted" style="font-size:.75rem">幂等键 <code class="mono" data-key></code></span>
+        <button type="button" class="btn-outline btn-sm" data-regen title="重新生成幂等键">↻</button>
+      </div>
+    </form>
+    <div data-result></div>
+  </div>
+
+  <!-- 盘点 -->
+  <div class="panel" style="margin-bottom:0">
+    <h2>盘点调整（POST /adjust）</h2>
+    <form novalidate id="fAdj">
+      <div class="form-grid" style="grid-template-columns:1fr">
+        <div><label>单品 <span class="fieldreq">*</span></label><select id="adjItem" class="itemPick"></select><div class="hint" data-qty></div></div>
+        <div><label>目标库存 <span class="fieldreq">*</span></label><input id="adjTarget" type="number" min="0" step="1" value="0"></div>
+        <div><label>备注</label><input id="adjNote" maxlength="200" autocomplete="off"></div>
+      </div>
+      <div class="hint">填「盘点后的应有数量」；系统自动记录 目标−当前 的带符号增量，与当前相同则报 400</div>
+      <div class="form-check" style="margin-top:.8rem"><input id="adjDry" type="checkbox"><label for="adjDry" style="margin:0">dry_run 预览（只校验不落库）</label></div>
+      <div style="display:flex;align-items:center;gap:.6rem;margin-top:.4rem">
+        <button type="submit" class="btn-sm">提交盘点</button>
+        <span class="muted" style="font-size:.75rem">幂等键 <code class="mono" data-key></code></span>
+        <button type="button" class="btn-outline btn-sm" data-regen title="重新生成幂等键">↻</button>
+      </div>
+    </form>
+    <div data-result></div>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/pages/ops.js"></script>{% endblock %}

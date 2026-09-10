@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}概览{% endblock %} · XM-IMS 验证前端</title>
+  <link rel="stylesheet" href="/static/vendor/pico.min.css?v=1">
+  <link rel="stylesheet" href="/static/css/app.css?v=7">
+</head>
+<body data-page="{% block nav %}{% endblock %}">
+<header class="topbar">
+  <a class="brand" href="/"><span class="logo">X</span>XM-IMS<span class="muted" style="font-size:.72rem;font-weight:400">验证前端</span></a>
+  <div class="spacer"></div>
+  <div class="shop-box">
+    <label for="shopSelect" class="muted" style="font-size:.85rem;margin:0">店铺</label>
+    <select id="shopSelect"></select>
+    <button id="btnNewShop" type="button" class="btn-outline btn-sm">＋ 新建店铺</button>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidenav">
+    <a href="/" data-nav="overview">概览</a>
+    <a href="/items" data-nav="items">单品</a>
+    <a href="/spus" data-nav="spus">SPU</a>
+    <a href="/fields" data-nav="fields">字段</a>
+    <a href="/ops" data-nav="ops">库存操作</a>
+    <a href="/movements" data-nav="movements">流水</a>
+  </nav>
+  <main class="content fade-in">
+    <div id="noShopBox" class="no-shop" hidden>
+      当前还没有店铺。点击右上角 <b>＋ 新建店铺</b> 创建一个（多店铺可用于验证数据隔离），即可开始使用下方功能。
+    </div>
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<div id="toasts"></div>
+<script src="/static/js/api.js?v=1"></script>
+<script src="/static/js/ui.js?v=3"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

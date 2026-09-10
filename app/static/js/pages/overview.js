@@ -1,0 +1,38 @@
+/* 概览页：关键指标 + 最近流水 */
+"use strict";
+
+window.PAGE_INIT = async function () {
+  if (!UI.requireShop()) return;
+  const safe = (label, p) => p.catch((e) => { UI.apiFail(e, label); return null; });
+
+  const [items, movs, spus, fields] = await Promise.all([
+    safe("查询单品总数", XM.get("/items?limit=1")),
+    safe("查询流水", XM.get("/movements?limit=5")),
+    safe("查询 SPU", XM.get("/spus")),
+    safe("查询字段", XM.get("/fields")),
+  ]);
+  $("#stItems").textContent = items ? items.total : "—";
+  $("#stSpus").textContent = spus ? spus.spus.length : "—";
+  $("#stFields").textContent = fields ? fields.fields.filter((f) => !f.system).length : "—";
+  $("#stMovs").textContent = movs ? movs.total : "—";
+
+  if (!movs) return;
+  const tbody = $("#recentMovs");
+  if (!movs.movements.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="t-empty">还没有流水，去「库存操作」记一笔</td></tr>`;
+    return;
+  }
+  const typeBadge = { in: `<span class="badge green">入库</span>`,
+                      out: `<span class="badge red">出库</span>`,
+                      adjust: `<span class="badge gray">盘点</span>` };
+  tbody.innerHTML = movs.movements.map((m) => `
+    <tr>
+      <td class="mono">${m.id}</td>
+      <td>${UI.fmtTimeShort(m.created_at)}</td>
+      <td>${typeBadge[m.type] || UI.esc(m.type)}</td>
+      <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
+      <td class="num">${UI.fmtMoney(m.unit_price)}</td>
+      <td>${UI.fmtVal(m.supplier || m.channel)}</td>
+      <td>${UI.fmtVal(m.note)}</td>
+    </tr>`).join("");
+};

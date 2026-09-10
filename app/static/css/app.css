@@ -1,0 +1,365 @@
+/* XM-IMS 验证前端样式：Pico.css 覆盖（蓝白主色 / 直角 / 无阴影）+ 页面布局 */
+
+/* ---------- Pico 变量覆盖 ----------
+   Pico 的亮/暗色板用 :root:not([data-theme=dark])（特异性 0,2,0）定义，
+   普通 :root 覆盖不动它，这里用同级特异性 + 后加载顺序取胜 */
+:root:root {
+  --blue: #1a5fb4;
+  --blue-dark: #164d92;
+  --blue-pale: #eef4fb;
+  --blue-pale-2: #e2ecf7;
+  --line: #c9d7e8;
+  --line-light: #dbe4ef;
+  --ink: #1c2733;
+  --ink-soft: #5a6b7d;
+  --danger: #b3322e;
+  --ok: #1c7d43;
+
+  --pico-primary: var(--blue);
+  --pico-primary-background: var(--blue);
+  --pico-primary-hover: var(--blue-dark);
+  --pico-primary-hover-background: var(--blue-dark);
+  --pico-primary-focus: rgba(26, 95, 180, 0.35);
+  --pico-primary-inverse: #fff;
+  --pico-color: var(--ink);
+  --pico-background-color: #f7fafd;
+  --pico-muted-color: var(--ink-soft);
+  --pico-muted-border-color: var(--line);
+  --pico-form-element-background-color: #fff;
+  --pico-card-background-color: #fff;
+  --pico-card-border-color: var(--line-light);
+  --pico-border-radius: 0;
+  --pico-border-width: 1px;
+  --pico-box-shadow: none;
+  --pico-typography-spacing-vertical: 1rem;
+}
+
+/* Pico 会把 button[type=submit] 拉成 100% 宽，压回内容宽度；按钮文字不换行 */
+button[type=submit] { width: auto; }
+button, .btn { white-space: nowrap; }
+
+/* 直角 + 无阴影兜底（部分组件不走变量） */
+button, input, select, textarea, [role="button"], dialog, article, table,
+details, summary, .pico-container {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* ---------- 通用动效 ---------- */
+button, .btn, a, tr, summary, input, select, textarea {
+  transition: background-color .15s ease, color .15s ease,
+              border-color .15s ease, transform .08s ease;
+}
+button:not(:disabled):active, .btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* ---------- 布局骨架 ---------- */
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.25rem;
+  height: 56px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.topbar .brand {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--blue);
+  letter-spacing: .5px;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+.topbar .brand .logo {
+  width: 22px; height: 22px;
+  background: var(--blue);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .8rem;
+  font-weight: 700;
+}
+.topbar .spacer { flex: 1; }
+.topbar .shop-box {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+.topbar .shop-box select { margin: 0; max-width: 220px; }
+.topbar button { white-space: nowrap; }
+.topbar .shop-box label { white-space: nowrap; margin: 0; }
+
+.layout {
+  display: flex;
+  align-items: flex-start;
+  min-height: calc(100vh - 56px);
+}
+.sidenav {
+  width: 168px;
+  flex: none;
+  background: #fff;
+  border-right: 1px solid var(--line);
+  padding: 1rem .75rem;
+  display: flex;
+  flex-direction: column;
+  /* Pico 的 nav{justify-content:space-between} 会按侧栏高度均摊菜单项，
+     宽屏下间距可达 300px 以上，这里显式压回顶部对齐 */
+  justify-content: flex-start;
+  gap: 2px;
+  /* 侧栏独立于文档滚动：固定在顶栏下方，内容超长时自身滚动 */
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+}
+.sidenav a {
+  display: block;
+  padding: .5rem .75rem;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: .95rem;
+  border-left: 3px solid transparent;
+}
+.sidenav a:hover { background: var(--blue-pale); }
+.sidenav a.active {
+  background: var(--blue-pale);
+  border-left-color: var(--blue);
+  color: var(--blue);
+  font-weight: 600;
+}
+main.content {
+  flex: 1;
+  padding: 1.5rem 1.75rem 3rem;
+  max-width: 1180px;
+  min-width: 0;
+  /* 宽屏下居中，避免内容全部左挂、右侧大片留白 */
+  margin-inline: auto;
+}
+main.content.fade-in { animation: fadeIn .25s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+/* ---------- 区块与标题 ---------- */
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+.page-head h1 { margin: 0; font-size: 1.35rem; color: var(--ink); }
+.page-head .sub { color: var(--ink-soft); font-size: .85rem; margin-top: .25rem; }
+
+.panel {
+  background: #fff;
+  border: 1px solid var(--line-light);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.panel > h2 {
+  font-size: 1rem;
+  margin: 0 0 1rem;
+  color: var(--blue-dark);
+  border-bottom: 1px solid var(--blue-pale-2);
+  padding-bottom: .5rem;
+}
+
+/* ---------- 表格 ---------- */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 620px; }
+table { width: 100%; font-size: .9rem; margin: 0; }
+thead th {
+  background: var(--blue-pale);
+  color: var(--blue-dark);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line) !important;
+  white-space: nowrap;
+}
+tbody td { border-bottom: 1px solid var(--line-light) !important; padding: .55rem .75rem; }
+tbody tr:hover { background: var(--blue-pale); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.t-empty { color: var(--ink-soft); text-align: center; padding: 1.5rem 0 !important; }
+
+/* ---------- 徽标 / 标签 ---------- */
+.badge {
+  display: inline-block;
+  font-size: .72rem;
+  line-height: 1;
+  padding: .28em .55em;
+  border: 1px solid var(--blue);
+  color: var(--blue);
+  background: #fff;
+  vertical-align: middle;
+}
+.badge.fill { background: var(--blue); color: #fff; }
+.badge.gray { border-color: var(--line); color: var(--ink-soft); }
+.badge.red { border-color: var(--danger); color: var(--danger); }
+.badge.green { border-color: var(--ok); color: var(--ok); }
+.pos { color: var(--ok); }
+.neg { color: var(--danger); }
+.muted { color: var(--ink-soft); }
+.mono { font-family: Consolas, "Courier New", monospace; font-size: .85em; }
+
+/* ---------- 按钮 ---------- */
+button { margin-bottom: 0; }
+.btn-sm { padding: .25rem .7rem; font-size: .82rem; }
+.btn-outline {
+  background: #fff;
+  color: var(--blue);
+  border: 1px solid var(--blue);
+}
+.btn-outline:hover { background: var(--blue-pale); color: var(--blue-dark); border-color: var(--blue-dark); }
+.btn-danger-outline {
+  background: #fff; color: var(--danger); border: 1px solid var(--danger);
+}
+.btn-danger-outline:hover { background: #fdf0ef; color: #8f2a27; }
+.btn:disabled, button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---------- 表单 ---------- */
+form { margin: 0; }
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: .9rem 1.1rem;
+  align-items: end;
+}
+.form-grid label { margin-bottom: .3rem; font-size: .85rem; color: var(--ink-soft); }
+input, select { margin-bottom: 0; }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--blue) !important;
+  outline: 2px solid rgba(26, 95, 180, .18);
+}
+.form-check {
+  display: flex; align-items: center; gap: .5rem;
+  font-size: .88rem; color: var(--ink);
+  padding-bottom: .55rem;
+}
+.form-check input[type="checkbox"] { width: auto; margin: 0; }
+.hint { font-size: .78rem; color: var(--ink-soft); margin-top: .25rem; }
+.fieldreq { color: var(--danger); }
+
+/* ---------- 结果 / 反馈 ---------- */
+.result-box {
+  border: 1px solid var(--line);
+  background: var(--blue-pale);
+  padding: .9rem 1rem;
+  font-size: .88rem;
+  margin-top: 1rem;
+  animation: fadeIn .2s ease;
+}
+.result-box.error-box { background: #fdf0ef; border-color: var(--danger); }
+.result-box pre {
+  margin: .5rem 0 0; padding: .6rem .8rem;
+  background: #fff; border: 1px solid var(--line-light);
+  overflow: auto; max-height: 260px; font-size: .78rem;
+}
+.result-box .headline { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
+
+/* ---------- toast ---------- */
+#toasts {
+  position: fixed; right: 1rem; bottom: 1rem;
+  display: flex; flex-direction: column; gap: .5rem;
+  z-index: 100; max-width: 380px;
+}
+.toast {
+  background: #fff; border: 1px solid var(--blue);
+  border-left: 4px solid var(--blue);
+  padding: .7rem .95rem; font-size: .87rem;
+  animation: toastIn .22s ease;
+  box-shadow: none;
+}
+.toast.error { border-color: var(--danger); border-left-color: var(--danger); }
+.toast.error .t-title { color: var(--danger); }
+.toast .t-title { font-weight: 700; color: var(--blue-dark); }
+.toast .t-hint { color: var(--ink-soft); font-size: .8rem; margin-top: .2rem; }
+.toast.fade-out { opacity: 0; transition: opacity .3s ease; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; } }
+
+/* ---------- 模态 ---------- */
+dialog::backdrop { background: rgba(28, 39, 51, .35); }
+dialog[open] { animation: fadeIn .18s ease; }
+dialog { border: 1px solid var(--line); padding: 0; }
+dialog .dlg-body { padding: 1.25rem 1.5rem; }
+dialog .dlg-head {
+  padding: .8rem 1.5rem;
+  background: var(--blue-pale);
+  color: var(--blue-dark);
+  font-weight: 700;
+  border-bottom: 1px solid var(--line);
+}
+dialog .dlg-foot {
+  display: flex; justify-content: flex-end; gap: .6rem;
+  padding: .8rem 1.5rem;
+  border-top: 1px solid var(--line-light);
+}
+
+/* ---------- 加载态 ---------- */
+.loading { display: inline-block; width: 16px; height: 16px;
+  border: 2px solid var(--blue-pale-2); border-top-color: var(--blue);
+  animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.busy { position: relative; }
+.busy::after {
+  content: ""; position: absolute; inset: 0;
+  background: rgba(255,255,255,.6);
+  display: flex;
+}
+
+/* ---------- 分页 ---------- */
+.pager {
+  display: flex; align-items: center; gap: .75rem;
+  justify-content: flex-end; margin-top: .9rem;
+  font-size: .85rem; color: var(--ink-soft);
+}
+
+/* ---------- 概览页 ---------- */
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.stat-card {
+  background: #fff; border: 1px solid var(--line-light);
+  border-top: 3px solid var(--blue);
+  padding: .9rem 1.1rem;
+}
+.stat-card .k { font-size: .8rem; color: var(--ink-soft); }
+.stat-card .v { font-size: 1.6rem; font-weight: 700; color: var(--blue-dark);
+  font-variant-numeric: tabular-nums; margin-top: .15rem; }
+
+/* 转换报告里的样例表 */
+.mini-table { font-size: .82rem; }
+.mini-table td, .mini-table th { padding: .3rem .55rem; }
+
+/* 无店铺时的引导横幅 */
+.no-shop {
+  border: 1px dashed var(--blue);
+  background: var(--blue-pale);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (max-width: 860px) {
+  /* 纵向堆叠时恢复拉伸，让横向导航条与内容区撑满宽度 */
+  .layout { flex-direction: column; align-items: stretch; }
+  /* 窄屏改横向导航，撤销桌面端的固定侧栏设定 */
+  .sidenav { width: auto; flex-direction: row; flex-wrap: wrap; border-right: none;
+             border-bottom: 1px solid var(--line);
+             position: static; top: auto; height: auto; overflow-y: visible; }
+  .sidenav a { border-left: none; border-bottom: 3px solid transparent; }
+  .sidenav a.active { border-bottom-color: var(--blue); }
+}

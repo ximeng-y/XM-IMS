@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}字段{% endblock %}
+{% block nav %}fields{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>自定义字段</h1>
+    <div class="sub">字段挂在店铺上；5 个系统字段只读不可删；数值类互转按「逻辑值不变」换算</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>新建字段</h2>
+  <form novalidate id="fCreate">
+    <div class="form-grid">
+      <div>
+        <label for="fldName">字段名称 <span class="fieldreq">*</span></label>
+        <input id="fldName" maxlength="50" placeholder="如：成本 / 售价 / 供应商" autocomplete="off">
+      </div>
+      <div>
+        <label for="fldType">类型</label>
+        <select id="fldType">
+          <option value="string">string 文本</option>
+          <option value="bool">bool 开关</option>
+          <option value="int">int 整数</option>
+          <option value="decimal" selected>decimal 小数</option>
+          <option value="percent">percent 百分比</option>
+        </select>
+      </div>
+      <div>
+        <label for="fldScale">小数位（仅 decimal）</label>
+        <input id="fldScale" type="number" min="0" max="6" value="2">
+      </div>
+      <div style="padding-bottom:.55rem">
+        <span class="form-check"><input id="fldNeg" type="checkbox"><label for="fldNeg" style="margin:0">允许负数（仅数值类）</label></span>
+      </div>
+      <div><button type="submit" class="btn-sm">创建</button></div>
+    </div>
+    <div class="hint">percent 显示语义为百分数值：25 表示 25%；string / bool 与数值类不可互转（转换需确认清空）</div>
+  </form>
+  <div id="createResult"></div>
+</div>
+
+<div class="panel">
+  <h2>字段列表</h2>
+  <div class="table-scroll">
+    <table>
+      <thead><tr>
+        <th>标记</th><th class="num">ID</th><th>名称</th><th>类型</th>
+        <th>允许负数</th><th class="num">小数位</th><th style="width:190px">操作</th>
+      </tr></thead>
+      <tbody id="fieldRows"><tr><td colspan="7" class="t-empty">加载中…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/pages/fields.js"></script>{% endblock %}

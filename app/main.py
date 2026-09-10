@@ -1,10 +1,11 @@
-"""应用入口：create_app() 组装 /api/v1 路由、错误处理与数据目录初始化
+"""应用入口：create_app() 组装 /api/v1 路由、验证前端页面、错误处理与数据目录初始化
 
 启动：uvicorn app.main:app --port 8000
 """
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
-from . import db
+from . import db, web
 from .api.v1 import router as v1_router
 from .errors import register_error_handlers
 
@@ -21,6 +22,9 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
     app.include_router(v1_router, prefix="/api/v1")
+    # 验证前端：页面路由（web.py）+ 静态资源
+    app.include_router(web.router)
+    app.mount("/static", StaticFiles(directory=web.STATIC_DIR), name="static")
     register_error_handlers(app)
     db.init()
     return app

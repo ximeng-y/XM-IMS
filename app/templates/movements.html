@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}流水{% endblock %}
+{% block nav %}movements{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>库存流水</h1>
+    <div class="sub">不可变 movement 流水（最新在前）；出入库趋势即此表的数量与金额汇总</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>查询条件</h2>
+  <div class="form-grid">
+    <div>
+      <label for="fltItem">单品</label>
+      <select id="fltItem"><option value="">全部单品</option></select>
+    </div>
+    <div>
+      <label for="fltType">类型</label>
+      <select id="fltType">
+        <option value="">全部</option>
+        <option value="in">in 入库</option>
+        <option value="out">out 出库</option>
+        <option value="adjust">adjust 盘点</option>
+      </select>
+    </div>
+    <div style="padding-bottom:.2rem"><button id="btnQuery" type="button" class="btn-outline btn-sm">查询</button></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>流水明细</h2>
+  <div class="table-scroll">
+    <table>
+      <thead><tr>
+        <th class="num">ID</th><th>时间</th><th class="num">单品</th><th>类型</th><th class="num">数量</th>
+        <th class="num">单价</th><th>批次</th><th>供应商</th><th>渠道</th><th>客户</th>
+        <th class="num">目标库存</th><th>备注</th><th>操作者</th>
+      </tr></thead>
+      <tbody id="movRows"><tr><td colspan="13" class="t-empty">加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="movPager"></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/pages/movements.js"></script>{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}概览{% endblock %}
+{% block nav %}overview{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>概览</h1>
+    <div class="sub">当前店铺关键数据与最近流水（数据均来自 /api/v1 实时查询）</div>
+  </div>
+</div>
+
+<div class="stat-cards" id="statCards">
+  <div class="stat-card"><div class="k">单品（SKU）</div><div class="v" id="stItems">—</div></div>
+  <div class="stat-card"><div class="k">SPU</div><div class="v" id="stSpus">—</div></div>
+  <div class="stat-card"><div class="k">自定义字段</div><div class="v" id="stFields">—</div></div>
+  <div class="stat-card"><div class="k">库存流水</div><div class="v" id="stMovs">—</div></div>
+</div>
+
+<div class="panel">
+  <h2>最近流水（最新 8 条）</h2>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>ID</th><th>时间</th><th>类型</th><th class="num">数量</th><th class="num">单价</th><th>供应商 / 渠道</th><th>备注</th></tr></thead>
+      <tbody id="recentMovs"><tr><td colspan="7" class="t-empty">加载中…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>快捷入口</h2>
+  <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+    <a href="/items" role="button" class="btn-outline">新建单品</a>
+    <a href="/ops" role="button" class="btn-outline">入库</a>
+    <a href="/ops" role="button" class="btn-outline">出库</a>
+    <a href="/ops" role="button" class="btn-outline">盘点调整</a>
+    <a href="/movements" role="button" class="btn-outline">查流水</a>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/pages/overview.js"></script>{% endblock %}
