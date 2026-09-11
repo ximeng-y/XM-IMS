@@ -38,6 +38,14 @@
 button[type=submit] { width: auto; }
 button, .btn { white-space: nowrap; }
 
+/* 表单控件底部外边距清零。Pico 给 input 加的是
+   input:not([type=checkbox],[type=radio])（:not() 的参数计入特异性 → 0,1,1），
+   给按钮加的是 [type=submit]/[type=button]（0,1,0），裸 input / button 选择器
+   都压不过它们。残留的 margin-bottom:var(--pico-spacing) 使同一行内 input 比
+   select 低 20px，而 .form-grid 用 align-items:end 对齐 margin box，整行因此错位 */
+input:not([type=checkbox]):not([type=radio]), select, textarea,
+[type=button], [type=reset], [type=submit], [role=button], button { margin-bottom: 0; }
+
 /* 直角 + 无阴影兜底（部分组件不走变量） */
 button, input, select, textarea, [role="button"], dialog, article, table,
 details, summary, .pico-container {
@@ -98,7 +106,14 @@ body {
   align-items: center;
   gap: .5rem;
 }
-.topbar .shop-box select { margin: 0; max-width: 220px; }
+.topbar .shop-box select {
+  margin: 0;
+  max-width: 220px;
+  /* Pico 的控件高度 = 1rem × 行高 + 上下内边距 × 2 + 边框 × 2 = 62px，比 56px 的顶栏
+     还高，居中后上下各溢出 3px；压小纵向内边距把它收回顶栏内（46px） */
+  --pico-form-element-spacing-vertical: .35rem;
+  --pico-form-element-spacing-horizontal: .6rem;
+}
 .topbar button { white-space: nowrap; }
 .topbar .shop-box label { white-space: nowrap; margin: 0; }
 
@@ -237,7 +252,6 @@ form { margin: 0; }
   align-items: end;
 }
 .form-grid label { margin-bottom: .3rem; font-size: .85rem; color: var(--ink-soft); }
-input, select { margin-bottom: 0; }
 input:focus, select:focus, textarea:focus {
   border-color: var(--blue) !important;
   outline: 2px solid rgba(26, 95, 180, .18);
