@@ -200,12 +200,16 @@ thead th {
   background: var(--blue-pale);
   color: var(--blue-dark);
   font-weight: 600;
+  padding: .55rem .75rem;
   border-bottom: 1px solid var(--line) !important;
   white-space: nowrap;
 }
 tbody td { border-bottom: 1px solid var(--line-light) !important; padding: .55rem .75rem; }
 tbody tr:hover { background: var(--blue-pale); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* .num 只表示等宽数字，不参与对齐（对齐统一由下方 .table-scroll 规则决定） */
+td.num, th.num { font-variant-numeric: tabular-nums; }
+/* 表头与表体统一水平居中、垂直居中；作用域覆盖各列表页的表格容器 */
+.table-scroll th, .table-scroll td { text-align: center; vertical-align: middle; }
 .t-empty { color: var(--ink-soft); text-align: center; padding: 1.5rem 0 !important; }
 
 /* ---------- 徽标 / 标签 ---------- */
