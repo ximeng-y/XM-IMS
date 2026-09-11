@@ -2,8 +2,8 @@
 "use strict";
 
 const TYPE_LABEL = {
-  string: "string 文本", bool: "bool 开关", int: "int 整数",
-  decimal: "decimal 小数", percent: "percent 百分比",
+  string: "文本", bool: "开关", int: "整数",
+  decimal: "小数", percent: "百分比",
 };
 const ROUND_LABEL = { ceil: "向上取整", floor: "向下取整", round: "四舍五入" };
 
@@ -97,7 +97,7 @@ function convertFlow(f) {
       <div>
         <label>目标类型</label>
         <select id="cvType">
-          <option value="">（保持 ${TYPE_LABEL[f.type]}）</option>
+          <option value="">（保持：${TYPE_LABEL[f.type]}）</option>
           ${Object.entries(TYPE_LABEL).map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}
         </select>
       </div>
