@@ -102,7 +102,7 @@ function convertFlow(f) {
         </select>
       </div>
       <div>
-        <label>目标小数位（仅 decimal）</label>
+        <label>目标小数位（仅小数类型）</label>
         <input id="cvScale" type="number" min="0" max="6" placeholder="${f.type === "decimal" ? "默认沿用 " + f.scale : "默认 2"}">
       </div>
       <div>
@@ -123,7 +123,7 @@ function convertFlow(f) {
     </div>
     <div class="form-check" id="cvClearRow" style="display:none;margin-top:.8rem">
       <input id="cvClear" type="checkbox"><label for="cvClear" style="margin:0;color:var(--danger)">
-        我确认转换将<b>清空该字段的全部值</b>（string/bool 与数值类不可互转）</label>
+        我确认转换将<b>清空该字段的全部值</b>（文本 / 开关与数值类不可互转）</label>
     </div>
     <div id="cvReport"></div>
     <div id="cvError"></div>`;

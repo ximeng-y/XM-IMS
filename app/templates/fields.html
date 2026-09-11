@@ -28,13 +28,13 @@
         </select>
       </div>
       <div>
-        <label for="fldScale">小数位（仅 decimal）</label>
+        <label for="fldScale">小数位（仅小数类型）</label>
         <input id="fldScale" type="number" min="0" max="6" value="2">
       </div>
     </div>
     <div class="form-check" style="margin-top:.8rem"><input id="fldNeg" type="checkbox"><label for="fldNeg" style="margin:0">允许负数（仅数值类）</label></div>
     <div style="margin-top:.4rem"><button type="submit" class="btn-sm">创建</button></div>
-    <div class="hint">percent 显示语义为百分数值：25 表示 25%；string / bool 与数值类不可互转（转换需确认清空）</div>
+    <div class="hint">百分比类型显示语义为百分数值：25 表示 25%；文本 / 开关与数值类不可互转（转换需确认清空）</div>
   </form>
   <div id="createResult"></div>
 </div>
@@ -52,4 +52,4 @@
   </div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/fields.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/js/pages/fields.js?v=1"></script>{% endblock %}
