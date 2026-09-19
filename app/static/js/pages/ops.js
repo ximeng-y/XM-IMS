@@ -1,10 +1,11 @@
-/* 库存操作页：入库 / 出库 / 盘点 —— dry_run 预览、幂等键、结构化错误展示 */
+/* 库存操作页：入库 / 出库 / 盘点 —— 幂等键后台防重、结构化错误展示 */
 "use strict";
 
 const $ = UI.$;
 
 let itemsCache = [];
 
+// 幂等键仅在后台生成与轮换，不再展示给用户
 const genKey = () => "web-" + (crypto.randomUUID
   ? crypto.randomUUID()
   : Date.now() + "-" + Math.random().toString(36).slice(2, 10));
@@ -15,18 +16,18 @@ const FORMS = [
     form: "#fIn", endpoint: "/inbound", label: "入库",
     fields: { qty: "#inQty", price: "#inPrice", batch: "#inBatch",
               supplier: "#inSupplier", note: "#inNote" },
-    item: "#inItem", dry: "#inDry",
+    item: "#inItem",
   },
   {
     form: "#fOut", endpoint: "/outbound", label: "出库",
     fields: { qty: "#outQty", price: "#outPrice", channel: "#outChannel",
               customer: "#outCustomer", note: "#outNote" },
-    item: "#outItem", dry: "#outDry",
+    item: "#outItem",
   },
   {
     form: "#fAdj", endpoint: "/adjust", label: "盘点调整",
     fields: { target: "#adjTarget", note: "#adjNote" },
-    item: "#adjItem", dry: "#adjDry",
+    item: "#adjItem",
   },
 ];
 
@@ -51,12 +52,12 @@ function showQtyHint(cfg) {
 }
 
 // 提交体拼装（三种操作共用骨架）
-function buildBody(cfg, { dryRun }) {
+function buildBody(cfg) {
   const form = document.querySelector(cfg.form);
   const body = {
     item_id: Number(document.querySelector(cfg.item).value),
     idempotency_key: form.dataset.key,
-    dry_run: dryRun,
+    dry_run: false,
   };
   const f = cfg.fields;
   if (!body.item_id) throw new Error("请选择单品");
@@ -93,14 +94,12 @@ const TYPE_BADGE = { in: `<span class="badge green">入库</span>`,
 function renderOpResult(box, cfg, res) {
   const m = res.movement;
   const badges = [
-    res.dry_run ? `<span class="badge">dry_run 预览</span>` : `<span class="badge fill">已执行</span>`,
+    `<span class="badge fill">已执行</span>`,
     res.idempotent_replay ? `<span class="badge red">幂等重放</span>` : "",
   ].join(" ");
-  const qtyLine = res.dry_run
-    ? `库存变化：<b>${res.current_qty}</b> → <b>${res.new_qty}</b>（预览，未落库）`
-    : `当前库存：<b>${res.current_qty}</b>`;
+  const qtyLine = `当前库存：<b>${res.current_qty}</b>`;
   const dl = [
-    ["流水 ID", m.id ?? "（预览无 ID）"],
+    ["流水 ID", m.id],
     ["类型", TYPE_BADGE[m.type] || UI.esc(m.type)],
     ["数量增量", UI.fmtDelta(m.qty_delta)],
     ["单价", UI.fmtMoney(m.unit_price)],
@@ -116,37 +115,24 @@ function renderOpResult(box, cfg, res) {
      <table class="mini-table" style="margin-top:.5rem">` +
     dl.map(([k, v]) => `<tr><td class="muted" style="width:5.625rem">${k}</td><td>${v}</td></tr>`).join("") +
     `</table>`;
-  if (res.dry_run) {
-    html += `<div style="margin-top:.8rem">
-      <button type="button" class="btn-sm" data-confirm-exec>确认执行（沿用同一幂等键）</button>
-      <span class="hint" style="display:inline">预览通过后可直接执行</span></div>`;
-  }
   box.innerHTML = html + `</div>`;
-
-  const execBtn = box.querySelector("[data-confirm-exec]");
-  if (execBtn) execBtn.addEventListener("click", () => submitOp(cfg, execBtn, false));
 }
 
-async function submitOp(cfg, btn, dryOverride) {
+async function submitOp(cfg, btn) {
   const form = document.querySelector(cfg.form);
   const box = form.parentElement.querySelector("[data-result]");
-  const dry = dryOverride !== undefined ? dryOverride
-            : document.querySelector(cfg.dry).checked;
   let body;
-  try { body = buildBody(cfg, { dryRun: dry }); }
+  try { body = buildBody(cfg); }
   catch (e) { UI.fail(e.message); return; }
   await UI.withBusy(btn, async () => {
     try {
       const res = await XM.post(cfg.endpoint, body);
       renderOpResult(box, cfg, res);
-      if (!res.dry_run) {
-        if (res.idempotent_replay) UI.toast("幂等键命中：返回首次提交的结果，未重复记账");
-        else UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
-        // 真实落库后换新幂等键，避免下次误重放
-        form.dataset.key = genKey();
-        form.querySelector("[data-key]").textContent = form.dataset.key;
-        await refreshPickers(String(body.item_id));
-      }
+      if (res.idempotent_replay) UI.toast("重复提交：返回首次提交的结果，未重复记账");
+      else UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
+      // 真实落库后换新幂等键，避免下次误重放
+      form.dataset.key = genKey();
+      await refreshPickers(String(body.item_id));
     } catch (e) {
       box.innerHTML = UI.apiFailHtml(e);
       UI.apiFail(e, `${cfg.label}失败`);
@@ -160,16 +146,10 @@ window.PAGE_INIT = async function () {
   FORMS.forEach((cfg) => {
     const form = document.querySelector(cfg.form);
     form.dataset.key = genKey();
-    form.querySelector("[data-key]").textContent = form.dataset.key;
-    form.querySelector("[data-regen]").addEventListener("click", () => {
-      form.dataset.key = genKey();
-      form.querySelector("[data-key]").textContent = form.dataset.key;
-    });
     document.querySelector(cfg.item).addEventListener("change", () => showQtyHint(cfg));
     form.addEventListener("submit", (ev) => {
       ev.preventDefault();
-      submitOp(cfg, ev.submitter || form.querySelector("button[type=submit]"),
-               document.querySelector(cfg.dry).checked);
+      submitOp(cfg, ev.submitter || form.querySelector("button[type=submit]"));
     });
   });
 

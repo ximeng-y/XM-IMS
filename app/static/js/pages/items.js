@@ -58,7 +58,6 @@ async function loadMeta() {
 
 function fillSpuSelects() {
   const opts = spusList.map((s) => `<option value="${s.id}">${UI.esc(s.name)}（#${s.id}）</option>`).join("");
-  $("#itSpuPick").innerHTML = opts || `<option value="">（还没有 SPU）</option>`;
   const flt = $("#fltSpu");
   const cur = flt.value;
   flt.innerHTML = `<option value="">全部 SPU</option>` + opts;
@@ -112,17 +111,67 @@ function renderTable(data) {
     }));
 }
 
-// ---------- 新建 ----------
+// ---------- 新建：SPU 可搜索组合框 ----------
 function setupCreateForm() {
-  const mode = $("#itSpuMode"), pick = $("#itSpuPick"), nameInp = $("#itSpuName");
-  const syncMode = () => {
-    const isPick = mode.value === "pick";
-    pick.style.display = isPick ? "" : "none";
-    nameInp.style.display = isPick ? "none" : "";
-    $("#itSpuPickLabel").textContent = isPick ? "已有 SPU" : "SPU 名称（新）";
-  };
-  mode.addEventListener("change", syncMode);
-  syncMode();
+  const input = $("#itSpuInput"), list = $("#itSpuList");
+  let selectedSpu = null; // 组合框当前选中的 SPU
+
+  // 渲染下拉列表：按输入子串过滤（不区分大小写）；首项固定为「新建 SPU」
+  function renderSpuList() {
+    const raw = input.value.trim();
+    const q = raw.toLowerCase();
+    const hits = spusList.filter((s) => s.name.toLowerCase().includes(q));
+    list.innerHTML =
+      `<div class="spu-combo-opt spu-new" data-new>＋ 新建 SPU${raw ? `「${UI.esc(raw)}」` : ""}</div>` +
+      hits.map((s) =>
+        `<div class="spu-combo-opt" data-id="${s.id}">${UI.esc(s.name)}<span class="muted mono"> #${s.id}</span></div>`).join("") +
+      (hits.length ? "" :
+        `<div class="spu-combo-opt" style="cursor:default;color:var(--ink-soft)">没有匹配的 SPU，可点击上方「新建 SPU」</div>`);
+  }
+  const openList = () => { renderSpuList(); list.classList.add("open"); };
+  const closeList = () => list.classList.remove("open");
+
+  function choose(spu) {
+    selectedSpu = spu;
+    input.value = spu.name;
+    closeList();
+  }
+
+  // 快捷新建 SPU：弹窗内创建后立即选中，不离开当前页
+  async function newSpuDialog() {
+    const name = await UI.promptDialog({
+      title: "新建 SPU", label: "SPU 名称", value: input.value.trim(),
+      submitText: "创建", placeholder: "如：纯棉 T 恤", maxLength: 200,
+    });
+    if (name === null) return;
+    try {
+      const spu = await XM.post("/spus", { name });
+      UI.ok(`SPU「${name}」已创建（#${spu.id}）`, { title: "SPU_CREATED" });
+      spusList.push(spu);
+      fillSpuSelects();
+      choose(spu);
+    } catch (e) { UI.apiFail(e, "创建 SPU 失败"); }
+  }
+
+  input.addEventListener("focus", openList);
+  input.addEventListener("input", () => { selectedSpu = null; openList(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { closeList(); return; }
+    if (e.key !== "Enter" || !list.classList.contains("open")) return;
+    e.preventDefault(); // 阻止回车触发整个表单提交
+    const first = list.querySelector(".spu-combo-opt[data-id]");
+    if (first) choose(spusList.find((s) => s.id === Number(first.dataset.id)));
+    else newSpuDialog();
+  });
+  list.addEventListener("click", (e) => {
+    const opt = e.target.closest(".spu-combo-opt");
+    if (!opt) return;
+    if (opt.hasAttribute("data-new")) newSpuDialog();
+    else choose(spusList.find((s) => s.id === Number(opt.dataset.id)));
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#itSpuCombo")) closeList();
+  });
 
   const grid = $("#itValueGrid");
   grid.innerHTML = fieldsMeta.length
@@ -134,15 +183,8 @@ function setupCreateForm() {
     const btn = ev.target.querySelector("button[type=submit]");
     const name = $("#itName").value.trim();
     if (!name) { UI.fail("请填写 SKU 名称"); return; }
-    const body = { name, values: {} };
-    if (mode.value === "pick") {
-      if (!pick.value) { UI.fail("请选择 SPU，或切换为「输入名称」"); return; }
-      body.spu_id = Number(pick.value);
-    } else {
-      const sn = nameInp.value.trim();
-      if (!sn) { UI.fail("请填写 SPU 名称"); return; }
-      body.spu_name = sn;
-    }
+    if (!selectedSpu) { UI.fail("请选择 SPU，或点击下拉首项「新建 SPU」快速创建"); return; }
+    const body = { name, spu_id: selectedSpu.id, values: {} };
     let bad = false;
     $$("[data-fld]", grid).forEach((el) => {
       const f = fieldsMeta.find((x) => x.name === el.dataset.fld);
@@ -156,13 +198,10 @@ function setupCreateForm() {
         const it = await XM.post("/items", body);
         UI.resultBox("#createResult", {
           html: `<div class="headline"><span class="badge">ITEM_CREATED</span> ` +
-                `#${it.id}「${UI.esc(it.name)}」已创建，当前库存 ${it.qty}` +
-                (it.spu_auto_created ? ` <span class="badge gray">SPU「${UI.esc(it.spu_name)}」为自动新建</span>` : "") +
-                `</div>`,
+                `#${it.id}「${UI.esc(it.name)}」已创建，当前库存 ${it.qty}</div>`,
         });
         $("#itName").value = "";
         grid.innerHTML = fieldsMeta.map((f) => fieldInputHtml(f, undefined)).join("");
-        await loadMeta(); fillSpuSelects(); // SPU 可能自动新建
         offset = 0; loadItems();
       } catch (e) {
         UI.resultBox("#createResult", { error: true, html: UI.apiFailHtml(e) });
