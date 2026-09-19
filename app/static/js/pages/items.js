@@ -157,8 +157,11 @@ function setupCreateForm() {
   input.addEventListener("input", () => { selectedSpu = null; openList(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { closeList(); return; }
-    if (e.key !== "Enter" || !list.classList.contains("open")) return;
-    e.preventDefault(); // 阻止回车触发整个表单提交
+    if (e.key !== "Enter") return;
+    // 回车在此输入框内一律阻止隐式整表提交：快捷新建 SPU 弹窗关闭后焦点会回落到
+    // 此处，随后到来的回车（连击或再按一次）不应被当成「创建单品」表单提交
+    e.preventDefault();
+    if (!list.classList.contains("open")) return;
     const first = list.querySelector(".spu-combo-opt[data-id]");
     if (first) choose(spusList.find((s) => s.id === Number(first.dataset.id)));
     else newSpuDialog();
