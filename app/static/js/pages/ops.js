@@ -114,7 +114,7 @@ function renderOpResult(box, cfg, res) {
   let html = `<div class="result-box"><div class="headline">${badges} ${cfg.label}结果</div>` +
     `<div style="margin-top:.5rem">${qtyLine}</div>
      <table class="mini-table" style="margin-top:.5rem">` +
-    dl.map(([k, v]) => `<tr><td class="muted" style="width:90px">${k}</td><td>${v}</td></tr>`).join("") +
+    dl.map(([k, v]) => `<tr><td class="muted" style="width:5.625rem">${k}</td><td>${v}</td></tr>`).join("") +
     `</table>`;
   if (res.dry_run) {
     html += `<div style="margin-top:.8rem">

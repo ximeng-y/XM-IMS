@@ -89,7 +89,7 @@ function renderTable(data) {
   const extraHead = fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("");
   $("#itemHead").innerHTML =
     `<tr><th class="num">ID</th><th>名称</th><th>SPU</th><th class="num">库存</th>` +
-    extraHead + `<th style="width:90px">操作</th></tr>`;
+    extraHead + `<th style="width:5.625rem">操作</th></tr>`;
   if (!data.items.length) {
     tbody.innerHTML = `<tr><td colspan="${5 + fieldsMeta.length}" class="t-empty">没有符合条件的单品</td></tr>`;
     return;
