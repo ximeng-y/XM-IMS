@@ -273,6 +273,24 @@ input:focus, select:focus, textarea:focus {
 .hint { font-size: .78rem; color: var(--ink-soft); margin-top: .25rem; }
 .fieldreq { color: var(--danger); }
 
+/* ---------- SPU 可搜索组合框（单品新建表单） ---------- */
+.spu-combo { position: relative; }
+.spu-combo-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + .25rem);
+  background: #fff; border: 1px solid var(--line);
+  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .08);
+  max-height: 15rem; overflow: auto;
+  z-index: 50; display: none;
+}
+.spu-combo-list.open { display: block; }
+.spu-combo-opt {
+  padding: .45rem .7rem; font-size: .85rem; cursor: pointer;
+  border-bottom: 1px solid var(--line-light);
+}
+.spu-combo-opt:last-child { border-bottom: 0; }
+.spu-combo-opt:hover { background: var(--blue-pale); }
+.spu-combo-opt.spu-new { color: var(--blue); font-weight: 600; border-bottom: 1px solid var(--line); }
+
 /* ---------- 结果 / 反馈 ---------- */
 .result-box {
   border: 1px solid var(--line);
