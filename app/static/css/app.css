@@ -418,6 +418,26 @@ dialog .dlg-foot {
   margin-bottom: 1.5rem;
 }
 
+/* ---------- 库存总览（SPU 分组 + 可展开 SKU 子行） ---------- */
+.tri-cell { width: 2.5rem; }
+.tri-btn {
+  background: none;
+  border: 0;
+  padding: 0 .35rem;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: .75rem;
+  line-height: 1;
+  display: inline-block;
+  /* 收起时 ▶，展开时转正为 ▼ */
+  transform: rotate(-90deg);
+  transition: transform .15s;
+}
+.tri-btn:hover, .tri-btn:focus { background: none; color: var(--blue-dark); }
+.tri-btn.open { transform: rotate(0); }
+/* 展开的 SKU 子行：与 SPU 行轻微色差体现层级 */
+.sku-sub-row { background: var(--blue-pale-2); }
+
 @media (max-width: 860px) {
   /* 纵向堆叠时恢复拉伸，让横向导航条与内容区撑满宽度 */
   .layout { flex-direction: column; align-items: stretch; }
