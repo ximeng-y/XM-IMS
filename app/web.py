@@ -23,6 +23,7 @@ def _page(template: str):
 
 
 router.get("/", response_class=HTMLResponse)(_page("overview.html"))
+router.get("/inventory", response_class=HTMLResponse)(_page("inventory.html"))
 router.get("/items", response_class=HTMLResponse)(_page("items.html"))
 router.get("/spus", response_class=HTMLResponse)(_page("spus.html"))
 router.get("/fields", response_class=HTMLResponse)(_page("fields.html"))
