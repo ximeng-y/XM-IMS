@@ -10,6 +10,8 @@
   --blue-pale-2: #e2ecf7;
   --line: #c9d7e8;
   --line-light: #dbe4ef;
+  /* 分组分界线专用：比 --line 再深一档，用于库存总览里 SPU 之间、SKU 与 SPU 之间的分隔 */
+  --line-deep: #9cbad3;
   --ink: #1c2733;
   --ink-soft: #5a6b7d;
   --danger: #b3322e;
@@ -443,6 +445,15 @@ dialog .dlg-foot {
 .tri-btn.open { transform: rotate(0); }
 /* 展开的 SKU 子行：与 SPU 行轻微色差体现层级 */
 .sku-sub-row { background: var(--blue-pale-2); }
+
+/* 分组分界线（深一档，突出 SPU 组的边界）：
+   .spu-row                    → SPU 行下沿：SPU↔其首个 SKU、折叠时 SPU↔下一个 SPU
+   .sku-sub-row:has(+ .spu-row) → SKU 组末尾那行：该组↔下一个 SPU
+   .sku-sub-row:last-child      → 页面末尾的 SKU 组收口
+   同组内部相邻 SKU 行仍用浅线，避免一组 SKU 被深线割裂 */
+.spu-row > td,
+.sku-sub-row:has(+ .spu-row) > td,
+#spuRows .sku-sub-row:last-child > td { border-bottom-color: var(--line-deep) !important; }
 
 @media (max-width: 860px) {
   /* 纵向堆叠时恢复拉伸，让横向导航条与内容区撑满宽度 */
