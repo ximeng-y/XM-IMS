@@ -208,7 +208,13 @@ thead th {
   border-bottom: 1px solid var(--line) !important;
   white-space: nowrap;
 }
-tbody td { border-bottom: 1px solid var(--line-light) !important; padding: .55rem .75rem; }
+/* Pico 给每个 td/th 刷了不透明底色，会整片盖住 tr 级背景，使行级样式（SKU 子行色差、
+   行悬浮高亮）全部失效。此处把单元格底色让给 tr；特异性 0,0,2 高于 Pico 的 td,th(0,0,1) */
+tbody td, tbody th {
+  background-color: transparent;
+  border-bottom: 1px solid var(--line-light) !important;
+  padding: .55rem .75rem;
+}
 tbody tr:hover { background: var(--blue-pale); }
 /* .num 只表示等宽数字，不参与对齐（对齐统一由下方 .table-scroll 规则决定） */
 td.num, th.num { font-variant-numeric: tabular-nums; }
