@@ -29,12 +29,14 @@ def list_items(shop_id: ShopDep,
 
 
 @router.get("/{item_id}", response_model=ItemOut, summary="单品详情")
-def get_item(shop_id: ShopDep, item_id: int):
+def get_item(shop_id: ShopDep, item_id: str):
+    """item_id 为「SPU 号-组内序号」，如 1-2。"""
     return items.get_item(shop_id, item_id)
 
 
 @router.patch("/{item_id}", response_model=ItemOut, summary="修改单品（改名/换挂 SPU/改字段值）")
-def patch_item(shop_id: ShopDep, item_id: int, body: ItemPatch):
+def patch_item(shop_id: ShopDep, item_id: str, body: ItemPatch):
     """改价即修改价格类字段值，审计记录 old/new。
-    values 中某字段传 null 表示清除该字段值。"""
+    values 中某字段传 null 表示清除该字段值。
+    换挂 SPU 后编号变为「新 SPU 号-新序号」（落在目标 SPU 组内末尾）。"""
     return items.patch_item(shop_id, item_id, body)

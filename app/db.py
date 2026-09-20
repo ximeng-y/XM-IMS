@@ -4,6 +4,8 @@
   同一店铺的所有操作持锁串行执行，FastAPI 同步端点跑线程池时保证写安全
 - 每个连接开启 WAL 与外键约束
 - 库存数量永不落列：读取一律 SUM(movements.qty)（见 service/inventory.py）
+- 店铺库结构版本由 migrate 模块管理：新库按 SHOP_DDL 建到当前版本，
+  已有的旧库在打开时增量升级
 """
 import json
 import sqlite3
@@ -11,6 +13,7 @@ import threading
 
 from . import config, schema
 from .errors import ApiError
+from .migrate import init_shop_db, upgrade_shop_db
 
 
 class Database:
@@ -66,6 +69,7 @@ def shop_db(shop_id: int) -> Database:
         raise ApiError("SHOP_NOT_FOUND", f"店铺 {shop_id} 的数据库文件缺失：{row['db_file']}",
                        hint="请从备份恢复或检查 data/shops/ 目录", status=404)
     db = Database(path)
+    upgrade_shop_db(db)
     with _cache_lock:
         # 并发下可能已有他人放入，统一取缓存实例
         db = _shop_dbs.setdefault(shop_id, db)
@@ -75,8 +79,7 @@ def shop_db(shop_id: int) -> Database:
 def create_shop_db_file(shop_id: int, db_file: str) -> Database:
     """按模板创建一个新的店铺库文件并纳入缓存"""
     db = Database(config.DATA_DIR / db_file)
-    with db.lock, db.conn:
-        db.conn.executescript(schema.SHOP_DDL)
+    init_shop_db(db)
     with _cache_lock:
         _shop_dbs[shop_id] = db
     return db

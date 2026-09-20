@@ -96,7 +96,7 @@ function renderTable(data) {
   tbody.innerHTML = data.items.map((it, idx) => {
     const extra = fieldsMeta.map((f) => `<td>${UI.fmtVal(it.values[f.name])}</td>`).join("");
     return `<tr>
-      <td class="num mono">${it.id}</td>
+      <td class="num mono">${UI.esc(it.id)}</td>
       <td>${UI.esc(it.name)}</td>
       <td>${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
       <td class="num">${it.qty}</td>
@@ -201,7 +201,7 @@ function setupCreateForm() {
         const it = await XM.post("/items", body);
         UI.resultBox("#createResult", {
           html: `<div class="headline"><span class="badge">ITEM_CREATED</span> ` +
-                `#${it.id}「${UI.esc(it.name)}」已创建，当前库存 ${it.qty}</div>`,
+                `${UI.esc(it.id)}「${UI.esc(it.name)}」已创建，当前库存 ${it.qty}</div>`,
         });
         $("#itName").value = "";
         grid.innerHTML = fieldsMeta.map((f) => fieldInputHtml(f, undefined)).join("");
@@ -240,7 +240,7 @@ function editFlow(item) {
       ${fieldsMeta.map((f) => fieldInputHtml(f, item.values[f.name], { withClear: true })).join("") ||
         `<div class="hint">该店铺还没有自定义字段</div>`}
     </div>`;
-  const { dlg, foot } = UI.baseDialog(`编辑单品 #${item.id}`, wrap);
+  const { dlg, foot } = UI.baseDialog(`编辑单品 ${item.id}`, wrap);
 
   const mode = $("#edSpuMode", wrap);
   mode.addEventListener("change", () => {
@@ -280,8 +280,11 @@ function editFlow(item) {
     if (Object.keys(values).length) body.values = values;
     if (!Object.keys(body).length) { UI.toast("没有任何修改"); done = true; dlg.close(); return; }
     try {
-      await XM.patch(`/items/${item.id}`, body);
-      UI.ok(`单品 #${item.id} 已更新`, { title: "ITEM_UPDATED" });
+      const updated = await XM.patch(`/items/${encodeURIComponent(item.id)}`, body);
+      // 换挂 SPU 会改变单品编号，提示时以新编号为准
+      const refChanged = updated.id !== item.id;
+      UI.ok(`单品 ${item.id} 已更新` + (refChanged ? `，编号变为 ${updated.id}` : ""),
+            { title: "ITEM_UPDATED" });
       done = true; dlg.close();
       await loadMeta(); fillSpuSelects();
       loadItems();

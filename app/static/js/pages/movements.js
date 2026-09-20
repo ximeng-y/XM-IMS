@@ -24,7 +24,7 @@ async function loadMovements() {
         <tr>
           <td class="num mono">${m.id ?? "—"}</td>
           <td class="muted" style="white-space:nowrap">${UI.fmtTime(m.created_at)}</td>
-          <td class="num mono">${m.item_id}</td>
+          <td class="num mono">${UI.esc(m.item_id)}</td>
           <td>${TYPE_BADGE[m.type] || UI.esc(m.type)}</td>
           <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
           <td class="num">${UI.fmtMoney(m.unit_price)}</td>

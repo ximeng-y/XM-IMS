@@ -21,14 +21,18 @@ CREATE TABLE IF NOT EXISTS spus (
 );
 
 -- items 即 SKU：真实的存储单元（自定义字段值、库存流水都挂在 SKU 上）
+-- 对外标识为「SPU 号-组内序号」（如 1-2）；seq 为该 SPU 内自 1 递增的序号，
+-- 号与序号都不复用空位（只取 max+1），避免历史流水里的旧编号指向新 SKU
 CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   spu_id INTEGER NOT NULL REFERENCES spus(id),
+  seq INTEGER NOT NULL,
   name TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_items_spu ON items(spu_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_items_spu_seq ON items(spu_id, seq);
 
 -- 自定义字段注册表（每店独立）
 CREATE TABLE IF NOT EXISTS custom_fields (

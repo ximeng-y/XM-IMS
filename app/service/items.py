@@ -1,12 +1,62 @@
 """单品（SKU）管理：创建/查询/改名/换挂 SPU/自定义字段值修改
 
 改价 = 修改价格类自定义字段的值（记审计 old/new），与改其他字段值同一路径。
+
+对外标识：SKU 的 id 呈现为「SPU 号-组内序号」（如 1-2），由 items.spu_id 与
+items.seq 实时拼出；内部仍以 items.id（整数）作为流水与字段值的外键。因此换挂
+SPU 时 SKU 的显示编号会随之变化，历史流水显示的是当前归属，而非当时归属。
 """
+import re
+
 from .. import db, fieldtypes
 from ..config import now_iso
 from ..errors import ApiError
 from ..schemas import ItemCreate, ItemPatch
 from . import spus
+
+# 对外标识格式：正整数-正整数
+ITEM_REF_RE = re.compile(r"^([1-9]\d*)-([1-9]\d*)$")
+
+
+def format_item_ref(spu_id: int, seq: int) -> str:
+    """拼出对外标识「SPU 号-组内序号」"""
+    return f"{spu_id}-{seq}"
+
+
+def resolve_item_ref(conn, ref) -> int:
+    """把对外标识「SPU 号-组内序号」解析为内部 items.id
+
+    只接受 "n-m" 形式：纯数字（旧的内部 ID）一律拒绝，避免同一套 API 出现
+    两种编号语义；调用方需要给出可修复提示。
+    """
+    m = ITEM_REF_RE.match(str(ref).strip())
+    if not m:
+        raise ApiError("ITEM_REF_INVALID", f"无效的单品标识：{ref}",
+                       hint="单品标识形如 1-2（SPU 号-组内序号）；"
+                            "GET /api/v1/items 查看全部单品及其标识", status=400)
+    spu_id, seq = int(m.group(1)), int(m.group(2))
+    row = conn.execute("SELECT id FROM items WHERE spu_id = ? AND seq = ?",
+                       (spu_id, seq)).fetchone()
+    if row is None:
+        raise ApiError("ITEM_NOT_FOUND", f"单品 {spu_id}-{seq} 不存在",
+                       hint=_existing_hint(conn), status=404)
+    return row["id"]
+
+
+def _existing_hint(conn) -> str:
+    rows = conn.execute(
+        "SELECT spu_id, seq, name FROM items ORDER BY spu_id, seq LIMIT 3").fetchall()
+    if not rows:
+        return "该店铺还没有单品，POST /api/v1/items 创建"
+    return "现有单品：" + "、".join(
+        f"{format_item_ref(r['spu_id'], r['seq'])}（{r['name']}）" for r in rows)
+
+
+def _next_seq(conn, spu_id: int) -> int:
+    """该 SPU 内的下一个序号。只取 max+1，不复用空位（流水里的旧编号不应指向新 SKU）"""
+    row = conn.execute("SELECT MAX(seq) AS mx FROM items WHERE spu_id = ?",
+                       (spu_id,)).fetchone()
+    return (row["mx"] or 0) + 1
 
 
 def _resolve_fields(conn, values: dict) -> dict:
@@ -73,13 +123,14 @@ def _load_values(conn, item_ids: list) -> dict:
 
 def _load_item(conn, item_id: int) -> dict | None:
     row = conn.execute(
-        """SELECT i.id, i.name, i.spu_id, s.name AS spu_name, i.created_at, i.updated_at,
+        """SELECT i.id, i.seq, i.name, i.spu_id, s.name AS spu_name, i.created_at, i.updated_at,
                   COALESCE((SELECT SUM(m.qty) FROM movements m WHERE m.item_id = i.id), 0) AS qty
            FROM items i JOIN spus s ON s.id = i.spu_id WHERE i.id = ?""",
         (item_id,)).fetchone()
     if row is None:
         return None
     item = dict(row)
+    item["id"] = format_item_ref(item["spu_id"], item.pop("seq"))
     item["values"] = _load_values(conn, [item_id])[item_id]
     return item
 
@@ -99,8 +150,8 @@ def create_item(shop_id: int, payload: ItemCreate) -> dict:
         by_name = _resolve_fields(d.conn, payload.values)
         ts = now_iso()
         cur = d.conn.execute(
-            "INSERT INTO items (spu_id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (spu_id, name, ts, ts))
+            "INSERT INTO items (spu_id, seq, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (spu_id, _next_seq(d.conn, spu_id), name, ts, ts))
         item_id = cur.lastrowid
         for fname, value in payload.values.items():
             _set_value(d.conn, item_id, by_name[fname], value)
@@ -126,39 +177,34 @@ def list_items(shop_id: int, offset: int = 0, limit: int = 50,
         total = d.conn.execute(
             "SELECT COUNT(*) FROM items i JOIN spus s ON s.id = i.spu_id" + cond,
             params).fetchone()[0]
+        # 按归属 SPU 与组内序号排序，与对外标识的次序一致
         rows = d.conn.execute(
-            "SELECT i.id, i.name, i.spu_id, s.name AS spu_name, i.created_at, i.updated_at, "
+            "SELECT i.id, i.seq, i.name, i.spu_id, s.name AS spu_name, i.created_at, i.updated_at, "
             "COALESCE((SELECT SUM(m.qty) FROM movements m WHERE m.item_id = i.id), 0) AS qty "
             "FROM items i JOIN spus s ON s.id = i.spu_id" + cond +
-            " ORDER BY i.id LIMIT ? OFFSET ?",
+            " ORDER BY i.spu_id, i.seq LIMIT ? OFFSET ?",
             [*params, limit, offset]).fetchall()
         values = _load_values(d.conn, [r["id"] for r in rows])
-    items = [{**dict(r), "values": values[r["id"]]} for r in rows]
+    items = [{**dict(r), "id": format_item_ref(r["spu_id"], r["seq"]),
+              "values": values[r["id"]]} for r in rows]
+    for it in items:
+        it.pop("seq", None)
     return {"items": items, "total": total}
 
 
-def get_item(shop_id: int, item_id: int) -> dict:
+def get_item(shop_id: int, item_ref: str) -> dict:
     d = db.shop_db(shop_id)
     with d.lock:
-        item = _load_item(d.conn, item_id)
-        if item is None:
-            names = [r["name"] for r in d.conn.execute(
-                "SELECT name FROM items ORDER BY id LIMIT 3")]
-    if item is not None:
-        return item
-    hint = ("现有单品：" + "、".join(names)) if names else "该店铺还没有单品，POST /api/v1/items 创建"
-    raise ApiError("ITEM_NOT_FOUND", f"单品 {item_id} 不存在",
-                   hint=hint + "；GET /api/v1/items 查看全部", status=404)
+        item = _load_item(d.conn, resolve_item_ref(d.conn, item_ref))
+    return item
 
 
-def patch_item(shop_id: int, item_id: int, payload: ItemPatch) -> dict:
+def patch_item(shop_id: int, item_ref: str, payload: ItemPatch) -> dict:
     body = payload.model_dump(exclude_unset=True)
     d = db.shop_db(shop_id)
     with d.lock, d.conn:
+        item_id = resolve_item_ref(d.conn, item_ref)
         row = d.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
-        if row is None:
-            raise ApiError("ITEM_NOT_FOUND", f"单品 {item_id} 不存在",
-                           hint="GET /api/v1/items 查看单品列表", status=404)
         changed = False
 
         new_name = body.get("name")
@@ -176,10 +222,15 @@ def patch_item(shop_id: int, item_id: int, payload: ItemPatch) -> dict:
         if body.get("spu_id") is not None or body.get("spu_name") is not None:
             new_spu, _ = spus.resolve_spu(d.conn, body.get("spu_id"), body.get("spu_name"))
             if new_spu != row["spu_id"]:
-                d.conn.execute("UPDATE items SET spu_id = ?, updated_at = ? WHERE id = ?",
-                               (new_spu, now_iso(), item_id))
+                # 换挂后落在目标 SPU 组内末尾，编号变为「新 SPU 号-新序号」
+                new_seq = _next_seq(d.conn, new_spu)
+                d.conn.execute(
+                    "UPDATE items SET spu_id = ?, seq = ?, updated_at = ? WHERE id = ?",
+                    (new_spu, new_seq, now_iso(), item_id))
                 db.write_audit(d.conn, "item_spu_relink", "item", item_id,
-                               {"old_spu_id": row["spu_id"], "new_spu_id": new_spu})
+                               {"old_spu_id": row["spu_id"], "new_spu_id": new_spu,
+                                "old_ref": format_item_ref(row["spu_id"], row["seq"]),
+                                "new_ref": format_item_ref(new_spu, new_seq)})
                 changed = True
 
         values = body.get("values")

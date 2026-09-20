@@ -2,10 +2,15 @@
 
 JSON 收发用显示语义：金额 unit_price 以「元」传（存储转分）；
 decimal/percent 字段值以显示数值传（12.34；25 表示 25%）。
+
+单品（SKU）标识 item_id 为字符串，格式「SPU 号-组内序号」（如 "1-2"），
+即该 SKU 所属 SPU 的 ID 加它在组内自 1 起的序号。
 """
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+
+ITEM_ID_DESC = "单品标识，格式「SPU 号-组内序号」，如 1-2"
 
 # ---------- 请求模型 ----------
 
@@ -60,7 +65,7 @@ class ItemPatch(BaseModel):
 
 
 class InboundIn(BaseModel):
-    item_id: int
+    item_id: str = Field(description=ITEM_ID_DESC)
     qty: int = Field(gt=0, description="入库数量（正整数）")
     unit_price: Optional[float] = Field(default=None, description="实际采购单价（元）")
     batch_no: Optional[str] = None
@@ -72,7 +77,7 @@ class InboundIn(BaseModel):
 
 
 class OutboundIn(BaseModel):
-    item_id: int
+    item_id: str = Field(description=ITEM_ID_DESC)
     qty: int = Field(gt=0, description="出库数量（正整数）")
     unit_price: Optional[float] = Field(default=None, description="实际成交单价（元）")
     channel: Optional[str] = None
@@ -83,7 +88,7 @@ class OutboundIn(BaseModel):
 
 
 class AdjustIn(BaseModel):
-    item_id: int
+    item_id: str = Field(description=ITEM_ID_DESC)
     target_qty: int = Field(ge=0, description="盘点后的目标库存（非增量）")
     note: Optional[str] = None
     idempotency_key: Optional[str] = Field(default=None, max_length=100)
@@ -131,7 +136,7 @@ class FieldList(BaseModel):
 
 
 class ItemOut(BaseModel):
-    id: int
+    id: str = Field(description=ITEM_ID_DESC)
     name: str
     spu_id: int
     spu_name: str
@@ -152,7 +157,7 @@ class ItemList(BaseModel):
 
 class MovementOut(BaseModel):
     id: Optional[int] = Field(default=None, description="dry_run 预览无 id")
-    item_id: int
+    item_id: str = Field(description=ITEM_ID_DESC)
     type: str = Field(description="in | out | adjust")
     qty_delta: int = Field(description="带符号增量：入库 + / 出库 − / 盘点 目标−当前")
     unit_price: Optional[float] = Field(default=None, description="实际单价（元）")
