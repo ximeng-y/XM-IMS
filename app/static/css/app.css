@@ -8,8 +8,15 @@
   --blue-dark: #164d92;
   --blue-pale: #eef4fb;
   --blue-pale-2: #e2ecf7;
+  /* 表格行悬浮专用：--blue-pale(#eef4fb) 对面板白底亮度比仅 1.11，作为「行悬浮高亮」看不出差别；
+     又因悬停要同时盖过 SPU 行（白底）与 SKU 子行（--blue-pale-2），故取比这两者都深一档的色。
+     --row-hover 用于普通行，--row-hover-sub 再深一档，供 SKU 子行悬停时保持凹陷层级 */
+  --row-hover: #c3d7ef;
+  --row-hover-sub: #b0cbe9;
   --line: #c9d7e8;
   --line-light: #dbe4ef;
+  /* 分组分界线专用：比 --line 再深一档，用于库存总览里 SPU 之间、SKU 与 SPU 之间的分隔 */
+  --line-deep: #9cbad3;
   --ink: #1c2733;
   --ink-soft: #5a6b7d;
   --danger: #b3322e;
@@ -208,8 +215,18 @@ thead th {
   border-bottom: 1px solid var(--line) !important;
   white-space: nowrap;
 }
-tbody td { border-bottom: 1px solid var(--line-light) !important; padding: .55rem .75rem; }
-tbody tr:hover { background: var(--blue-pale); }
+/* Pico 给每个 td/th 刷了不透明底色，会整片盖住 tr 级背景，使行级样式（SKU 子行色差、
+   行悬浮高亮）全部失效。此处把单元格底色让给 tr；特异性 0,0,2 高于 Pico 的 td,th(0,0,1) */
+tbody td, tbody th {
+  background-color: transparent;
+  border-bottom: 1px solid var(--line-light) !important;
+  padding: .55rem .75rem;
+}
+tbody tr:hover { background: var(--row-hover); }
+/* 悬停色（0,1,2）特异性高于 .sku-sub-row（0,1,0），若不加限制，悬停 SKU 子行会把它
+   盖成与 SPU 行相同的底色，层级对比在指针划过时消失。此处让 SKU 子行的悬停色再深一档，
+   使「SPU 凸起 / SKU 凹陷」的层次在悬停时依然成立 */
+tbody tr.sku-sub-row:hover { background: var(--row-hover-sub); }
 /* .num 只表示等宽数字，不参与对齐（对齐统一由下方 .table-scroll 规则决定） */
 td.num, th.num { font-variant-numeric: tabular-nums; }
 /* 表头与表体统一水平居中、垂直居中；作用域覆盖各列表页的表格容器 */
@@ -437,6 +454,15 @@ dialog .dlg-foot {
 .tri-btn.open { transform: rotate(0); }
 /* 展开的 SKU 子行：与 SPU 行轻微色差体现层级 */
 .sku-sub-row { background: var(--blue-pale-2); }
+
+/* 分组分界线（深一档，突出 SPU 组的边界）：
+   .spu-row                    → SPU 行下沿：SPU↔其首个 SKU、折叠时 SPU↔下一个 SPU
+   .sku-sub-row:has(+ .spu-row) → SKU 组末尾那行：该组↔下一个 SPU
+   .sku-sub-row:last-child      → 页面末尾的 SKU 组收口
+   同组内部相邻 SKU 行仍用浅线，避免一组 SKU 被深线割裂 */
+.spu-row > td,
+.sku-sub-row:has(+ .spu-row) > td,
+#spuRows .sku-sub-row:last-child > td { border-bottom-color: var(--line-deep) !important; }
 
 @media (max-width: 860px) {
   /* 纵向堆叠时恢复拉伸，让横向导航条与内容区撑满宽度 */
