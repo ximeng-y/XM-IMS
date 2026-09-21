@@ -200,7 +200,7 @@ function renderReport(box, res, isPreview) {
     html += `<table class="mini-table" style="margin-top:.6rem">
       <thead><tr><th>单品</th><th>旧值</th><th>新值</th></tr></thead><tbody>` +
       res.samples.map((s) => `
-        <tr><td>#${s.item_id} ${UI.esc(s.item_name)}</td>
+        <tr><td>${UI.esc(s.item_id)} ${UI.esc(s.item_name)}</td>
             <td>${UI.fmtVal(s.old)}</td>
             <td>${s.new === null ? `<span class="muted">清空</span>` : UI.fmtVal(s.new)}</td></tr>`).join("") +
       `</tbody></table>`;

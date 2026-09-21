@@ -55,7 +55,8 @@ function showQtyHint(cfg) {
 function buildBody(cfg) {
   const form = document.querySelector(cfg.form);
   const body = {
-    item_id: Number(document.querySelector(cfg.item).value),
+    // 单品标识是「SPU 号-组内序号」字符串，不可转数值
+    item_id: document.querySelector(cfg.item).value,
     idempotency_key: form.dataset.key,
     dry_run: false,
   };
@@ -132,7 +133,7 @@ async function submitOp(cfg, btn) {
       else UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
       // 真实落库后换新幂等键，避免下次误重放
       form.dataset.key = genKey();
-      await refreshPickers(String(body.item_id));
+      await refreshPickers(body.item_id);
     } catch (e) {
       box.innerHTML = UI.apiFailHtml(e);
       UI.apiFail(e, `${cfg.label}失败`);

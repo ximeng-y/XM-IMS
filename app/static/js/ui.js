@@ -209,11 +209,12 @@ const UI = (() => {
   }
 
   // ---------- 单品下拉选项（库存操作 / 流水筛选共用） ----------
+  // 单品标识形如 1-2（SPU 号-组内序号），直接作为选项值与展示文本
   async function fillItemOptions(select, { allLabel = null } = {}) {
     const data = await XM.get("/items?limit=200");
     let html = allLabel ? `<option value="">${esc(allLabel)}</option>` : "";
     html += data.items.map((i) =>
-      `<option value="${i.id}">#${i.id} ${esc(i.name)}（库存 ${i.qty}）</option>`).join("");
+      `<option value="${esc(i.id)}">${esc(i.id)} ${esc(i.name)}（库存 ${i.qty}）</option>`).join("");
     select.innerHTML = html || `<option value="">（该店铺还没有单品）</option>`;
     return data.items;
   }

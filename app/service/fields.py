@@ -10,6 +10,7 @@
 from .. import db, fieldtypes
 from ..config import now_iso
 from ..errors import ApiError
+from . import items
 
 # 系统字段（API 统一呈现；readonly 表示不可通过「字段值编辑」路径修改）
 SYSTEM_FIELDS = [
@@ -166,20 +167,24 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
             raise ApiError("FIELD_NO_CHANGE", "转换目标与当前结构相同",
                            hint="无需转换；如需改名请使用 PATCH /api/v1/fields/{id}", status=400)
 
-        # 取全部现存值（含单品名，供报告与审计）
+        # 取全部现存值（含单品标识，供报告与审计）；对外一律用「SPU 号-组内序号」
         value_rows = d.conn.execute(
-            "SELECT v.item_id, v.value_int, i.name AS item_name "
+            "SELECT v.item_id, v.value_int, i.name AS item_name, i.spu_id, i.seq "
             "FROM custom_values v JOIN items i ON i.id = v.item_id "
-            "WHERE v.field_id = ? ORDER BY v.item_id", (field_id,)).fetchall()
+            "WHERE v.field_id = ? ORDER BY i.spu_id, i.seq", (field_id,)).fetchall()
+
+        def sample(row, old, new) -> dict:
+            return {"item_id": items.format_item_ref(row["spu_id"], row["seq"]),
+                    "item_name": row["item_name"], "old": old, "new": new}
 
         # 关闭 allow_negative 前置检查：存在负值则阻断（取整不改变符号）
         if not neg2:
             neg_rows = [r for r in value_rows if (r["value_int"] or 0) < 0]
             if neg_rows:
-                sample = "、".join(r["item_name"] for r in neg_rows[:3])
+                neg_items = "、".join(r["item_name"] for r in neg_rows[:3])
                 raise ApiError("NEGATIVE_VALUES_EXIST",
                                f"字段「{row['name']}」存在 {len(neg_rows)} 个负值，无法关闭允许负数",
-                               hint=f"负值所在单品：{sample}；请先修正这些值再转换", status=409)
+                               hint=f"负值所在单品：{neg_items}；请先修正这些值再转换", status=409)
 
         kind = fieldtypes.conversion_kind(t1, s1, t2, s2)
 
@@ -194,8 +199,7 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
 
         if kind == "clear":
             # string/bool 与其他类型互转：确认后清空全部值
-            samples = [{"item_id": r["item_id"], "item_name": r["item_name"],
-                        "old": fieldtypes.decode(t1, s1, r["value_int"]), "new": None}
+            samples = [sample(r, fieldtypes.decode(t1, s1, r["value_int"]), None)
                        for r in value_rows[:5]]
             if not confirm_clear:
                 raise ApiError("CONVERT_REQUIRES_CLEAR",
@@ -226,8 +230,7 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
 
         if lossy and rounding is None:
             if dry_run:
-                samples = [{"item_id": r["item_id"], "item_name": r["item_name"],
-                            "old": fieldtypes.decode(t1, s1, n), "new": None}
+                samples = [sample(r, fieldtypes.decode(t1, s1, n), None)
                            for r, n, _ in converted[:5]]
                 return {"dry_run": True, "lossy": True, "rounding_required": True,
                         "description": _describe(k1, k2),
@@ -237,9 +240,8 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
                            hint="rounding 可选：ceil（向上）/ floor（向下）/ round（四舍五入）",
                            status=400)
 
-        samples = [{"item_id": r["item_id"], "item_name": r["item_name"],
-                    "old": fieldtypes.decode(t1, s1, n),
-                    "new": None if new_n is None else fieldtypes.decode(t2, s2, new_n)}
+        samples = [sample(r, fieldtypes.decode(t1, s1, n),
+                          None if new_n is None else fieldtypes.decode(t2, s2, new_n))
                    for r, n, new_n in converted[:5]]
         result = {"description": _describe(k1, k2), "lossy": lossy,
                   "affected_items": len(converted), "samples": samples,

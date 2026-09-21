@@ -49,7 +49,7 @@ function renderOverview() {
     if (open) {
       row += items.length ? items.map((it) => `<tr class="sku-sub-row">
         <td></td>
-        <td class="num mono">${it.id}</td>
+        <td class="num mono">${UI.esc(it.id)}</td>
         <td>${UI.esc(it.name)}</td>
         <td class="muted">—</td>
         <td class="num">${it.qty}</td>

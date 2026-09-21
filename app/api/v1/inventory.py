@@ -3,7 +3,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from ...schemas import AdjustIn, InboundIn, MovementList, MovementResult, OutboundIn
+from ...schemas import (ITEM_ID_DESC, AdjustIn, InboundIn, MovementList, MovementResult,
+                        OutboundIn)
 from ...service import inventory
 from ..deps import require_shop
 
@@ -34,9 +35,9 @@ def adjust(shop_id: ShopDep, body: AdjustIn):
 
 @router.get("/movements", response_model=MovementList, summary="库存流水查询")
 def list_movements(shop_id: ShopDep,
-                   item_id: int | None = Query(default=None),
+                   item_id: str | None = Query(default=None, description=ITEM_ID_DESC),
                    type: str | None = Query(default=None, description="in | out | adjust"),
                    offset: int = Query(default=0, ge=0),
                    limit: int = Query(default=50, ge=1, le=200)):
-    return inventory.list_movements(shop_id, item_id=item_id, mtype=type,
+    return inventory.list_movements(shop_id, item_ref=item_id, mtype=type,
                                     offset=offset, limit=limit)
