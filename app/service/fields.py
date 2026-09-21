@@ -181,10 +181,10 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
         if not neg2:
             neg_rows = [r for r in value_rows if (r["value_int"] or 0) < 0]
             if neg_rows:
-                sample = "、".join(r["item_name"] for r in neg_rows[:3])
+                neg_items = "、".join(r["item_name"] for r in neg_rows[:3])
                 raise ApiError("NEGATIVE_VALUES_EXIST",
                                f"字段「{row['name']}」存在 {len(neg_rows)} 个负值，无法关闭允许负数",
-                               hint=f"负值所在单品：{sample}；请先修正这些值再转换", status=409)
+                               hint=f"负值所在单品：{neg_items}；请先修正这些值再转换", status=409)
 
         kind = fieldtypes.conversion_kind(t1, s1, t2, s2)
 

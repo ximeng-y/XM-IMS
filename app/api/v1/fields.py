@@ -32,7 +32,9 @@ def rename_field(shop_id: ShopDep, field_id: int, body: FieldRename):
 @router.post("/{field_id}/convert", response_model=None, summary="转换字段结构")
 def convert_field(shop_id: ShopDep, field_id: int, body: FieldConvert) -> Any:
     """转换字段结构，返回转换报告：
-    {description, lossy, affected_items, samples: [{item_id, item_name, old, new}]}。
+    {description, lossy, affected_items,
+     samples: [{item_id, item_name, old, new}]}，其中 item_id 为单品标识
+    「SPU 号-组内序号」（如 1-2）。
 
     - string/bool 与其他类型互转需 confirm_clear=true（清空全部值）
     - 有损转换必须带 rounding（ceil/floor/round），缺失返回 400 ROUNDING_REQUIRED

@@ -17,6 +17,10 @@ from . import spus
 # 对外标识格式：正整数-正整数
 ITEM_REF_RE = re.compile(r"^([1-9]\d*)-([1-9]\d*)$")
 
+# 两侧数字各自的上界（SQLite INTEGER 为 64 位有符号）。超出后绑定参数会抛
+# OverflowError，须在解析阶段拦成可读错误，不能让客户端自由文本打到 500
+REF_PART_MAX = 2 ** 63 - 1
+
 
 def format_item_ref(spu_id: int, seq: int) -> str:
     """拼出对外标识「SPU 号-组内序号」"""
@@ -35,6 +39,10 @@ def resolve_item_ref(conn, ref) -> int:
                        hint="单品标识形如 1-2（SPU 号-组内序号）；"
                             "GET /api/v1/items 查看全部单品及其标识", status=400)
     spu_id, seq = int(m.group(1)), int(m.group(2))
+    if spu_id > REF_PART_MAX or seq > REF_PART_MAX:
+        raise ApiError("ITEM_REF_INVALID", f"单品标识超出取值范围：{ref}",
+                       hint=f"SPU 号与组内序号都不得超过 {REF_PART_MAX}；"
+                            "GET /api/v1/items 查看全部单品及其标识", status=400)
     row = conn.execute("SELECT id FROM items WHERE spu_id = ? AND seq = ?",
                        (spu_id, seq)).fetchone()
     if row is None:

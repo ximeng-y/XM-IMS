@@ -37,18 +37,23 @@ def upgrade_shop_db(database) -> None:
     迁移显式开一个事务：Python sqlite3 只在 DML 前隐式开事务，纯 DDL 的迁移
     不会自动获得原子性，因此这里用 BEGIN IMMEDIATE 自己开，保证「结构变更 +
     版本号」要么都生效、要么都回滚。
+
+    版本号必须在拿到写锁之后再读：db.shop_db() 在缓存未命中时会并发各建一个
+    连接，两个连接都会走到这里，若在锁外读版本，后到的那个会拿着过期的版本号
+    重复执行 ADD COLUMN，撞上 duplicate column name。
     """
     conn = database.conn
     with database.lock:
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version >= CURRENT_VERSION:
-            return
-        if version == 0:
-            # 建库时尚未记录版本的骨架库，结构等同 v1 基线
-            version = BASELINE_VERSION
         if not conn.in_transaction:
             conn.execute("BEGIN IMMEDIATE")
         try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version >= CURRENT_VERSION:
+                conn.commit()
+                return
+            if version == 0:
+                # 建库时尚未记录版本的骨架库，结构等同 v1 基线
+                version = BASELINE_VERSION
             for target in range(version + 1, CURRENT_VERSION + 1):
                 UPGRADES[target](conn)
                 # PRAGMA 不接受参数占位，target 是循环内的整数
