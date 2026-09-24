@@ -165,7 +165,8 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
 
         if (t1, s1, neg1) == (t2, s2, neg2):
             raise ApiError("FIELD_NO_CHANGE", "转换目标与当前结构相同",
-                           hint="无需转换；如需改名请使用 PATCH /api/v1/fields/{id}", status=400)
+                           hint="无需转换，若需要转换，请选择将要转换成的目标数据类型",
+                           status=400)
 
         # 取全部现存值（含单品标识，供报告与审计）；对外一律用「SPU 号-组内序号」
         value_rows = d.conn.execute(
@@ -199,17 +200,18 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
 
         if kind == "clear":
             # string/bool 与其他类型互转：确认后清空全部值
+            # 预览优先于清空确认：dry_run 只返回报告（含清空规模与样例），不要求 confirm_clear
             samples = [sample(r, fieldtypes.decode(t1, s1, r["value_int"]), None)
                        for r in value_rows[:5]]
+            if dry_run:
+                return {"dry_run": True, "requires_clear": True,
+                        "affected_items": len(value_rows), "samples": samples,
+                        "field": _target_def(field_id, row["name"], t2, s2, neg2)}
             if not confirm_clear:
                 raise ApiError("CONVERT_REQUIRES_CLEAR",
                                f"「{t1}」与「{t2}」不可互转，转换将清空字段「{row['name']}」"
                                f"的全部 {len(value_rows)} 个值",
                                hint="确认清空并转换请附带 confirm_clear=true", status=409)
-            if dry_run:
-                return {"dry_run": True, "requires_clear": True,
-                        "affected_items": len(value_rows), "samples": samples,
-                        "field": _target_def(field_id, row["name"], t2, s2, neg2)}
             d.conn.execute("DELETE FROM custom_values WHERE field_id = ?", (field_id,))
             _update_def(d.conn, field_id, t2, s2, neg2)
             db.write_audit(d.conn, "field_convert", "field", field_id,
