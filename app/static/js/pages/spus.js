@@ -6,7 +6,7 @@ async function loadSpus() {
   try {
     const data = await XM.get("/spus");
     if (!data.spus.length) {
-      tbody.innerHTML = `<tr><td colspan="5" class="t-empty">还没有 SPU；可直接在「单品」页通过名称自动创建</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="t-empty">还没有 SPU；可在「库存」页用「新建 SPU」创建，或在新建单品时按名称自动创建</td></tr>`;
       return;
     }
     tbody.innerHTML = data.spus.map((s) => `

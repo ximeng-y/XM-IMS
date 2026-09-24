@@ -1,11 +1,25 @@
 {% extends "base.html" %}
-{% block title %}库存总览{% endblock %}
+{% block title %}库存{% endblock %}
 {% block nav %}inventory{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
-    <h1>库存总览</h1>
+    <h1>库存</h1>
     <div class="sub">按 SPU 分组查看库存；点击行首三角展开附属 SKU</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="ops-bar">
+    <button type="button" class="btn-outline btn-sm" data-op="new-item">新建单品</button>
+    <button type="button" class="btn-outline btn-sm" data-op="new-spu">新建 SPU</button>
+    <button type="button" class="btn-outline btn-sm" data-op="in">入库</button>
+    <button type="button" class="btn-outline btn-sm" data-op="out">出库</button>
+    <button type="button" class="btn-outline btn-sm" data-op="adjust">盘点调整</button>
+    <div class="ops-search">
+      <input id="fltQ" placeholder="搜索 SPU / SKU 名称" autocomplete="off">
+      <button type="button" id="btnClearQ" class="btn-outline btn-sm" hidden>清空</button>
+    </div>
   </div>
 </div>
 
@@ -18,4 +32,8 @@
   </div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/inventory.js?v=2"></script>{% endblock %}
+{% block scripts %}
+<script src="/static/js/components/item-form.js?v=1"></script>
+<script src="/static/js/components/ops-forms.js?v=1"></script>
+<script src="/static/js/pages/inventory.js?v=3"></script>
+{% endblock %}

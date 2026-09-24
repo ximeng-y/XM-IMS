@@ -29,12 +29,13 @@
 <div class="panel">
   <h2>快捷入口</h2>
   <div style="display:flex;gap:.6rem;flex-wrap:wrap">
-    <a href="/items" role="button" class="btn-outline">新建单品</a>
-    <a href="/ops" role="button" class="btn-outline">入库</a>
-    <a href="/ops" role="button" class="btn-outline">出库</a>
-    <a href="/ops" role="button" class="btn-outline">盘点调整</a>
+    <a href="/inventory?op=new-item" role="button" class="btn-outline">新建单品</a>
+    <a href="/inventory?op=in" role="button" class="btn-outline">入库</a>
+    <a href="/inventory?op=out" role="button" class="btn-outline">出库</a>
+    <a href="/inventory?op=adjust" role="button" class="btn-outline">盘点调整</a>
     <a href="/movements" role="button" class="btn-outline">查流水</a>
   </div>
+  <div class="hint">点击后进入「库存」页并直接弹出对应操作小窗</div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/overview.js?v=1"></script>{% endblock %}
+{% block scripts %}<script src="/static/js/pages/overview.js?v=2"></script>{% endblock %}

@@ -5,30 +5,9 @@
 <div class="page-head">
   <div>
     <h1>单品（SKU）管理</h1>
+    <div class="sub">新建单品走「新建单品」小窗；也可到「库存」页操作区完成</div>
   </div>
-</div>
-
-<div class="panel">
-  <h2>新建单品</h2>
-  <form novalidate id="fCreate">
-    <div class="form-grid">
-      <div>
-        <label>SKU 名称 <span class="fieldreq">*</span></label>
-        <input id="itName" maxlength="200" placeholder="如：白 / L 码" autocomplete="off">
-      </div>
-      <div style="grid-column:1/-1">
-        <label for="itSpuInput">SPU 名称 <span class="fieldreq">*</span></label>
-        <div class="spu-combo" id="itSpuCombo">
-          <input id="itSpuInput" placeholder="点击展开全部 SPU，或输入名称即时过滤" autocomplete="off">
-          <div class="spu-combo-list" id="itSpuList"></div>
-        </div>
-      </div>
-    </div>
-    <div id="itValueGrid" class="form-grid" style="margin-top:.9rem"></div>
-    <div style="margin-top:1rem"><button type="submit" class="btn-sm">创建单品</button></div>
-    <div class="hint">留空的字段值不会提交</div>
-  </form>
-  <div id="createResult"></div>
+  <div><button type="button" id="btnNewItem" class="btn-sm">＋ 新建单品</button></div>
 </div>
 
 <div class="panel">
@@ -53,4 +32,7 @@
   <div class="pager" id="itemPager"></div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/items.js?v=3"></script>{% endblock %}
+{% block scripts %}
+<script src="/static/js/components/item-form.js?v=1"></script>
+<script src="/static/js/pages/items.js?v=4"></script>
+{% endblock %}
