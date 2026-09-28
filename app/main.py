@@ -8,10 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from . import db, web
 from .api.v1 import router as v1_router
 from .errors import register_error_handlers
+from .sync.runtime import lifespan, install
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
+        lifespan=lifespan,
         title="XM-IMS",
         description=(
             "个人电商进销存系统。\n\n"
@@ -26,7 +28,7 @@ def create_app() -> FastAPI:
     app.include_router(web.router)
     app.mount("/static", StaticFiles(directory=web.STATIC_DIR), name="static")
     register_error_handlers(app)
-    db.init()
+    install(app)
     return app
 
 

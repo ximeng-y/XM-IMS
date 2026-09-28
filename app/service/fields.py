@@ -81,9 +81,9 @@ def create_field(shop_id: int, name: str, type_: str,
     with d.lock, d.conn:
         _ensure_name_free(d.conn, name)
         cur = d.conn.execute(
-            "INSERT INTO custom_fields (name, type, allow_negative, scale, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, type_, int(allow_negative), scale, ts, ts))
+            "INSERT INTO custom_fields (sync_uid, name, type, allow_negative, scale, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (db.new_uid(), name, type_, int(allow_negative), scale, ts, ts))
         field_id = cur.lastrowid
         db.write_audit(d.conn, "field_create", "field", field_id,
                        {"name": name, "type": type_, "allow_negative": allow_negative,
@@ -128,7 +128,7 @@ def delete_field(shop_id: int, field_id: int, confirm: bool) -> dict:
         # custom_values 经外键 ON DELETE CASCADE 一并删除
         d.conn.execute("DELETE FROM custom_fields WHERE id = ?", (field_id,))
         db.write_audit(d.conn, "field_delete", "field", field_id,
-                       {"name": row["name"], "type": row["type"], "deleted_values": deleted_values})
+                       {"name": row["name"], "type": row["type"], "deleted_values": deleted_values}, entity_uid=row["sync_uid"])
     return {"deleted": True, "field": _field_out(row), "deleted_values": deleted_values}
 
 

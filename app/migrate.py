@@ -1,15 +1,12 @@
-"""店铺库版本迁移
+"""同步数据目录的店铺库版本检查与新库初始化。
 
-用 SQLite 的 `PRAGMA user_version` 记录结构版本，店铺库每次打开时按版本逐步升级。
-新建库由 SHOP_DDL 直接建成当前版本，不经过迁移。
-
-约定：每步迁移只依赖「上一步已完成」的状态；迁移与 user_version 写入在同一事务内，
-中途失败则整体回滚，下次打开重跑。
+新版库使用持久同步标识，结构版本为 3；旧目录不自动迁移。
+历史迁移函数保留供旧版本维护参考，当前入口只接受当前版本。
 """
 from . import schema
 
 # 当前店铺库结构版本；SHOP_DDL 建出的新库直接标记为该值
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
 
 # v0 表示建库时尚未记录版本（最早的骨架库），结构等同 v1 基线
 BASELINE_VERSION = 1
@@ -48,7 +45,11 @@ def upgrade_shop_db(database) -> None:
             conn.execute("BEGIN IMMEDIATE")
         try:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version >= CURRENT_VERSION:
+            if version > CURRENT_VERSION:
+                raise ValueError("数据库来自较新版本，请升级应用")
+            if version < CURRENT_VERSION:
+                raise ValueError("此版本使用带同步标识的新库，不自动迁移旧数据库")
+            if version == CURRENT_VERSION:
                 conn.commit()
                 return
             if version == 0:

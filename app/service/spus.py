@@ -12,7 +12,7 @@ def create_spu(shop_id: int, name: str) -> dict:
     ts = now_iso()
     with d.lock, d.conn:
         cur = d.conn.execute(
-            "INSERT INTO spus (name, created_at, updated_at) VALUES (?, ?, ?)", (name, ts, ts))
+            "INSERT INTO spus (sync_uid, name, created_at, updated_at) VALUES (?, ?, ?, ?)", (db.new_uid(), name, ts, ts))
         spu_id = cur.lastrowid
         db.write_audit(d.conn, "spu_create", "spu", spu_id, {"name": name})
     return {"id": spu_id, "name": name, "sku_count": 0, "created_at": ts, "updated_at": ts}
@@ -70,8 +70,8 @@ def resolve_spu(conn, spu_id: int | None, spu_name: str | None) -> tuple[int, bo
             return row["id"], False
         ts = now_iso()
         cur = conn.execute(
-            "INSERT INTO spus (name, created_at, updated_at) VALUES (?, ?, ?)",
-            (spu_name, ts, ts))
+            "INSERT INTO spus (sync_uid, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (db.new_uid(), spu_name, ts, ts))
         db.write_audit(conn, "spu_create", "spu", cur.lastrowid,
                        {"name": spu_name, "via": "item_auto_create"})
         return cur.lastrowid, True

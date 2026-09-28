@@ -158,8 +158,8 @@ def create_item(shop_id: int, payload: ItemCreate) -> dict:
         by_name = _resolve_fields(d.conn, payload.values)
         ts = now_iso()
         cur = d.conn.execute(
-            "INSERT INTO items (spu_id, seq, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (spu_id, _next_seq(d.conn, spu_id), name, ts, ts))
+            "INSERT INTO items (sync_uid, spu_id, seq, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (db.new_uid(), spu_id, _next_seq(d.conn, spu_id), name, ts, ts))
         item_id = cur.lastrowid
         for fname, value in payload.values.items():
             _set_value(d.conn, item_id, by_name[fname], value)

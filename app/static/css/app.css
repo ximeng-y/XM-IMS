@@ -504,3 +504,13 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
   .sidenav a { border-left: none; border-bottom: 3px solid transparent; }
   .sidenav a.active { border-bottom-color: var(--blue); }
 }
+
+/* 数据同步与三方冲突处理 */
+.sync-status{font-size:.8rem;white-space:nowrap;padding:.35rem .65rem;border:1px solid var(--pico-muted-border-color);border-radius:.4rem}
+.sync-status[data-state="conflict"],.sync-status[data-state="behind"]{color:var(--pico-primary);font-weight:700}
+.sync-page{width:100%;max-width:100%}.sync-page h1{margin-bottom:.35rem}.sync-page article,.sync-page details{margin-bottom:1.2rem}
+.sync-actions{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.8rem 0}.sync-actions>*{margin-bottom:0}.sync-actions input{max-width:18rem}
+.conflict-card{border:1px solid var(--pico-muted-border-color);border-radius:.5rem;padding:1rem;margin:1rem 0}.conflict-card h3{font-size:1rem;overflow-wrap:anywhere}
+.conflict-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}.conflict-grid>div{min-width:0}.conflict-grid pre,#automaticChanges pre,#mergePreview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:22rem;overflow:auto;font-size:.8rem;padding:.7rem}
+.sync-page [hidden]{display:none!important}
+@media(max-width:75rem){.conflict-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
