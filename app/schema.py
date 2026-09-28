@@ -1,6 +1,9 @@
 """全部 DDL：索引库 + 店铺库模板
 
 索引库存账号/店铺清单等全局轻量数据；业务数据全部在各店铺库内，物理隔离。
+审计 audit_log.entity_id 是事件发生时的历史编号，不是当前对象的外键。
+合并改号后按 entity_type + entity_uid 关联对应表的 sync_uid；对象已删除时不得回退匹配 entity_id。
+entity_id 与 detail 原文保持不可变，本次编号变化另记于 sync_merge 审计。
 """
 
 INDEX_DDL = """

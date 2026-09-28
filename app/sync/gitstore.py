@@ -7,7 +7,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 from urllib.parse import urlsplit
-from .common import fail, remove_tree
+from .common import fail, remove_tree, replace_path
 
 
 class GitStore:
@@ -96,6 +96,9 @@ class GitStore:
                     fail("SNAPSHOT_INVALID", "远端包含不受支持的文件")
 
     def commit(self, snapshot, message, parents=None, update=True):
+        source, root = Path(snapshot).resolve(), self.root.resolve()
+        if source == root or source.is_relative_to(root) or root.is_relative_to(source):
+            fail("SNAPSHOT_SOURCE", "提交快照必须独立于 Git 工作树")
         for child in self.root.iterdir():
             if child.name == ".git":
                 continue
@@ -147,8 +150,12 @@ class GitStore:
             return False
         if old.exists():
             remove_tree(old, self.root.parent)
-        self.root.rename(old)
-        fresh.rename(self.root)
+        replace_path(self.root, old, self.root.parent)
+        try:
+            replace_path(fresh, self.root, self.root.parent)
+        except OSError:
+            replace_path(old, self.root, self.root.parent)
+            raise
         remove_tree(old, self.root.parent)
         # 新仓库继续使用确定性的行尾和禁用 hooks。
         self.run("config", "core.autocrlf", "false")

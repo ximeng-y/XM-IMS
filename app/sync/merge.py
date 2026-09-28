@@ -75,9 +75,14 @@ class Merger:
         identity = key + "#" + field
         choice = self.choices.get(identity)
         resolved = choice is not None
-        value = values[1]
+        disabled = {source: "该版本没有此对象，请选择已有名称或输入新名称"
+                    for source, value in zip(("base", "local", "remote"), values)
+                    if kind == "name" and value is None}
+        value = next((v for v in values[1:] + values[:1] if v is not None), None) if kind == "name" else values[1]
         if choice:
             source = choice.get("source")
+            if source in disabled:
+                fail("RESOLUTION_INVALID", disabled[source])
             if source in ("base", "local", "remote"):
                 value = values[("base", "local", "remote").index(source)]
             elif source == "custom" and editable:
@@ -92,7 +97,7 @@ class Merger:
             shown, shown_result = [display(v) for v in values], display(value)
         self.conflicts.append({"label": self.describe(key), "id": identity, "key": key, "field": field, "kind": kind,
                                "base": shown[0], "local": shown[1], "remote": shown[2],
-                               "result": shown_result, "resolved": resolved, "editable": editable, **(extra or {})})
+                               "result": shown_result, "resolved": resolved, "editable": editable, "disabled_sources": disabled, **(extra or {})})
         if kind == "value" and extra and "display_values" in extra:
             source = choice.get("source") if choice else "local"
             self.conflicts[-1]["display_result"] = str(choice.get("value")) if source == "custom" else extra["display_values"][("base", "local", "remote").index(source)]
@@ -274,7 +279,8 @@ class Merger:
         for keys in groups.values():
             if len(keys) > 1:
                 for key in keys:
-                    name = self.conflict(key, "$unique_name", [None, result[key]["name"], result[key]["name"]], "name", True)
+                    names = [model["rows"].get(key, {}).get("name") for model in self.models]
+                    name = self.conflict(key, "$unique_name", names, "name", True)
                     if not isinstance(name, str) or not name.strip():
                         fail("NAME_INVALID", "名称不能为空")
                     result[key]["name"] = name.strip()
@@ -395,6 +401,8 @@ class Merger:
                             if row[column] not in mappings[database].get(target, {}):
                                 fail("REFERENCE_CONFLICT", "候选结果仍有未解决的引用")
                             row[column] = mappings[database][target][row[column]]
+                        # 审计 entity_id/detail 保存发生时的编号；当前对象只按 entity_uid 关联，
+                        # 不能像业务外键一样重映射，否则会改写不可变历史。
                         columns = list(row)
                         conn.execute("INSERT INTO " + snapshot.quote(table) + " (" + ",".join(map(snapshot.quote, columns)) + ") VALUES (" + ",".join("?" for _ in columns) + ")", [row[c] for c in columns])
                 if kind == "shop":

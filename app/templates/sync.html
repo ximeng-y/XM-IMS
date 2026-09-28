@@ -13,7 +13,7 @@
       <a id="enterApp" href="/" role="button" class="btn-outline" hidden>进入应用</a>
     </div>
     <div id="initializeBox" hidden>
-      <p>请选择初始化来源。当前版本使用新的数据目录；旧数据库保留，不自动读取。使用远端会替换当前活动数据，替换前保留副本。</p>
+      <p>请选择初始化来源。当前版本使用新的数据目录；旧数据库保留，不自动读取。使用远端会替换当前活动数据，替换前保留副本。有未上传提交或冲突草稿时，必须先处理同步才能重新初始化。</p>
       <button id="useLocal" class="btn-outline">使用本地数据／新建数据集</button>
       <button id="useRemote" class="btn-outline">从远端恢复</button>
     </div>
@@ -43,4 +43,4 @@
   <details><summary>本地保留与历史</summary><p id="retentionInfo"></p><ol id="snapshotList"></ol><p class="muted">通常保留三份结构化快照。远端保留全部 Git 历史；未上传历史、共同基线和冲突数据暂不清理。换电脑前请执行“立即同步”，确认已同步远端。</p></details>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/sync.js?v=1"></script>{% endblock %}
+{% block scripts %}<script src="/static/js/pages/sync.js?v=2"></script>{% endblock %}

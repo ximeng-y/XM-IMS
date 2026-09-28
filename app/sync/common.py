@@ -3,6 +3,7 @@ import contextlib
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from ..errors import ApiError
 
@@ -27,7 +28,22 @@ def atomic_json(path, value):
         out.write(dump(value) + "\n")
         out.flush()
         os.fsync(out.fileno())
-    os.replace(temporary, path)
+    replace_path(temporary, path, path.parent)
+
+
+def replace_path(source, target, workspace):
+    """仅在指定目录内移动；短暂文件占用时有限重试，失败保留源文件。"""
+    source, target, workspace = Path(source).resolve(), Path(target).resolve(), Path(workspace).resolve()
+    if any(p == workspace or not p.is_relative_to(workspace) for p in (source, target)):
+        raise ValueError("移动路径必须位于指定数据目录内")
+    for attempt in range(3):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == 2:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def remove_tree(target, workspace):

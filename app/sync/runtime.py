@@ -4,6 +4,7 @@ import contextlib
 import time
 from fastapi.responses import JSONResponse
 from .. import db
+from ..errors import ApiError
 from .manager import SyncManager
 from .api import router
 
@@ -17,6 +18,10 @@ async def lifespan(app):
     async def loop():
         try:
             await asyncio.to_thread(manager.start)
+        except ApiError as exc:
+            manager.status_name = "blocked"
+            manager.error = {"code": exc.code, "message": exc.message}
+            db.set_ready(False)
         except Exception:
             manager.status_name = "blocked"
             manager.error = {"code": "SYNC_START_FAILED", "message": "同步初始化失败，请检查数据目录或重复运行的实例"}
@@ -31,6 +36,8 @@ async def lifespan(app):
                 if manager.started and manager.settings["auto"] and manager.settings["remote"] and not manager.busy and not (manager.state.get("session") and not db.business_ready):
                     try:
                         await asyncio.to_thread(manager.run)
+                    except ApiError as exc:
+                        manager.error = {"code": exc.code, "message": exc.message}
                     except Exception:
                         manager.error = {"code": "SYNC_CHECK_FAILED", "message": "后台同步未完成，请进入同步页重试"}
                 last_run = time.monotonic()

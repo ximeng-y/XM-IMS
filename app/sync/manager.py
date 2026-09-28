@@ -9,7 +9,7 @@ from pathlib import Path
 from .. import config, db
 from ..errors import ApiError
 from . import snapshot
-from .common import atomic_json, read_json, remove_tree, fail, ProcessLock
+from .common import atomic_json, read_json, remove_tree, replace_path, fail, ProcessLock
 from .gitstore import GitStore
 from .merge import Merger
 
@@ -80,8 +80,15 @@ class SyncManager:
             self.mutex.release()
             fail("SYNC_BUSY", "已有同步任务运行，请稍后重试")
         self.busy = True
+        was_ready = db.business_ready
         try:
             yield
+        except OSError as exc:
+            error = ApiError("SYNC_STORAGE_FAILED", "同步文件写入或移动失败，请检查磁盘空间、目录权限或文件占用后重试", status=409)
+            self.error = {"code": error.code, "message": error.message}
+            self.status_name = "conflict" if self.state.get("requires_resolution") else "blocked"
+            db.set_ready(was_ready)
+            raise error from exc
         finally:
             self.busy = False
             self.mutex.release()
@@ -103,6 +110,8 @@ class SyncManager:
         if destination.exists():
             try:
                 snapshot.validate_files(destination)
+                if snapshot.sha(destination / "manifest.json") != digest:
+                    fail("SNAPSHOT_INVALID", "缓存内容与快照标识不一致")
             except ApiError:
                 remove_tree(destination, self.directory)
         if not destination.exists():
@@ -110,7 +119,10 @@ class SyncManager:
             staging = self.temporary("cache")
             try:
                 shutil.copytree(source, staging, ignore=shutil.ignore_patterns(".git"))
-                staging.rename(destination)
+                snapshot.validate_files(staging)
+                if snapshot.sha(staging / "manifest.json") != digest:
+                    fail("SNAPSHOT_INVALID", "复制期间快照内容已变化")
+                replace_path(staging, destination, self.directory)
             finally:
                 remove_tree(staging, self.directory)
         order = self.state.setdefault("cache_order", [])
@@ -120,14 +132,28 @@ class SyncManager:
         self.save()
         return digest
 
-    def object(self, digest):
+    def _snapshot_source(self, digest):
+        """返回已校验的只读来源；工作树路径只在当前同步任务内有效。"""
         p = self.directory / "objects" / digest
         if p.exists():
+            snapshot.validate_files(p)
+            if snapshot.sha(p / "manifest.json") != digest:
+                fail("SNAPSHOT_INVALID", "缓存内容与快照标识不一致")
             return p
         repo = self.directory / "repo"
         if (repo / "manifest.json").exists() and snapshot.sha(repo / "manifest.json") == digest:
+            snapshot.validate_files(repo)
             return repo
         fail("BASE_MISSING", "所需同步基线不存在，不能安全比较，请重新绑定并选择数据来源")
+
+    def object(self, digest):
+        source = self._snapshot_source(digest)
+        if source == self.directory / "repo":
+            # 提交会覆盖工作树，必须返回独立副本；纯状态检查只使用只读来源。
+            if self.cache(source) != digest:
+                fail("SNAPSHOT_INVALID", "缓存期间快照内容已变化")
+            return self.directory / "objects" / digest
+        return source
 
     def capture(self, force=False):
         if not self.active:
@@ -183,7 +209,7 @@ class SyncManager:
         for commit_key, hash_key in (("base_commit", "baseline"), ("remote_commit", "remote_hash")):
             if commit == self.state.get(commit_key) and self.state.get(hash_key):
                 try:
-                    self.object(self.state[hash_key])
+                    self._snapshot_source(self.state[hash_key])
                     return self.state[hash_key]
                 except ApiError:
                     pass
@@ -198,33 +224,46 @@ class SyncManager:
         if self.active:
             return
         generation = uuid.uuid4().hex
-        self.active = {"generation": generation, "dataset": uuid.uuid4().hex}
+        updated = {"generation": generation, "dataset": uuid.uuid4().hex}
+        previous_directory = config.DATA_DIR
+        db.set_ready(False)
         config.use_generation(self.runtime / generation)
-        with db.internal_access():
-            db.init()
-        atomic_json(self.runtime / "active.json", self.active)
-        self.status_name = "local"
-        db.set_ready(True)
-        self.capture(force=True)
+        try:
+            with db.internal_access():
+                db.init()
+            atomic_json(self.runtime / "active.json", updated)
+        except BaseException:
+            db.close_all()
+            config.use_generation(previous_directory)
+            raise
+        self.active = updated
 
     def initialize(self, source):
         previously_ready = db.business_ready
         try:
             return self._initialize(source)
         except ApiError as exc:
-            self.error = {"code": exc.code, "message": exc.message}
-            self.status_name = "offline" if exc.code in ("GIT_FAILED", "GIT_UNAVAILABLE") else "blocked"
-            db.set_ready(previously_ready)
+            if exc.code not in ("SYNC_PENDING", "SYNC_BUSY"):
+                self.error = {"code": exc.code, "message": exc.message}
+                self.status_name = "offline" if exc.code in ("GIT_FAILED", "GIT_UNAVAILABLE") else "blocked"
+                db.set_ready(previously_ready)
             raise
 
     def _initialize(self, source):
         if source not in ("local", "remote"):
             fail("INITIALIZE_INVALID", "请选择本地或远端作为初始化来源")
         with self.operation():
+            if any(self.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
+                fail("SYNC_PENDING", "请先同步未上传提交或处理冲突，再重新初始化；现有历史和草稿已保留")
+            self.error = None
+            db.set_ready(False)
             if not self.settings["remote"]:
                 if source != "local":
                     fail("SYNC_NOT_CONFIGURED", "请先配置远端")
                 self.new_local()
+                self.capture(force=True)
+                self.status_name = "local"
+                db.set_ready(True)
                 return self.status()
             git = self.git()
             tip = git.fetch()
@@ -266,7 +305,7 @@ class SyncManager:
             if updated["remote"]:
                 GitStore.validate_remote(updated["remote"], self.allow_file)
             rebound = (updated["remote"], updated["branch"]) != (self.settings["remote"], self.settings["branch"])
-            if rebound and (self.state.get("pending") or self.state.get("session")):
+            if rebound and any(self.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
                 fail("SYNC_PENDING", "请先处理未上传提交或冲突，再更换远端")
             if rebound:
                 repo = self.directory / "repo"
@@ -327,7 +366,7 @@ class SyncManager:
                     return self.status()
                 if not remote:
                     fail("REMOTE_MISSING", "已绑定的远端分支消失，禁止自动重新初始化")
-                if read_json(self.object(remote) / "manifest.json")["dataset"] != self.active["dataset"]:
+                if read_json(self._snapshot_source(remote) / "manifest.json")["dataset"] != self.active["dataset"]:
                     fail("DATASET_CONFLICT", "远端数据集已改变，请重新绑定并明确选择数据来源")
                 self.state["remote_hash"], self.state["remote_commit"] = remote, tip
                 journal = self.state.get("journal")
@@ -576,7 +615,7 @@ class SyncManager:
                 else:
                     self.state["cleanup_pending"] = True
                     self.save()
-            except ApiError:
+            except (ApiError, OSError):
                 # 已同步结果不因可重试的本地历史收缩失败而回滚。
                 self.state["cleanup_pending"] = True
                 self.save()
