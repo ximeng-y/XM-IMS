@@ -19,7 +19,8 @@ const UI = (() => {
   function fmtTimeShort(iso) {
     if (!iso) return "—";
     const d = new Date(iso);
-    return isNaN(d) ? iso : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return isNaN(d) ? iso : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+                            `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   // 带符号数量：入库绿 +、出库红 −
   function fmtDelta(n) {

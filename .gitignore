@@ -34,4 +34,8 @@ Thumbs.db
 # ZCode 临时文件夹
 .XMTEMP/
 
+# Agent 目录与软链接
+.claude/
+.agents/
+
 # 注：static/ 下的 pico.css 与 chart.umd.js 为有意提交的本地依赖，勿加入忽略
