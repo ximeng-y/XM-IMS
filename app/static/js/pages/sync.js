@@ -34,6 +34,7 @@ async function refresh(){
   text($s('syncMessage'),message);
   $s('enterApp').hidden=!syncState.business_ready;
   $s('offlineEnter').hidden=syncState.state!=='offline';
+  $s('offlineEnter').disabled=syncState.busy;
   $s('initializeBox').hidden=!['setup','initialize','binding'].includes(syncState.state);
   $s('useRemote').hidden=!syncState.configured;
   $s('syncNow').disabled=syncState.busy;

@@ -54,7 +54,7 @@ class SyncManager:
                 db.init()
         # repo 目录替换中断时先恢复旧仓库，不丢未上传对象。
         if not (self.directory / "repo").exists() and (self.directory / "repo-old").exists():
-            (self.directory / "repo-old").rename(self.directory / "repo")
+            replace_path(self.directory / "repo-old", self.directory / "repo", self.directory)
         journal = self.state.get("journal")
         if journal and journal.get("confirmed"):
             if journal.get("apply"):
@@ -243,7 +243,9 @@ class SyncManager:
         try:
             return self._initialize(source)
         except ApiError as exc:
-            if exc.code not in ("SYNC_PENDING", "SYNC_BUSY"):
+            if exc.code == "SYNC_PENDING":
+                self.error = None
+            elif exc.code != "SYNC_BUSY":
                 self.error = {"code": exc.code, "message": exc.message}
                 self.status_name = "offline" if exc.code in ("GIT_FAILED", "GIT_UNAVAILABLE") else "blocked"
                 db.set_ready(previously_ready)
@@ -553,10 +555,12 @@ class SyncManager:
             return self.status()
 
     def offline(self):
-        if not self.active or self.status_name != "offline" or self.state.get("requires_resolution"):
-            fail("OFFLINE_NOT_ALLOWED", "当前状态不能跳过同步检查")
-        db.set_ready(True)
-        return self.status()
+        # 与同步状态切换共用互斥，防止等待远端时重新开放业务写入。
+        with self.operation():
+            if not self.active or self.status_name != "offline" or self.state.get("requires_resolution"):
+                fail("OFFLINE_NOT_ALLOWED", "当前状态不能跳过同步检查")
+            db.set_ready(True)
+            return self.status()
 
     def publish(self, git, digest, commit, apply):
         self.state["journal"] = {"hash": digest, "commit": commit, "apply": apply, "confirmed": False}
