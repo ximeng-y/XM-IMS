@@ -36,7 +36,9 @@ def convert_field(shop_id: ShopDep, field_id: int, body: FieldConvert) -> Any:
      samples: [{item_id, item_name, old, new}]}，其中 item_id 为单品标识
     「SPU 号-组内序号」（如 1-2）。
 
-    - string/bool 与其他类型互转需 confirm_clear=true（清空全部值）
+    - string/bool 与其他类型互转需 confirm_clear=true（清空全部值）；
+      dry_run=true 时只返回 {requires_clear, affected_items, samples} 作为预览，
+      不要求 confirm_clear
     - 有损转换必须带 rounding（ceil/floor/round），缺失返回 400 ROUNDING_REQUIRED
     - dry_run=true 只返回报告不落库
     """
