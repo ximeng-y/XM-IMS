@@ -73,9 +73,8 @@ const OpsForm = (() => {
                        out: `<span class="badge red">出库</span>`,
                        adjust: `<span class="badge gray">盘点</span>` };
 
-  function renderResult(box, cfg, res, requestTargetQty) {
+  function renderResult(box, cfg, res) {
     const m = res.movement;
-    const targetQty = requestTargetQty ?? m.target_qty;
     const badges = [
       `<span class="badge fill">已执行</span>`,
       res.idempotent_replay ? `<span class="badge red">幂等重放</span>` : "",
@@ -85,7 +84,7 @@ const OpsForm = (() => {
       ["类型", TYPE_BADGE[m.type] || esc(m.type)],
       ["数量增量", UI.fmtDelta(m.qty_delta)],
       ["单价", UI.fmtMoney(m.unit_price)],
-      targetQty !== null && targetQty !== undefined ? ["目标库存", targetQty] : null,
+      m.target_qty !== null && m.target_qty !== undefined ? ["目标库存", m.target_qty] : null,
       m.batch_no ? ["批次", esc(m.batch_no)] : null,
       m.supplier ? ["供应商", esc(m.supplier)] : null,
       m.channel ? ["渠道", esc(m.channel)] : null,
@@ -177,7 +176,7 @@ const OpsForm = (() => {
           UI.apiFail(e, `${cfg.label}失败`);
           return;
         }
-        renderResult(resultBox, cfg, res, body.target_qty);
+        renderResult(resultBox, cfg, res);
         if (res.idempotent_replay) UI.toast("重复提交：返回首次提交的结果，未重复记账");
         else UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
         // 真实落库后换新幂等键，避免下次误重放
