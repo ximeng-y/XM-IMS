@@ -20,6 +20,7 @@
   --ink: #1c2733;
   --ink-soft: #5a6b7d;
   --danger: #b3322e;
+  --warn: #9a6410;
   --ok: #1c7d43;
 
   --pico-primary: var(--blue);
@@ -247,6 +248,7 @@ td.num, th.num { font-variant-numeric: tabular-nums; }
 .badge.fill { background: var(--blue); color: #fff; }
 .badge.gray { border-color: var(--line); color: var(--ink-soft); }
 .badge.red { border-color: var(--danger); color: var(--danger); }
+.badge.warn { border-color: var(--warn); color: var(--warn); }
 .badge.green { border-color: var(--ok); color: var(--ok); }
 .pos { color: var(--ok); }
 .neg { color: var(--danger); }
@@ -318,6 +320,7 @@ input:focus, select:focus, textarea:focus {
   animation: fadeIn .2s ease;
 }
 .result-box.error-box { background: #fdf0ef; border-color: var(--danger); }
+.result-box.warn-box { background: #fdf6ec; border-color: var(--warn, #b8770b); }
 .result-box pre {
   margin: .5rem 0 0; padding: .6rem .8rem;
   background: #fff; border: 1px solid var(--line-light);

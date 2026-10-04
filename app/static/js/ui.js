@@ -57,6 +57,12 @@ const UI = (() => {
       `<span class="badge red">${esc(e.code)}</span> ${esc(e.message)}</div>` +
       (e.hint ? `<div class="hint">${esc(e.hint)}</div>` : "") + `</div>`;
   }
+  // 操作前警告 → HTML 片段（用于「需再次确认」类的风险提示）
+  function warnHtml(title, detail = "") {
+    return `<div class="result-box warn-box"><div class="headline">` +
+      `<span class="badge warn">注意</span> ${esc(title)}</div>` +
+      (detail ? `<div class="hint">${esc(detail)}</div>` : "") + `</div>`;
+  }
 
   // 按钮忙碌态包装：执行期间禁用按钮并显示「处理中」
   async function withBusy(btn, fn) {
@@ -237,7 +243,7 @@ const UI = (() => {
 
   return {
     $, $$, esc, fmtTime, fmtTimeShort, fmtDelta, fmtMoney, fmtVal,
-    toast, ok, fail, apiFail, apiFailHtml, withBusy,
+    toast, ok, fail, apiFail, apiFailHtml, warnHtml, withBusy,
     baseDialog, promptDialog, confirmDialog, mkBtn, resultBox, renderPager, fillItemOptions,
     requireShop: () => XM.state.shopId !== null,
   };

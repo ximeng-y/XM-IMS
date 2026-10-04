@@ -165,17 +165,21 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
 
         if (t1, s1, neg1) == (t2, s2, neg2):
             raise ApiError("FIELD_NO_CHANGE", "转换目标与当前结构相同",
-                           hint="无需转换；如需改名请使用 PATCH /api/v1/fields/{id}", status=400)
+                           hint="无需转换，若需要转换，请选择将要转换成的目标数据类型",
+                           status=400)
 
         # 取全部现存值（含单品标识，供报告与审计）；对外一律用「SPU 号-组内序号」
         value_rows = d.conn.execute(
-            "SELECT v.item_id, v.value_int, i.name AS item_name, i.spu_id, i.seq "
+            "SELECT v.item_id, v.value_int, v.value_text, i.name AS item_name, i.spu_id, i.seq "
             "FROM custom_values v JOIN items i ON i.id = v.item_id "
             "WHERE v.field_id = ? ORDER BY i.spu_id, i.seq", (field_id,)).fetchall()
 
         def sample(row, old, new) -> dict:
             return {"item_id": items.format_item_ref(row["spu_id"], row["seq"]),
                     "item_name": row["item_name"], "old": old, "new": new}
+
+        def stored_value(row):
+            return row["value_int"] if row["value_int"] is not None else row["value_text"]
 
         # 关闭 allow_negative 前置检查：存在负值则阻断（取整不改变符号）
         if not neg2:
@@ -189,27 +193,36 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
         kind = fieldtypes.conversion_kind(t1, s1, t2, s2)
 
         if kind == "no_change":
-            # 仅 allow_negative 放宽，无值换算
+            # 仅切换 allow_negative，无值换算
+            samples = []
+            for r in value_rows[:5]:
+                old = fieldtypes.decode(t1, s1, stored_value(r))
+                samples.append(sample(r, old, old))
+            result = {"field": _target_def(field_id, row["name"], t2, s2, neg2),
+                      "converted": False, "affected_items": len(value_rows),
+                      "samples": samples, "note": "仅更新了 allow_negative，字段值不变"}
+            if dry_run:
+                return {"dry_run": True, **result}
             _update_def(d.conn, field_id, t2, s2, neg2)
             db.write_audit(d.conn, "field_convert", "field", field_id,
                            {"name": row["name"], "only": "allow_negative",
                             "from": _def_str(t1, s1, neg1), "to": _def_str(t2, s2, neg2)})
-            return {"field": _target_def(field_id, row["name"], t2, s2, neg2),
-                    "converted": False, "note": "仅更新了 allow_negative，字段值不变"}
+            return result
 
         if kind == "clear":
             # string/bool 与其他类型互转：确认后清空全部值
-            samples = [sample(r, fieldtypes.decode(t1, s1, r["value_int"]), None)
+            # 预览优先于清空确认：dry_run 只返回报告（含清空规模与样例），不要求 confirm_clear
+            samples = [sample(r, fieldtypes.decode(t1, s1, stored_value(r)), None)
                        for r in value_rows[:5]]
+            if dry_run:
+                return {"dry_run": True, "requires_clear": True,
+                        "affected_items": len(value_rows), "samples": samples,
+                        "field": _target_def(field_id, row["name"], t2, s2, neg2)}
             if not confirm_clear:
                 raise ApiError("CONVERT_REQUIRES_CLEAR",
                                f"「{t1}」与「{t2}」不可互转，转换将清空字段「{row['name']}」"
                                f"的全部 {len(value_rows)} 个值",
                                hint="确认清空并转换请附带 confirm_clear=true", status=409)
-            if dry_run:
-                return {"dry_run": True, "requires_clear": True,
-                        "affected_items": len(value_rows), "samples": samples,
-                        "field": _target_def(field_id, row["name"], t2, s2, neg2)}
             d.conn.execute("DELETE FROM custom_values WHERE field_id = ?", (field_id,))
             _update_def(d.conn, field_id, t2, s2, neg2)
             db.write_audit(d.conn, "field_convert", "field", field_id,
