@@ -1,4 +1,4 @@
-/* 自定义字段管理页：列表 / 新建 / 改名 / 结构转换（dry_run 报告→执行）/ 删除确认 */
+/* 自定义字段管理页：列表 / 新建 / 改名 / 结构转换（预览报告→二次确认→执行）/ 删除确认 */
 "use strict";
 
 const TYPE_LABEL = {
@@ -75,8 +75,7 @@ async function renameFlow(f) {
 async function deleteFlow(f) {
   const confirmed = await UI.confirmDialog({
     title: `删除字段「${f.name}」`,
-    bodyHtml: `<p>将删除该字段（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">级联清空所有单品的该字段值</b>，操作不可恢复。</p>
-               <p class="muted" style="font-size:.85rem">对应 DELETE /api/v1/fields/${f.id}?confirm=true</p>`,
+    bodyHtml: `<p>将删除该字段（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">级联清空所有单品的该字段值</b>，操作不可恢复。</p>`,
     confirmText: "确认删除", danger: true,
   });
   if (!confirmed) return;
@@ -88,9 +87,11 @@ async function deleteFlow(f) {
   } catch (e) { UI.apiFail(e, "删除失败"); }
 }
 
-// ---------- 结构转换：dry_run 报告 → 用户选择取整/确认清空 → 执行 ----------
+// ---------- 结构转换：预览报告 → 用户选择取整/二次确认清空 → 执行 ----------
 function convertFlow(f) {
   let done = false;
+  // 已就「清空值」明确警告过的选项签名；选项一变即失效，避免按旧选项二次确认
+  let clearAcked = null;
   const wrap = document.createElement("div");
   wrap.innerHTML = `
     <div class="form-grid" style="grid-template-columns:1fr 1fr">
@@ -117,26 +118,26 @@ function convertFlow(f) {
         <label>取整方式（精度损失时）</label>
         <select id="cvRound">
           <option value="">（未指定）</option>
-          ${Object.entries(ROUND_LABEL).map(([v, t]) => `<option value="${v}">${t}（${v}）</option>`).join("")}
+          ${Object.entries(ROUND_LABEL).map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}
         </select>
       </div>
     </div>
-    <div class="form-check" id="cvClearRow" style="display:none;margin-top:.8rem">
-      <input id="cvClear" type="checkbox"><label for="cvClear" style="margin:0;color:var(--danger)">
-        我确认转换将<b>清空该字段的全部值</b>（文本 / 开关与数值类不可互转）</label>
-    </div>
+    <div id="cvWarn"></div>
     <div id="cvReport"></div>
     <div id="cvError"></div>`;
   const { dlg, foot } = UI.baseDialog(`转换字段「${f.name}」（${typeText(f)}）`, wrap);
 
-  const body = () => {
+  // 当前选项签名：任一选项变化都会重置「已警告」状态
+  const opts = () => [$("#cvType", wrap).value, $("#cvScale", wrap).value,
+                      $("#cvNeg", wrap).value, $("#cvRound", wrap).value].join("|");
+  const body = (confirmClear) => {
     const t = $("#cvType", wrap).value;
     const s = $("#cvScale", wrap).value;
     const neg = $("#cvNeg", wrap).value;
     const r = $("#cvRound", wrap).value;
     const out = {
       rounding: r || null,
-      confirm_clear: $("#cvClear", wrap).checked,
+      confirm_clear: confirmClear,
       dry_run: false,
     };
     if (t) out.new_type = t;
@@ -145,7 +146,16 @@ function convertFlow(f) {
     return out;
   };
 
-  const preview = UI.mkBtn("预览（dry_run）", "btn-outline");
+  const reset = () => {
+    clearAcked = null;
+    $("#cvWarn", wrap).innerHTML = "";
+    $("#cvReport", wrap).innerHTML = "";
+    $("#cvError", wrap).innerHTML = "";
+  };
+  ["#cvType", "#cvScale", "#cvNeg", "#cvRound"].forEach((sel) =>
+    $(sel, wrap).addEventListener("change", reset));
+
+  const preview = UI.mkBtn("预览", "btn-outline");
   const execute = UI.mkBtn("执行转换");
   const close = UI.mkBtn("关闭", "btn-outline");
   preview.type = execute.type = close.type = "button";
@@ -155,11 +165,27 @@ function convertFlow(f) {
   dlg.addEventListener("close", () => { done = true; dlg.remove(); });
 
   preview.onclick = () => UI.withBusy(preview, async () => {
+    // 预览即撤销旧的清空确认，避免失败时残留 confirm_clear 状态
+    clearAcked = null;
     $("#cvError", wrap).innerHTML = "";
+    $("#cvWarn", wrap).innerHTML = "";
     try {
-      const res = await XM.post(`/fields/${f.id}/convert`, { ...body(), dry_run: true });
+      const res = await XM.post(`/fields/${f.id}/convert`, { ...body(false), dry_run: true });
+      if (res.rounding_required) {
+        $("#cvReport", wrap).innerHTML = "";
+        $("#cvError", wrap).innerHTML = UI.warnHtml(
+          "本次转换存在精度损失，请先选择取整方式",
+          `将影响 ${res.affected_items} 个值；请选择取整方式后重新点击「预览」。`);
+        $("#cvRound", wrap).focus();
+        return;
+      }
+      // 清空类转换：预览照常展示内容，仅在报告上方加一条警告带
+      if (res.requires_clear) {
+        $("#cvWarn", wrap).innerHTML = UI.warnHtml("转换将清空该字段的全部值",
+          `「${TYPE_LABEL[f.type] || f.type}」与目标类型不可互转，` +
+          `${res.affected_items} 个值将被清空；确认无误后点击「执行转换」。`);
+      }
       renderReport($("#cvReport", wrap), res, true);
-      if (res.requires_clear) $("#cvClearRow", wrap).style.display = "flex";
     } catch (e) {
       $("#cvReport", wrap).innerHTML = "";
       $("#cvError", wrap).innerHTML = UI.apiFailHtml(e);
@@ -170,26 +196,37 @@ function convertFlow(f) {
 
   execute.onclick = () => UI.withBusy(execute, async () => {
     $("#cvError", wrap).innerHTML = "";
+    // 同一选项已被警告过清空风险 → 本次点击即用户确认，附带 confirm_clear
+    const confirmed = clearAcked === opts();
     try {
-      const res = await XM.post(`/fields/${f.id}/convert`, body());
+      const res = await XM.post(`/fields/${f.id}/convert`, body(confirmed));
       UI.ok(`字段「${f.name}」转换完成`, { title: "FIELD_CONVERTED" });
       done = true; dlg.close();
       loadFields();
     } catch (e) {
-      $("#cvError", wrap).innerHTML = UI.apiFailHtml(e);
+      if (e.code === "CONVERT_REQUIRES_CLEAR") {
+        clearAcked = opts();
+        $("#cvError", wrap).innerHTML =
+          UI.warnHtml("确认清空并转换请再次点击「执行转换」",
+            "该操作会清空字段的全部值且不可恢复；如需核对将受影响的值，请先点击「预览」。");
+      } else {
+        $("#cvError", wrap).innerHTML = UI.apiFailHtml(e);
+      }
     }
   });
 
   dlg.showModal();
 }
 
-// 转换报告 / 执行结果渲染（dry_run 预览与正式执行共用结构）
+// 转换报告 / 执行结果渲染（预览与正式执行共用结构）
 function renderReport(box, res, isPreview) {
   const bits = [];
-  bits.push(isPreview || res.dry_run ? `<span class="badge">dry_run 预览</span>` : `<span class="badge fill">已执行</span>`);
-  if (res.lossy) bits.push(`<span class="badge red">有损</span>`);
+  bits.push(isPreview || res.dry_run ? `<span class="badge">预览</span>` : `<span class="badge fill">已执行</span>`);
+  // 清空类转换没有值换算可言，不做「无损/有损」判定，只标「清空值」
+  const cleared = res.requires_clear || res.cleared;
+  if (cleared) bits.push(`<span class="badge red">清空值</span>`);
+  else if (res.lossy) bits.push(`<span class="badge red">有损</span>`);
   else if (res.converted || res.dry_run) bits.push(`<span class="badge green">无损</span>`);
-  if (res.requires_clear || res.cleared) bits.push(`<span class="badge red">清空值</span>`);
 
   let html = `<div class="result-box"><div class="headline">${bits.join(" ")}</div>`;
   if (res.description) html += `<div style="margin-top:.4rem">换算规则：${UI.esc(res.description)}</div>`;
@@ -210,7 +247,7 @@ function renderReport(box, res, isPreview) {
   } else {
     html += `<div class="hint">（该字段暂无值，仅更新结构定义）</div>`;
   }
-  if (res.rounding) html += `<div class="hint">取整方式：${ROUND_LABEL[res.rounding]}（${res.rounding}）</div>`;
+  if (res.rounding) html += `<div class="hint">取整方式：${ROUND_LABEL[res.rounding]}</div>`;
   box.innerHTML = html + `</div>`;
 }
 

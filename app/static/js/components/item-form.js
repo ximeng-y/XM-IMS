@@ -45,7 +45,7 @@ const ItemForm = (() => {
     if (f.type === "bool") return el.value === "yes";
     if (f.type === "string") return raw;
     const n = Number(raw);
-    if (isNaN(n)) return null; // 交由后端校验报错，验证 422/400 结构
+    if (!Number.isFinite(n)) return null; // 交由后端校验报错，验证 422/400 结构
     return n;
   }
 
@@ -119,6 +119,8 @@ const ItemForm = (() => {
       // 此处，随后到来的回车（连击或再按一次）不应被当成「创建单品」表单提交
       e.preventDefault();
       if (!list.classList.contains("open")) return;
+      // 已选 SPU 后重新聚焦时，回车只收起候选，不把选择改成首项
+      if (selected) { closeList(); return; }
       const first = list.querySelector(".spu-combo-opt[data-id]");
       if (first) choose(spus.find((s) => s.id === Number(first.dataset.id)));
       else newSpuDialog();
