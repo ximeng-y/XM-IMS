@@ -243,9 +243,7 @@ class SyncManager:
         try:
             return self._initialize(source)
         except ApiError as exc:
-            if exc.code == "SYNC_PENDING":
-                self.error = None
-            elif exc.code != "SYNC_BUSY":
+            if exc.code not in ("SYNC_PENDING", "SYNC_BUSY"):
                 self.error = {"code": exc.code, "message": exc.message}
                 self.status_name = "offline" if exc.code in ("GIT_FAILED", "GIT_UNAVAILABLE") else "blocked"
                 db.set_ready(previously_ready)
@@ -256,6 +254,7 @@ class SyncManager:
             fail("INITIALIZE_INVALID", "请选择本地或远端作为初始化来源")
         with self.operation():
             if any(self.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
+                self.error = None
                 fail("SYNC_PENDING", "请先同步未上传提交或处理冲突，再重新初始化；现有历史和草稿已保留")
             self.error = None
             db.set_ready(False)
