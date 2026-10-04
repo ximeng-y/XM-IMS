@@ -8,10 +8,12 @@ from fastapi import FastAPI
 from . import db
 from .api.v1 import router as v1_router
 from .errors import register_error_handlers
+from .sync.runtime import lifespan, install
 
 
 def create_api_app() -> FastAPI:
     app = FastAPI(
+        lifespan=lifespan,
         title="XM-IMS API",
         description=(
             "后端 JSON API 契约。约定：业务端点需 `X-Shop-Id` 请求头指定店铺"
@@ -22,7 +24,7 @@ def create_api_app() -> FastAPI:
     )
     app.include_router(v1_router, prefix="/api/v1")
     register_error_handlers(app)
-    db.init()
+    install(app)
     return app
 
 

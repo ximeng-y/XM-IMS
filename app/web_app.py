@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import web
+from .sync.api import local_request
+from .errors import register_error_handlers
 
 # 后端地址：launcher.py 注入实际端口；未注入时回落默认端口
 API_BASE = os.environ.get("XM_API_BASE", "http://127.0.0.1:33111")
@@ -22,7 +24,7 @@ API_BASE = os.environ.get("XM_API_BASE", "http://127.0.0.1:33111")
 # 只转发业务相关请求头，跳过后端会自行生成的 hop-by-hop 头（Host/Content-Length/编码等）
 _FORWARD_HEADERS = (
     "content-type", "content-disposition", "accept",
-    "x-shop-id", "x-api-token", "authorization", "x-idempotency-key",
+    "x-shop-id", "x-api-token", "authorization", "x-idempotency-key", "x-xm-sync",
 )
 
 
@@ -32,7 +34,7 @@ def _forward(method: str, path: str, query: str, body: bytes, headers: dict) -> 
         url += "?" + query
     req = urllib.request.Request(url, data=body or None, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=600 if path.startswith("sync/") else 60) as resp:
             headers = {}
             if resp.headers.get("content-type"):
                 headers["content-type"] = resp.headers["content-type"]
@@ -58,6 +60,8 @@ proxy = APIRouter()
 
 @proxy.api_route("/api/v1/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def api_proxy(path: str, request: Request):
+    if path.startswith("sync/"):
+        local_request(request)
     headers = {k: v for k, v in request.headers.items() if k.lower() in _FORWARD_HEADERS}
     body = await request.body()
     return await run_in_threadpool(
@@ -70,6 +74,7 @@ def create_web_app() -> FastAPI:
         version="0.1.0",
         docs_url=None, redoc_url=None, openapi_url=None,  # 文档属于后端进程
     )
+    register_error_handlers(app)
     app.include_router(web.router)
     app.include_router(proxy)
     app.mount("/static", StaticFiles(directory=web.STATIC_DIR), name="static")

@@ -40,7 +40,7 @@ def _price_to_cents(unit_price: float | None) -> int | None:
 
 
 def _movement_out(row, ref: str) -> dict:
-    d = dict(row)
+    d = {k: row[k] for k in row.keys() if k != "sync_uid"}
     d.pop("_spu_id", None)
     d.pop("_seq", None)
     d["qty_delta"] = d.pop("qty")
@@ -100,10 +100,10 @@ def _execute_movement(shop_id: int, *, item_ref: str, mtype: str, qty_delta: int
                     "idempotent_replay": False}
 
         cur = d.conn.execute(
-            "INSERT INTO movements (item_id, type, qty, unit_price, batch_no, supplier, "
+            "INSERT INTO movements (sync_uid, item_id, type, qty, unit_price, batch_no, supplier, "
             "channel, customer, note, idempotency_key, actor, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (item_id, mtype, qty_delta, cents, movement["batch_no"], movement["supplier"],
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (db.new_uid(), item_id, mtype, qty_delta, cents, movement["batch_no"], movement["supplier"],
              movement["channel"], movement["customer"], movement["note"],
              payload.idempotency_key, config.ACTOR, ts))
         movement["id"] = cur.lastrowid

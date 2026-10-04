@@ -234,6 +234,13 @@ const UI = (() => {
     $$(".sidenav a").forEach((a) => {
       if (a.dataset.nav === page) a.classList.add("active");
     });
+    if (page === "sync") {
+      $(".shop-box").hidden = true;
+      if (typeof window.PAGE_INIT === "function") await window.PAGE_INIT();
+      return;
+    }
+    try { if (!await Sync.ensureReady()) return; }
+    catch (e) { fail("无法检查同步状态：" + e.message); return; }
     await initShop();
     if (typeof window.PAGE_INIT === "function") {
       try { await window.PAGE_INIT(); }

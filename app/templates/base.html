@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}概览{% endblock %} · XM-IMS 验证前端</title>
   <link rel="stylesheet" href="/static/vendor/pico.min.css?v=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=22">
+  <link rel="stylesheet" href="/static/css/app.css?v=23">
 </head>
 <body data-page="{% block nav %}{% endblock %}">
 <header class="topbar">
   <a class="brand" href="/"><span class="logo">X</span>XM-IMS<span class="muted" style="font-size:.72rem;font-weight:400">验证前端</span></a>
   <div class="spacer"></div>
+  <a id="syncStatus" class="sync-status" href="/sync">检查同步状态</a>
   <div class="shop-box">
     <label for="shopSelect" class="muted" style="font-size:.85rem;margin:0">店铺</label>
     <select id="shopSelect"></select>
@@ -25,6 +26,7 @@
     <a href="/spus" data-nav="spus">SPU</a>
     <a href="/fields" data-nav="fields">字段</a>
     <a href="/movements" data-nav="movements">流水</a>
+    <a href="/sync" data-nav="sync">数据同步</a>
   </nav>
   <main class="content fade-in">
     <div id="noShopBox" class="no-shop" hidden>
@@ -35,7 +37,8 @@
 </div>
 <div id="toasts"></div>
 <script src="/static/js/api.js?v=1"></script>
-<script src="/static/js/ui.js?v=6"></script>
+<script src="/static/js/sync-common.js?v=2"></script>
+<script src="/static/js/ui.js?v=7"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

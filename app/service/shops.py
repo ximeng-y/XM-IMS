@@ -17,7 +17,7 @@ def create_shop(name: str) -> dict:
         # 先插入拿 id（db_file 暂空），建好库文件后回填；
         # 建文件失败时异常冒泡，索引事务回滚，不留半成品记录
         cur = idx.conn.execute(
-            "INSERT INTO shops (name, db_file, created_at) VALUES (?, '', ?)", (name, ts))
+            "INSERT INTO shops (sync_uid, name, db_file, created_at) VALUES (?, ?, '', ?)", (db.new_uid(), name, ts))
         shop_id = cur.lastrowid
         db_file = f"shops/{shop_id}.db"
         db.create_shop_db_file(shop_id, db_file)
