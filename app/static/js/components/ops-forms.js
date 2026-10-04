@@ -73,8 +73,9 @@ const OpsForm = (() => {
                        out: `<span class="badge red">出库</span>`,
                        adjust: `<span class="badge gray">盘点</span>` };
 
-  function renderResult(box, cfg, res) {
+  function renderResult(box, cfg, res, requestTargetQty) {
     const m = res.movement;
+    const targetQty = requestTargetQty ?? m.target_qty;
     const badges = [
       `<span class="badge fill">已执行</span>`,
       res.idempotent_replay ? `<span class="badge red">幂等重放</span>` : "",
@@ -84,7 +85,7 @@ const OpsForm = (() => {
       ["类型", TYPE_BADGE[m.type] || esc(m.type)],
       ["数量增量", UI.fmtDelta(m.qty_delta)],
       ["单价", UI.fmtMoney(m.unit_price)],
-      m.target_qty !== null && m.target_qty !== undefined ? ["目标库存", m.target_qty] : null,
+      targetQty !== null && targetQty !== undefined ? ["目标库存", targetQty] : null,
       m.batch_no ? ["批次", esc(m.batch_no)] : null,
       m.supplier ? ["供应商", esc(m.supplier)] : null,
       m.channel ? ["渠道", esc(m.channel)] : null,
@@ -136,7 +137,7 @@ const OpsForm = (() => {
         const p = input("price").value.trim();
         if (p !== "") {
           const n = Number(p);
-          if (isNaN(n) || n < 0) throw new Error("单价格式不正确");
+          if (!Number.isFinite(n) || n < 0) throw new Error("单价格式不正确");
           body.unit_price = n;
         }
       }
@@ -167,19 +168,31 @@ const OpsForm = (() => {
       try { body = buildBody(); }
       catch (e) { UI.fail(e.message); return; }
       await UI.withBusy(submit, async () => {
+        let res;
         try {
-          const res = await XM.post(cfg.endpoint, body);
-          renderResult(resultBox, cfg, res);
-          if (res.idempotent_replay) UI.toast("重复提交：返回首次提交的结果，未重复记账");
-          else UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
-          // 真实落库后换新幂等键，避免下次误重放
-          dlg.dataset.key = genKey();
-          await refreshPickers(body.item_id);
-          if (onDone) onDone(res);
+          res = await XM.post(cfg.endpoint, body);
         } catch (e) {
           resultBox.className = "result-box error-box";
           resultBox.innerHTML = UI.apiFailHtml(e);
           UI.apiFail(e, `${cfg.label}失败`);
+          return;
+        }
+        renderResult(resultBox, cfg, res, body.target_qty);
+        if (res.idempotent_replay) UI.toast("重复提交：返回首次提交的结果，未重复记账");
+        else UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
+        // 真实落库后换新幂等键，避免下次误重放
+        dlg.dataset.key = genKey();
+        try {
+          await refreshPickers(body.item_id);
+        } catch (e) {
+          UI.apiFail(e, "操作已成功，但刷新单品列表失败");
+        }
+        if (onDone) {
+          try {
+            await onDone(res);
+          } catch (e) {
+            UI.apiFail(e, "操作已成功，但刷新列表失败");
+          }
         }
       });
     };

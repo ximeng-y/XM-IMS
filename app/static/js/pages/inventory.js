@@ -6,6 +6,7 @@ let overviewRows = [];          // [{ spu, items, total }]：SPU、其附属 SKU
 let fieldsMeta = [];            // 自定义字段定义（新建单品小窗用）
 let spusList = [];              // SPU 列表（与新建单品小窗内的组合框共享引用）
 const expandedSpus = new Set(); // 当前展开的 SPU id
+let lastSearchQuery = null;     // 上次渲染使用的搜索词，用于仅在新搜索时自动展开
 
 async function loadOverview() {
   const tbody = $("#spuRows");
@@ -56,9 +57,12 @@ function filterRows() {
 function renderOverview() {
   const tbody = $("#spuRows");
   const rows = filterRows();
-  // SKU 名命中时自动展开所属 SPU 行，让命中项直接可见；用户点三角收起后不再重复展开
-  // （仅在本次渲染前加入，故收起状态能保持到下次输入）
-  rows.forEach((r) => { if (r.hit === "sku") expandedSpus.add(r.spu.id); });
+  const query = $("#fltQ").value.trim();
+  // 每个新搜索词仅自动展开一次，后续重渲染尊重用户的手动展开/收起
+  if (query && query !== lastSearchQuery) {
+    rows.forEach((r) => { if (r.hit === "sku") expandedSpus.add(r.spu.id); });
+  }
+  lastSearchQuery = query;
 
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="6" class="t-empty">` +
