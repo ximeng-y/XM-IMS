@@ -19,7 +19,7 @@ window.PAGE_INIT = async function () {
   if (!movs) return;
   const tbody = $("#recentMovs");
   if (!movs.movements.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="t-empty">还没有流水，去「库存操作」记一笔</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="t-empty">还没有流水，去「库存」页记一笔</td></tr>`;
     return;
   }
   const typeBadge = { in: `<span class="badge green">入库</span>`,

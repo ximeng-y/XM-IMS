@@ -438,6 +438,36 @@ dialog .dlg-foot {
   margin-bottom: 1.5rem;
 }
 
+/* ---------- 库存页操作区 ----------
+   按钮排参考概览页「快捷入口」；搜索框用 margin-left:auto 顶到行尾，窄屏换行后自然落到下一行 */
+.ops-bar {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+.ops-search {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  margin-left: auto;
+  min-width: 14rem;
+  flex: 1 1 14rem;
+  max-width: 22rem;
+}
+.ops-search input { min-width: 0; }
+/* 小窗内的表单：底部 hint 已由 .hint 提供间距，结果框与表单之间留一口气 */
+.dlg-form [data-result]:not(:empty) { margin-top: .8rem; }
+.dlg-form .form-grid label { margin-bottom: .3rem; }
+/* dialog 默认 width:fit-content。显式轨道（1fr 1fr）的弹窗能按内容自然定宽，
+   但 .dlg-form 里的 .form-grid 走 auto-fill + minmax(...)，在不定宽父元素中
+   轨道数会塌成 1、弹窗缩到轨道最小宽，表单被挤成一条。故给这类弹窗一个定宽；
+   超窄屏由 dialog 自带的 max-width:calc(100vw - 2rem) 收缩 */
+dialog:has(> .dlg-body > .dlg-form) { width: 26rem; }
+/* 新建单品窗字段较多，需容纳两列自定义字段值。宽度须 ≥ 2×13.125rem(轨道最小) + 1.1rem(列间距)
+   + 2×1.5rem(.dlg-body 左右内边距) ≈ 28.85rem，取 32rem 留出余量 */
+dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
+
 /* ---------- 库存总览（SPU 分组 + 可展开 SKU 子行） ---------- */
 .tri-cell { width: 2.5rem; }
 .tri-btn {
