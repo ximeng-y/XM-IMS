@@ -165,10 +165,20 @@ function convertFlow(f) {
   dlg.addEventListener("close", () => { done = true; dlg.remove(); });
 
   preview.onclick = () => UI.withBusy(preview, async () => {
+    // 预览即撤销旧的清空确认，避免失败时残留 confirm_clear 状态
+    clearAcked = null;
     $("#cvError", wrap).innerHTML = "";
     $("#cvWarn", wrap).innerHTML = "";
     try {
       const res = await XM.post(`/fields/${f.id}/convert`, { ...body(false), dry_run: true });
+      if (res.rounding_required) {
+        $("#cvReport", wrap).innerHTML = "";
+        $("#cvError", wrap).innerHTML = UI.warnHtml(
+          "本次转换存在精度损失，请先选择取整方式",
+          `将影响 ${res.affected_items} 个值；请选择取整方式后重新点击「预览」。`);
+        $("#cvRound", wrap).focus();
+        return;
+      }
       // 清空类转换：预览照常展示内容，仅在报告上方加一条警告带
       if (res.requires_clear) {
         $("#cvWarn", wrap).innerHTML = UI.warnHtml("转换将清空该字段的全部值",
