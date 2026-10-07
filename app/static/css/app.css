@@ -443,6 +443,8 @@ dialog .dlg-foot {
   border-bottom: 1px solid var(--line-light);
   padding-bottom: .6rem; margin-bottom: .7rem;
 }
+/* 预览框内的公式组件块：每个 token 一个独立块，右上角 × 单独删除该项。
+   × 由包裹层绝对定位（与块右上角重合），块内文字因此可自由换行而不会压到 × */
 .fx-preview-text {
   min-height: 2.2rem;
   font-size: .95rem;
@@ -450,6 +452,33 @@ dialog .dlg-foot {
   color: var(--blue-dark);
   overflow-wrap: anywhere;
 }
+.fx-tok-wrap {
+  position: relative;
+  display: inline-block;
+  /* 上留出 × 溢出的一半高度，右留出块间距 */
+  margin: .55rem .55rem 0 0;
+  vertical-align: top;
+}
+.fx-tok {
+  display: inline-block;
+  padding: .22rem .5rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  line-height: 1.5;
+}
+.fx-tok-x {
+  position: absolute;
+  top: -.5rem; right: -.5rem;
+  width: 1.05rem; height: 1.05rem;
+  padding: 0;
+  margin: 0;
+  font-size: .72rem;
+  line-height: 1;
+  color: var(--danger);
+  background: #fff;
+  border: 1px solid var(--danger);
+}
+.fx-tok-x:hover { background: #fdf0ef; color: #8f2a27; }
 .fx-palette {
   display: grid;
   grid-template-columns: 2fr 1fr;

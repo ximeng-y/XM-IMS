@@ -60,7 +60,6 @@ const FormulaEditor = (() => {
         </div>
       </div>
       <div class="fx-actions">
-        <button type="button" class="btn-outline btn-sm" data-fx-undo>删除末项</button>
         <button type="button" class="btn-outline btn-sm" data-fx-clear>清空公式</button>
       </div>`;
 
@@ -69,18 +68,27 @@ const FormulaEditor = (() => {
     const numHint = wrap.querySelector("[data-fx-numhint]");
 
     // 人类可读的公式文本：与后端 SYMBOL_TEXT 保持同一套符号呈现
-    function textOf() {
-      return state.map((t) => {
-        if (t.kind === "number") return t.value;
-        if (t.kind === "field") return nameOf[t.uid] || `（未知字段 ${String(t.uid).slice(0, 8)}）`;
-        if (t.kind === "system") return sysName[t.key] || t.key;
-        return SYMBOL_TEXT[t.value] || t.value;
-      }).join(" ");
+    function labelOf(t) {
+      if (t.kind === "number") return t.value;
+      if (t.kind === "field") return nameOf[t.uid] || `（未知字段 ${String(t.uid).slice(0, 8)}）`;
+      if (t.kind === "system") return sysName[t.key] || t.key;
+      return SYMBOL_TEXT[t.value] || t.value;
     }
+    function textOf() {
+      return state.map(labelOf).join(" ");
+    }
+    // 预览区按 token 渲染独立组件块（与 issue 约定的交互一致）：每块右上角带 ×，
+    // 可单独删除中间任意一项。块外层再包一层容器，避免「块内标签换行时 × 被别的块
+    // 的地板压住」——容器只按块分配行内空间，× 仍定位于块本身
     function renderPreview() {
-      preview.innerHTML = state.length
-        ? esc(textOf())
-        : `<span class="muted">（尚未加入任何内容：请从右侧选择字段、系统字段、运算符或数字常量）</span>`;
+      if (!state.length) {
+        preview.innerHTML = `<span class="muted">（尚未加入任何内容：请从下方选择字段、系统字段、运算符或数字常量）</span>`;
+        return;
+      }
+      preview.innerHTML = state.map((t, i) =>
+        `<span class="fx-tok-wrap"><span class="fx-tok">${esc(labelOf(t))}</span>` +
+        `<button type="button" class="fx-tok-x" data-fx-del="${i}"` +
+        ` title="删除「${esc(labelOf(t))}」" aria-label="删除此项">×</button></span>`).join("");
     }
     function add(token) {
       numHint.textContent = "只接受普通十进制整数或小数";
@@ -101,6 +109,12 @@ const FormulaEditor = (() => {
       numInput.focus();
     }
 
+    preview.addEventListener("click", (e) => {
+      const del = e.target.closest("[data-fx-del]");
+      if (!del) return;
+      state.splice(Number(del.dataset.fxDel), 1);
+      renderPreview();
+    });
     wrap.querySelector("[data-fx-fields]").addEventListener("click", (e) => {
       const b = e.target.closest("[data-fx-field]");
       if (b) add({ kind: "field", uid: b.dataset.fxField });
@@ -111,10 +125,6 @@ const FormulaEditor = (() => {
       const sym = e.target.closest("[data-fx-sym]");
       if (sym) { add({ kind: "symbol", value: sym.dataset.fxSym }); return; }
       if (e.target.closest("[data-fx-addnum]")) addNumber();
-    });
-    wrap.querySelector("[data-fx-undo]").addEventListener("click", () => {
-      state.pop();
-      renderPreview();
     });
     wrap.querySelector("[data-fx-clear]").addEventListener("click", () => {
       state = [];
@@ -134,6 +144,8 @@ const FormulaEditor = (() => {
       wrap,
       getTokens: () => state.map((t) => ({ ...t })),
       isEmpty: () => state.length === 0,
+      // 纯文本形态（与预览同一套符号呈现），供字段列表等只读场合复用
+      text: () => textOf(),
     };
   }
 

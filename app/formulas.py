@@ -377,6 +377,9 @@ def check(defs, candidate=None) -> dict:
 # ---------- 求值 ----------
 
 def _quantize(value: Decimal, scale: int) -> Decimal:
+    """按显示位数取值。结果超出上下文精度时产生的是带指数位数的结果，
+    format(…, "f") 仍可正常输出，故这里无需额外兜底；异常交给 compute 的
+    单元格错误边界统一转换。"""
     with localcontext() as ctx:
         ctx.prec = PRECISION
         return value.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP)
@@ -463,6 +466,17 @@ class Engine:
                             hint="如确需负值，请编辑该字段并勾选「允许负数」；否则请调整公式")
         return result
 
+    def _output(self, field, result):
+        """结果 → 显示文本与显示数值。量化与浮点转换都在这层出错边界内：
+        两者都可能抛出 DecimalException（如结果位数超出上下文精度），
+        若不拦住，一个字段就能让整个 SKU 列表/详情查询失败。"""
+        try:
+            return display_text(field, result), display_number(field, result)
+        except (DecimalException, ArithmeticError, OverflowError, ValueError):
+            raise CellError("FORMULA_RANGE",
+                            f"字段「{field['name']}」的计算结果无法按显示位数输出",
+                            hint="结果数值过大或位数过多，请缩小公式的取值范围")
+
     def compute(self, context):
         """context: {"qty": int, "spu_id": int, "stored": {字段 uid: 编码值}}
 
@@ -485,14 +499,15 @@ class Engine:
                 field = self.by_uid[uid]
                 try:
                     result = self._evaluate(self.parsed[uid], values, errors, systems, field)
+                    shown, number = self._output(field, result)
                 except CellError as exc:
                     errors[uid] = exc.payload
                     out_values[field["name"]] = None
                     calculations[field["name"]] = {"display": None, "error": exc.payload}
                     continue
                 values[uid] = result          # 下游用内部高精度结果，不按显示位数取舍
-                out_values[field["name"]] = display_number(field, result)
-                calculations[field["name"]] = {"display": display_text(field, result), "error": None}
+                out_values[field["name"]] = number
+                calculations[field["name"]] = {"display": shown, "error": None}
             return out_values, calculations
 
 

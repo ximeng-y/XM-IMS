@@ -158,13 +158,13 @@ def _load_values(conn, contexts: list, defs: list | None = None, engine=None):
     defs = field_defs(conn) if defs is None else defs
     if engine is None:
         engine = formulas.Engine(defs)
-    plain = engine.plain
-    by_uid = engine.by_uid
     has_computed = bool(engine.computed)
+    # 读取集合是「全部普通字段」，不是「可参与公式的数值字段」：文本与开关字段
+    # 照常还原（Engine.plain 只数值型，仅用于公式求值的取值来源）
+    wanted = {f["id"]: f for f in defs if not f["formula"]}
     marks = ",".join("?" * len(ids))
     stored = {iid: {} for iid in ids}
-    if plain:
-        wanted = {f["id"]: f for f in plain}
+    if wanted:
         rows = conn.execute(
             f"SELECT v.item_id, v.field_id, v.value_int, v.value_text "
             f"FROM custom_values v WHERE v.item_id IN ({marks})", ids).fetchall()
