@@ -5,10 +5,14 @@
 对外标识：SKU 的 id 呈现为「SPU 号-组内序号」（如 1-2），由 items.spu_id 与
 items.seq 实时拼出；内部仍以 items.id（整数）作为流水与字段值的外键。因此换挂
 SPU 时 SKU 的显示编号会随之变化，历史流水显示的是当前归属，而非当时归属。
+
+数学计算字段：值不落库，由 formulas 按公式实时算出，读接口统一经 _load_values
+出口给出（values 放显示数值，calculations 放格式化文本与单元格错误）；
+其值不可手填或清除，_set_value 一律拒绝。
 """
 import re
 
-from .. import db, fieldtypes
+from .. import db, fieldtypes, formulas
 from ..config import now_iso
 from ..errors import ApiError
 from ..schemas import ItemCreate, ItemPatch
@@ -67,6 +71,24 @@ def _next_seq(conn, spu_id: int) -> int:
     return (row["mx"] or 0) + 1
 
 
+def field_def(conn, field_id: int | None = None, row=None) -> dict:
+    """字段行 → 领域定义：uid 稳定标识 + 公式 token 列表
+
+    普通字段用 type/scale 解释编码；计算字段的 formula 决定取值方式。
+    """
+    if row is None:
+        row = conn.execute("SELECT * FROM custom_fields WHERE id = ?", (field_id,)).fetchone()
+    return {"id": row["id"], "uid": row["sync_uid"], "name": row["name"], "type": row["type"],
+            "scale": row["scale"], "allow_negative": bool(row["allow_negative"]),
+            "formula": formulas.tokens_of(row["formula_json"])}
+
+
+def field_defs(conn) -> list:
+    """本店全部字段定义（按 id 顺序），供公式校验与求值使用"""
+    return [field_def(conn, row=r)
+            for r in conn.execute("SELECT * FROM custom_fields ORDER BY id").fetchall()]
+
+
 def _resolve_fields(conn, values: dict) -> dict:
     """校验 values 的字段名均为已有自定义字段，返回 名称→字段行"""
     rows = conn.execute("SELECT * FROM custom_fields").fetchall()
@@ -81,7 +103,16 @@ def _resolve_fields(conn, values: dict) -> dict:
 
 
 def _set_value(conn, item_id: int, field_row, value) -> dict:
-    """写入/清除单个字段值。value 为 None 表示清除。返回审计 detail"""
+    """写入/清除单个字段值。value 为 None 表示清除。返回审计 detail
+
+    计算字段的值由公式算出，不落 custom_values，因此任何直接写入（含 null 清除）
+    都在这里被拒绝，包括绕过前端的 API 调用。
+    """
+    if field_row["formula_json"]:
+        raise ApiError("FIELD_READONLY",
+                       f"字段「{field_row['name']}」是计算字段，值由公式自动算出，不能直接写入或清除",
+                       hint="请修改公式引用的源字段值；如需调整该字段本身，"
+                            "请使用字段页的「编辑公式」", status=409)
     if value is None:
         conn.execute("DELETE FROM custom_values WHERE item_id = ? AND field_id = ?",
                      (item_id, field_row["id"]))
@@ -113,20 +144,47 @@ def _set_value(conn, item_id: int, field_row, value) -> dict:
     return {"field": field_row["name"], "old": old_display, "new": display}
 
 
-def _load_values(conn, item_ids: list) -> dict:
-    """批量取自定义字段值，返回 item_id → {字段名: 显示值}"""
-    result = {iid: {} for iid in item_ids}
-    if not item_ids:
-        return result
-    marks = ",".join("?" * len(item_ids))
-    rows = conn.execute(
-        f"SELECT v.item_id, f.name, f.type, f.scale, v.value_int, v.value_text "
-        f"FROM custom_values v JOIN custom_fields f ON f.id = v.field_id "
-        f"WHERE v.item_id IN ({marks})", item_ids).fetchall()
-    for r in rows:
-        stored = r["value_int"] if r["value_int"] is not None else r["value_text"]
-        result[r["item_id"]][r["name"]] = fieldtypes.decode(r["type"], r["scale"], stored)
-    return result
+def _load_values(conn, contexts: list, defs: list | None = None, engine=None):
+    """批量取自定义字段值，返回 (item_id → 显示值字典, item_id → calculations)
+
+    contexts 为内部行上下文 [{"id", "qty", "spu_id"}]（内部整数 id，不是对外编号）。
+    普通字段沿用原有编码还原；计算字段按公式求值，中间结果保留内部精度。
+    """
+    ids = [c["id"] for c in contexts]
+    values = {iid: {} for iid in ids}
+    calculations = {iid: {} for iid in ids}
+    if not ids:
+        return values, calculations
+    defs = field_defs(conn) if defs is None else defs
+    if engine is None:
+        engine = formulas.Engine(defs)
+    plain = engine.plain
+    by_uid = engine.by_uid
+    has_computed = bool(engine.computed)
+    marks = ",".join("?" * len(ids))
+    stored = {iid: {} for iid in ids}
+    if plain:
+        wanted = {f["id"]: f for f in plain}
+        rows = conn.execute(
+            f"SELECT v.item_id, v.field_id, v.value_int, v.value_text "
+            f"FROM custom_values v WHERE v.item_id IN ({marks})", ids).fetchall()
+        for r in rows:
+            field = wanted.get(r["field_id"])
+            if field is None:
+                continue        # 计算字段不读值行；已删除字段的残留值一并忽略
+            raw = r["value_int"] if r["value_int"] is not None else r["value_text"]
+            stored[r["item_id"]][field["uid"]] = raw
+            values[r["item_id"]][field["name"]] = fieldtypes.decode(
+                field["type"], field["scale"], raw)
+    if not has_computed:
+        return values, calculations
+    # 用原始编码还原数学值（百分比 25% → 0.25），避免经 float 往返
+    for c in contexts:
+        computed, cells = engine.compute(
+            {"qty": c["qty"], "spu_id": c["spu_id"], "stored": stored[c["id"]]})
+        values[c["id"]].update(computed)
+        calculations[c["id"]] = cells
+    return values, calculations
 
 
 def _load_item(conn, item_id: int) -> dict | None:
@@ -138,8 +196,12 @@ def _load_item(conn, item_id: int) -> dict | None:
     if row is None:
         return None
     item = dict(row)
+    # 内部行上下文须在替换成对外编号之前交给求值器：公式关联的是 items.id
+    context = {"id": item["id"], "qty": item["qty"], "spu_id": item["spu_id"]}
+    values, calculations = _load_values(conn, [context])
     item["id"] = format_item_ref(item["spu_id"], item.pop("seq"))
-    item["values"] = _load_values(conn, [item_id])[item_id]
+    item["values"] = values[context["id"]]
+    item["calculations"] = calculations[context["id"]]
     return item
 
 
@@ -156,6 +218,11 @@ def create_item(shop_id: int, payload: ItemCreate) -> dict:
     with d.lock, d.conn:
         spu_id, spu_created = spus.resolve_spu(d.conn, payload.spu_id, payload.spu_name)
         by_name = _resolve_fields(d.conn, payload.values)
+        blocked = [k for k in payload.values if by_name[k]["formula_json"]]
+        if blocked:
+            raise ApiError("FIELD_READONLY",
+                           f"计算字段不能直接赋值：{'、'.join(blocked)}",
+                           hint="计算字段的值由公式自动算出；请填写公式引用的源字段", status=409)
         ts = now_iso()
         cur = d.conn.execute(
             "INSERT INTO items (sync_uid, spu_id, seq, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -192,9 +259,9 @@ def list_items(shop_id: int, offset: int = 0, limit: int = 50,
             "FROM items i JOIN spus s ON s.id = i.spu_id" + cond +
             " ORDER BY i.spu_id, i.seq LIMIT ? OFFSET ?",
             [*params, limit, offset]).fetchall()
-        values = _load_values(d.conn, [r["id"] for r in rows])
+        values, calculations = _load_values(d.conn, [dict(r) for r in rows])
     items = [{**dict(r), "id": format_item_ref(r["spu_id"], r["seq"]),
-              "values": values[r["id"]]} for r in rows]
+              "values": values[r["id"]], "calculations": calculations[r["id"]]} for r in rows]
     for it in items:
         it.pop("seq", None)
     return {"items": items, "total": total}

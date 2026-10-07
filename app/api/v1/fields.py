@@ -1,9 +1,10 @@
 """自定义字段端点"""
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
-from ...schemas import FieldCreate, FieldList, FieldOut, FieldConvert, FieldRename
+from ...schemas import (FieldCreate, FieldConvert, FieldFormulaIn, FieldList, FieldOut,
+                        FieldRename, FieldWriteOut)
 from ...service import fields
 from ..deps import require_shop
 
@@ -11,12 +12,19 @@ router = APIRouter(prefix="/fields", tags=["自定义字段"])
 ShopDep = Annotated[int, Depends(require_shop)]
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, response_model=FieldOut,
-             summary="创建自定义字段")
-def create_field(shop_id: ShopDep, body: FieldCreate):
-    """创建自定义字段；与系统字段（ID/名称/库存数量/SPU ID/SPU 名称）重名返回 409"""
-    return fields.create_field(shop_id, body.name, body.type,
-                               body.allow_negative, body.scale)
+@router.post("", response_model=FieldWriteOut, summary="创建自定义字段（普通或数学计算）")
+def create_field(shop_id: ShopDep, body: FieldCreate, response: Response):
+    """创建自定义字段；与系统字段（ID/名称/库存数量/SPU ID/SPU 名称）重名返回 409。
+
+    不带 formula 时按普通字段创建，保持原有行为：返回 201，字段可手填值。
+    带 formula 时创建数学计算字段：type 为结果类型（decimal/percent）、scale 为显示位数，
+    公式的语法、引用与循环引用一并校验；dry_run=true 只校验并预览（返回 200，不分配 ID）。
+    """
+    if body.dry_run:
+        response.status_code = status.HTTP_200_OK
+    else:
+        response.status_code = status.HTTP_201_CREATED
+    return fields.create_field(shop_id, body)
 
 
 @router.get("", response_model=FieldList, summary="字段列表（5 个系统字段 + 自定义字段）")
@@ -26,7 +34,19 @@ def list_fields(shop_id: ShopDep):
 
 @router.patch("/{field_id}", response_model=FieldOut, summary="字段改名（数据不动）")
 def rename_field(shop_id: ShopDep, field_id: int, body: FieldRename):
+    """改名不影响公式引用：公式按 sync_uid 引用字段，界面重新读取元数据后显示新名称。"""
     return fields.rename_field(shop_id, field_id, body.name)
+
+
+@router.put("/{field_id}/formula", response_model=FieldWriteOut,
+            summary="更新计算字段的公式与结果格式")
+def update_formula(shop_id: ShopDep, field_id: int, body: FieldFormulaIn):
+    """完整提交 formula/type/scale/allow_negative，整体替换该计算字段的定义。
+
+    仅计算字段可用（普通字段返回 409 FORMULA_NOT_COMPUTED）；普通字段与计算字段不能互转。
+    提交与现值完全相同的定义不会重复写审计。dry_run=true 只校验，不落库；统一返回 200。
+    """
+    return fields.update_formula(shop_id, field_id, body)
 
 
 @router.post("/{field_id}/convert", response_model=None, summary="转换字段结构")

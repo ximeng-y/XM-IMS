@@ -5,13 +5,17 @@ import uuid
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from .. import schema
+from .. import formulas, schema
+from ..errors import ApiError
 from . import snapshot
 from .common import read_json, dump, fail
 
 REFERENCES = {"items": {"spu_id": "spus"}, "custom_values": {"item_id": "items", "field_id": "custom_fields"},
               "movements": {"item_id": "items"}}
 TECHNICAL = {"_id", "sync_uid", "created_at", "updated_at"}
+# 计算字段的完整定义单元：公式与结果格式必须整体取用，不能跨版本拼装
+DEFINITION_FIELDS = ("type", "scale", "allow_negative", "formula_json")
+SYSTEM_LABEL = {"qty": "库存数量", "spu_id": "SPU ID"}
 
 
 def load(root):
@@ -26,6 +30,9 @@ def load(root):
         for table, data in tables.items():
             for original in data:
                 row = dict(original)
+                # v3 快照没有 formula_json 列：只补成 NULL，避免「缺键」与「NULL」被当成业务修改
+                if table == "custom_fields" and "formula_json" not in row:
+                    row["formula_json"] = None
                 if "id" in row:
                     row["_id"] = row.pop("id")
                 for column, target in REFERENCES.get(table, {}).items():
@@ -91,8 +98,8 @@ class Merger:
                 fail("RESOLUTION_INVALID", "该冲突不支持此处理方式")
         if kind == "field_group":
             self.detail_sets[identity] = [v["values"] for v in values]
-            shown = [{"definition": display(v["definition"]), "关联值数量": sum(x is not None for x in v["values"].values())} for v in values]
-            shown_result = {"definition": display(value["definition"]), "关联值数量": sum(x is not None for x in value["values"].values())}
+            shown = [{"definition": self.field_display(v["definition"]), "关联值数量": sum(x is not None for x in v["values"].values())} for v in values]
+            shown_result = {"definition": self.field_display(value["definition"]), "关联值数量": sum(x is not None for x in value["values"].values())}
         else:
             shown, shown_result = [display(v) for v in values], display(value)
         self.conflicts.append({"label": self.describe(key), "id": identity, "key": key, "field": field, "kind": kind,
@@ -117,11 +124,18 @@ class Merger:
             uid = key.rsplit("/", 1)[1]
             dbkey = key.split("/")[0]
             related = [k for k in keys if k.startswith(dbkey + "/custom_values/") and k.endswith(":" + uid)]
-            definition = lambda row: None if row is None else tuple(row[f] for f in ("type", "scale", "allow_negative"))
+            definition = lambda row: None if row is None else tuple(row[f] for f in DEFINITION_FIELDS)
             defs = [definition(x) for x in (b, l, r)]
             values = [{k: s.get(k) for k in related} for s in sides]
-            if b is not None and ((defs[1] != defs[0] and values[2] != values[0]) or
-                                  (defs[2] != defs[0] and values[1] != values[0])) and (defs[1], values[1]) != (defs[2], values[2]):
+            # 任一侧是计算字段（或将成为计算字段）时，type/scale/allow_negative/formula_json
+            # 必须作为完整定义单元整体取用；同一公式的 token 数组也不做逐项自动合并
+            computed = any(x is not None and x["formula_json"] for x in (b, l, r))
+            if computed:
+                tied = defs[1] != defs[2] and defs[1] != defs[0] and defs[2] != defs[0]
+            else:
+                tied = ((defs[1] != defs[0] and values[2] != values[0]) or
+                        (defs[2] != defs[0] and values[1] != values[0])) and (defs[1], values[1]) != (defs[2], values[2])
+            if b is not None and tied:
                 groups = [{"definition": row, "values": vals} for row, vals in zip((b, l, r), values)]
                 chosen = self.conflict(key, "$definition_and_values", groups, "field_group",
                                        extra={"affected": len(related)})
@@ -227,6 +241,40 @@ class Merger:
             return "true" if value["value_int"] else "false"
         scale = definition["scale"] if definition["type"] == "decimal" else 2 if definition["type"] == "percent" else 0
         return str(Decimal(value["value_int"]).scaleb(-scale))
+
+    def field_display(self, row):
+        """字段定义的四列对照文本：计算字段额外展示可读公式"""
+        if row is None:
+            return None
+        shown = {k: v for k, v in row.items() if k not in ("_id", "sync_uid")}
+        if row.get("formula_json"):
+            shown = dict(shown)
+            shown["formula_json"] = self.formula_text(row["formula_json"])
+        return display(shown)
+
+    def formula_text(self, text):
+        try:
+            tokens = formulas.tokens_of(text)
+        except ApiError:
+            return text
+        parts = []
+        for token in tokens or []:
+            if token["kind"] == "number":
+                parts.append(token["value"])
+            elif token["kind"] == "field":
+                parts.append(self.field_name(token["uid"]))
+            elif token["kind"] == "system":
+                parts.append(SYSTEM_LABEL.get(token["key"], token["key"]))
+            else:
+                parts.append(formulas.SYMBOL_TEXT[token["value"]])
+        return " ".join(parts)
+
+    def field_name(self, uid):
+        for model in reversed(self.models):
+            for key, row in model["rows"].items():
+                if "/custom_fields/" in key and row.get("sync_uid") == uid:
+                    return row.get("name") or uid[:8]
+        return uid[:8]
 
     @staticmethod
     def encode_value(value, field):

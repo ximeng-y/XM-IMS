@@ -4,6 +4,14 @@
 审计 audit_log.entity_id 是事件发生时的历史编号，不是当前对象的外键。
 合并改号后按 entity_type + entity_uid 关联对应表的 sync_uid；对象已删除时不得回退匹配 entity_id。
 entity_id 与 detail 原文保持不可变，本次编号变化另记于 sync_merge 审计。
+
+店铺库结构版本：
+- v3：无 formula_json 的自定义字段表
+- v4：custom_fields 末尾追加可空 formula_json，承载数学计算字段的公式定义
+  （NULL = 普通手填字段；非空 = 公式对象的规范 JSON）。
+  仅计算字段使用 decimal/percent 结果类型，不向 type 的 CHECK 增加 formula 项。
+  计算字段不落 custom_values 行。
+SHOP_DDL_V3 保留为已知旧快照的校验依据，当前 SHOP_DDL 即 v4。
 """
 
 INDEX_DDL = """
@@ -16,7 +24,7 @@ CREATE TABLE IF NOT EXISTS shops (
 );
 """
 
-SHOP_DDL = """
+SHOP_DDL_V3 = """
 CREATE TABLE IF NOT EXISTS spus (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sync_uid TEXT NOT NULL UNIQUE,
@@ -84,7 +92,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   actor TEXT NOT NULL,
   action TEXT NOT NULL,      -- item_create/item_rename/item_spu_relink/field_value_change/
                               -- field_clear/field_create/field_rename/field_convert/field_delete/
-                              -- spu_create/spu_rename
+                              -- field_formula/spu_create/spu_rename
   entity_type TEXT NOT NULL,
   entity_id INTEGER,
   entity_uid TEXT,
@@ -92,3 +100,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL
 );
 """
+
+# 当前店铺库模板（v4）：与 v3 的唯一差别是 custom_fields 末尾的 formula_json
+SHOP_DDL = SHOP_DDL_V3.replace(
+    """  scale INTEGER NOT NULL DEFAULT 2,            -- 仅 decimal 用，0~6
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);""",
+    """  scale INTEGER NOT NULL DEFAULT 2,            -- 仅 decimal 用，0~6；计算字段表示显示位数
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  formula_json TEXT           -- NULL = 普通手填字段；非空 = 计算字段的公式对象 JSON
+);""")

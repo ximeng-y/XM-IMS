@@ -1,10 +1,37 @@
 /* 共享组件：单品（SKU）/ SPU 创建小窗
    供「库存」页操作区与单品页共用，避免字段值控件、SPU 可搜索组合框各写一份。
-   SPU 列表由调用方传入数组（引用共享），会话内新建的 SPU 会直接进入该数组 */
+   SPU 列表由调用方传入数组（引用共享），会话内新建的 SPU 会直接进入该数组。
+
+   数学计算字段：值由后端按公式算出，不可手填与清除。故创建表单不为其渲染输入控件，
+   编辑对话框与列表只读呈现计算结果（calculations 给出格式化文本与单元格错误）。 */
 "use strict";
 
 const ItemForm = (() => {
   const esc = UI.esc;
+
+  const isComputed = (f) => !!(f && f.computed);
+
+  // ---------- 计算结果只读呈现 ----------
+  // calc：后端 ItemOut.calculations 中的一项 {display, error}；缺失表示后端未给出该字段
+  function calcHtml(calc) {
+    if (!calc) return `<span class="muted">—</span>`;
+    if (calc.error) {
+      const tip = esc([calc.error.message, calc.error.hint].filter(Boolean).join("；"));
+      return `<span class="badge red" title="${tip}">${esc(calc.error.code)}</span>`;
+    }
+    return `<span class="mono">${esc(calc.display)}</span>`;
+  }
+
+  // 编辑对话框中的计算字段只读区：结果正常时紧凑并排，出错时在下方展开消息与提示
+  function computedRowHtml(f, calc) {
+    const body = calc && calc.error
+      ? `<div class="calc-block">${calcHtml(calc)}<span class="calc-msg">${
+          esc([calc.error.message, calc.error.hint].filter(Boolean).join("；"))}</span></div>`
+      : calcHtml(calc);
+    return `<div>
+      <label>${esc(f.name)} <span class="badge gray">计算</span></label>
+      <div class="calc-cell">${body}</div>    </div>`;
+  }
 
   // ---------- 自定义字段值输入控件 ----------
   function fieldInputHtml(f, value, { withClear = false } = {}) {
@@ -49,10 +76,12 @@ const ItemForm = (() => {
     return n;
   }
 
+  // 新建表单的字段值区：只渲染可手填字段，计算字段不出现（没有可填的值）
   function fieldsGridHtml(fields) {
-    return fields.length
-      ? fields.map((f) => fieldInputHtml(f, undefined)).join("")
-      : `<div class="hint">该店铺还没有自定义字段；可先到「字段」页创建（如：成本 / 售价）</div>`;
+    const plain = fields.filter((f) => !isComputed(f));
+    return plain.length
+      ? plain.map((f) => fieldInputHtml(f, undefined)).join("")
+      : `<div class="hint">该店铺还没有可填写的自定义字段；可先到「字段」页创建（如：成本 / 售价）</div>`;
   }
 
   // ---------- 新建 SPU 小窗 ----------
@@ -160,7 +189,8 @@ const ItemForm = (() => {
         </div>
       </div>
       <div class="form-grid" style="margin-top:.9rem" data-values></div>
-      <div class="hint">留空的字段值不会提交</div>
+      <div class="hint">留空的字段值不会提交${fields.some(isComputed)
+        ? "；计算字段的值由公式自动算出，此处无需填写" : ""}</div>
       <div data-result></div>`;
     const { dlg, foot } = UI.baseDialog("新建单品", wrap);
 
@@ -215,5 +245,6 @@ const ItemForm = (() => {
     setTimeout(() => nameEl.focus(), 50);
   }
 
-  return { fieldInputHtml, readFieldInput, fieldsGridHtml, openCreateSpu, openCreateItem };
+  return { fieldInputHtml, readFieldInput, fieldsGridHtml, calcHtml, computedRowHtml,
+           isComputed, openCreateSpu, openCreateItem };
 })();
