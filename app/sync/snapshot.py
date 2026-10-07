@@ -5,11 +5,16 @@ import hashlib
 import re
 import sqlite3
 from pathlib import Path
-from .. import schema
+from .. import formulas, schema
+from ..errors import ApiError
+from ..migrate import migrate_connection
 from .common import atomic_json, dump, read_json, fail
 
 FORMAT = 1
-VERSIONS = {"index": 1, "shop": 3}
+# 当前导出版本：索引库 1、店铺库 4（custom_fields 带 formula_json）
+VERSIONS = {"index": 1, "shop": 4}
+# 可读取的旧店铺库版本：v3 快照按已验证的旧结构重建后再升到 v4
+READABLE_VERSIONS = {"index": (1,), "shop": (3, 4)}
 
 
 def quote(name):
@@ -44,10 +49,30 @@ def catalog(conn):
         "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type,name")]
 
 
-def expected(kind):
+def _template(script, alter=False):
     with closing(sqlite3.connect(":memory:")) as conn:
-        conn.executescript(schema.INDEX_DDL if kind == "index" else schema.SHOP_DDL)
+        conn.executescript(script)
+        if alter:
+            conn.execute("ALTER TABLE custom_fields ADD COLUMN formula_json TEXT")
         return catalog(conn)
+
+
+def expected(kind):
+    """当前版本的标准 catalog"""
+    return _template(schema.INDEX_DDL if kind == "index" else schema.SHOP_DDL)
+
+
+def _known_catalogs(kind):
+    """允许出现的 catalog 白名单：标准新建的 v4、已知 v3、以及 v3 执行本次 ALTER 的结果
+
+    SQLite 会把 ADD COLUMN 后的建表语句按原文本重新保存，所以「v3 + ALTER」与
+    「直接建 v4」的 SQL 文本不同。两者都是合法结构，不能只认其中一种，也不能
+    放宽成忽略 CHECK、外键等细节的松散比较。
+    """
+    if kind == "index":
+        return [_template(schema.INDEX_DDL)]
+    return [_template(schema.SHOP_DDL), _template(schema.SHOP_DDL_V3),
+            _template(schema.SHOP_DDL_V3, alter=True)]
 
 
 def normalized(objects):
@@ -55,7 +80,7 @@ def normalized(objects):
 
 
 def check_schema(objects, kind):
-    if normalized(objects) != normalized(expected(kind)):
+    if normalized(objects) not in [normalized(c) for c in _known_catalogs(kind)]:
         fail("SCHEMA_UNSUPPORTED", "快照结构与当前应用不兼容，请使用相应版本的应用")
 
 
@@ -83,7 +108,9 @@ def export_database(source, destination, kind):
         meta = {"kind": kind, "user_version": version,
                 "application_id": conn.execute("PRAGMA application_id").fetchone()[0],
                 "encoding": conn.execute("PRAGMA encoding").fetchone()[0],
-                "schema": objects,
+                # 统一写入当前版本的标准 catalog：升级库与新建库不会因 SQLite 保存的
+                # DDL 文本不同而反复产生快照差异（实际结构已由上面的白名单确认）
+                "schema": expected(kind),
                 "sequences": dict(conn.execute("SELECT name,seq FROM sqlite_sequence")), "tables": {}}
         for obj in objects:
             if obj["type"] != "table":
@@ -148,12 +175,12 @@ def _validate_files(root):
         key, kind = item["key"], item["kind"]
         if not re.fullmatch(r"index|[a-f0-9]{32}", key) or kind != ("index" if key == "index" else "shop"):
             fail("SNAPSHOT_INVALID", "数据库标识无效")
-        meta = read_json(root / key / "schema.json")
-        if meta["user_version"] != VERSIONS[kind]:
-            fail("SCHEMA_UNSUPPORTED", "快照数据库版本不兼容")
-        check_schema(meta["schema"], kind)
-        tables = {o["name"] for o in meta["schema"] if o["type"] == "table"}
-        if set(meta["tables"]) != tables:
+        reader = read_json(root / key / "schema.json")
+        if reader["user_version"] not in READABLE_VERSIONS[kind]:
+            fail("SCHEMA_UNSUPPORTED", "快照数据库版本不兼容，请让其他设备升级应用后重新同步")
+        check_schema(reader["schema"], kind)
+        tables = {o["name"] for o in reader["schema"] if o["type"] == "table"}
+        if set(reader["tables"]) != tables:
             fail("SNAPSHOT_INVALID", "数据表清单不完整")
         expected_files.add(key + "/schema.json")
         expected_files.update(key + "/" + t + ".jsonl" for t in tables)
@@ -206,6 +233,45 @@ def validate_business(conn, kind):
                 valid = valid and vi in (0, 1)
             if not valid or (t != "string" and not negative and vi < 0):
                 fail("FIELD_INVALID", "字段值与字段定义不匹配")
+        _validate_formulas(conn)
+
+
+def _validate_formulas(conn) -> None:
+    """公式校验：所有字段定义（不只是有值的字段）都要合法、引用数值型、无循环
+
+    某个 SKU 缺值、动态除零或结果为负属于单元格状态，不是拒绝恢复整份快照的理由。
+    """
+    defs, parsed = [], {}
+    for uid, name, t, scale, negative, text in conn.execute(
+            "SELECT sync_uid,name,type,scale,allow_negative,formula_json FROM custom_fields"):
+        if not 0 <= scale <= 6:
+            fail("FIELD_INVALID", "字段精度无效")
+        row = {"uid": uid, "name": name, "type": t, "scale": scale,
+               "allow_negative": bool(negative), "formula": None}
+        defs.append(row)
+        if text is None:
+            continue
+        if t not in formulas.RESULT_TYPES:
+            fail("FIELD_INVALID", "计算字段的结果类型必须是小数或百分比")
+        try:
+            row["formula"] = formulas.tokens_of(text)
+            parsed[uid] = formulas.parse(row["formula"])
+        except ApiError as exc:
+            fail(exc.code, exc.message, exc.hint)
+    by_uid = {d["uid"]: d for d in defs}
+    for parsed_field in parsed.values():
+        try:
+            formulas.check_refs(parsed_field, by_uid)
+        except ApiError as exc:
+            fail(exc.code, exc.message, exc.hint)
+    cycle = formulas.find_cycle(formulas.graph_of(parsed))
+    if cycle:
+        names = {d["uid"]: d["name"] for d in defs}
+        fail("FORMULA_CYCLE", "候选结果中的公式存在循环引用：" + formulas.cycle_text(cycle, names),
+             "请调整公式引用关系后再应用")
+    if conn.execute("SELECT 1 FROM custom_values v JOIN custom_fields f ON f.id=v.field_id "
+                    "WHERE f.formula_json IS NOT NULL LIMIT 1").fetchone():
+        fail("FIELD_INVALID", "计算字段不应有落库值")
 
 
 def restore_database(root, key, target):
@@ -247,6 +313,9 @@ def restore_database(root, key, target):
         conn.execute(f"PRAGMA application_id={int(meta['application_id'])}")
         conn.commit()
         conn.execute("PRAGMA foreign_keys=ON")
+        if meta["kind"] == "shop" and int(meta["user_version"]) < VERSIONS["shop"]:
+            # v3 快照按已验证的旧结构完整重建后，用与运行库相同的迁移入口升到当前版本
+            migrate_connection(conn)
         validate_business(conn, meta["kind"])
     finally:
         conn.close()

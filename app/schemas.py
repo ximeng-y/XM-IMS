@@ -5,12 +5,48 @@ decimal/percent 字段值以显示数值传（12.34；25 表示 25%）。
 
 单品（SKU）标识 item_id 为字符串，格式「SPU 号-组内序号」（如 "1-2"），
 即该 SKU 所属 SPU 的 ID 加它在组内自 1 起的序号。
+
+数学计算字段：formula 是版本化的结构化 token 序列（见 app/formulas.py），
+计算字段的读写只经公式端点，值不可通过 SKU 接口手填或清除。
 """
-from typing import Any, Optional
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
 ITEM_ID_DESC = "单品标识，格式「SPU 号-组内序号」，如 1-2"
+FORMULA_DESC = "数学计算公式（结构化组件序列），仅计算字段使用"
+
+# ---------- 公式组件 ----------
+
+
+class FormulaNumber(BaseModel):
+    kind: Literal["number"]
+    value: str = Field(description="十进制常量文本（可为负），如 \"12\"、\"-3.5\"；不接受科学计数法")
+
+
+class FormulaFieldRef(BaseModel):
+    kind: Literal["field"]
+    uid: str = Field(description="被引用字段的 sync_uid（仅数值型自定义字段与计算字段）")
+
+
+class FormulaSystemRef(BaseModel):
+    kind: Literal["system"]
+    key: Literal["qty", "spu_id"] = Field(description="数值型系统字段：qty 库存数量 / spu_id SPU ID")
+
+
+class FormulaSymbol(BaseModel):
+    kind: Literal["symbol"]
+    value: Literal["+", "-", "*", "/", "(", ")"] = Field(description="运算符或括号")
+
+
+FormulaToken = Annotated[Union[FormulaNumber, FormulaFieldRef, FormulaSystemRef, FormulaSymbol],
+                         Field(discriminator="kind")]
+
+
+class Formula(BaseModel):
+    version: int = Field(default=1, description="公式结构版本，当前为 1")
+    tokens: list[FormulaToken] = Field(description=FORMULA_DESC)
+
 
 # ---------- 请求模型 ----------
 
@@ -25,10 +61,21 @@ class SpuCreate(BaseModel):
 
 class FieldCreate(BaseModel):
     name: str = Field(min_length=1, max_length=50, description="字段显示名，不得与系统字段重名")
-    type: str = Field(description="string | bool | int | decimal | percent")
+    type: str = Field(description="string | bool | int | decimal | percent；带 formula 时为结果类型")
     allow_negative: bool = Field(default=False, description="是否允许负数，仅数值类（int/decimal/percent）有效")
     scale: Optional[int] = Field(default=None, ge=0, le=6,
-                                 description="小数位数，仅 decimal 有效（0~6，默认 2）")
+                                 description="小数位数：decimal 字段 0~6（默认 2）；计算字段为显示位数（默认 2）")
+    formula: Optional[Formula] = Field(default=None,
+                                       description="提交即创建数学计算字段：type 为结果类型（decimal/percent）")
+    dry_run: bool = Field(default=False, description="只校验公式与引用，不落库")
+
+
+class FieldFormulaIn(BaseModel):
+    formula: Formula = Field(description="完整公式定义，整体替换")
+    type: Optional[str] = Field(default=None, description="结果类型：decimal | percent；缺省保持不变")
+    scale: Optional[int] = Field(default=None, ge=0, le=6, description="显示小数位 0~6；缺省保持不变")
+    allow_negative: Optional[bool] = Field(default=None, description="是否允许负数；缺省保持不变")
+    dry_run: bool = Field(default=False, description="只校验，不落库")
 
 
 class FieldRename(BaseModel):
@@ -123,16 +170,30 @@ class SpuList(BaseModel):
 class FieldOut(BaseModel):
     system: bool = Field(default=False, description="是否系统字段")
     key: Optional[str] = Field(default=None, description="系统字段标识（系统字段专用）")
-    id: Optional[int] = Field(default=None, description="字段 ID（自定义字段专用）")
+    id: Optional[int] = Field(default=None, description="字段 ID（自定义字段专用；dry_run 预览为空）")
+    uid: Optional[str] = Field(default=None, description="字段稳定标识 sync_uid（公式引用与同步用）")
     name: str
-    type: str
-    readonly: bool = Field(default=False)
+    type: str = Field(description="string | bool | int | decimal | percent；计算字段为结果类型")
+    readonly: bool = Field(default=False, description="计算字段为 true：值由公式算出，不可手填或清除")
     allow_negative: bool = Field(default=False)
     scale: int = Field(default=2)
+    formula: Optional[Formula] = Field(default=None, description="计算字段的公式定义；普通字段为 null")
+    computed: bool = Field(default=False, description="是否数学计算字段")
+
+
+class FieldWriteOut(FieldOut):
+    dry_run: bool = Field(default=False, description="本次仅校验预览，未落库")
 
 
 class FieldList(BaseModel):
     fields: list[FieldOut]
+
+
+class CalculationOut(BaseModel):
+    display: Optional[str] = Field(default=None,
+                                   description="后端格式化的结果文本（保留显示位数与百分号）；失败为 null")
+    error: Optional[dict[str, Any]] = Field(default=None,
+                                            description="单元格错误 {code, message, hint?}；成功为 null")
 
 
 class ItemOut(BaseModel):
@@ -141,7 +202,9 @@ class ItemOut(BaseModel):
     spu_id: int
     spu_name: str
     qty: int = Field(description="当前库存 = SUM(movements)")
-    values: dict[str, Any] = Field(description="自定义字段值（显示语义）")
+    values: dict[str, Any] = Field(description="自定义字段值（显示语义）；计算字段成功时为结果数值，失败为 null")
+    calculations: dict[str, CalculationOut] = Field(default_factory=dict,
+                                                    description="计算字段的结果与错误，按字段名索引")
     created_at: str
     updated_at: str
 

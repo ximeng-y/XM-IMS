@@ -52,7 +52,10 @@ function renderTable(data) {
     return;
   }
   tbody.innerHTML = data.items.map((it, idx) => {
-    const extra = fieldsMeta.map((f) => `<td>${UI.fmtVal(it.values[f.name])}</td>`).join("");
+    // 计算字段与普通字段同列展示：普通字段取手填值，计算字段取后端算出的结果文本/错误
+    const extra = fieldsMeta.map((f) => `<td>${
+      ItemForm.isComputed(f) ? ItemForm.calcHtml(it.calculations?.[f.name])
+                             : UI.fmtVal(it.values[f.name])}</td>`).join("");
     return `<tr>
       <td class="num mono">${UI.esc(it.id)}</td>
       <td>${UI.esc(it.name)}</td>
@@ -103,9 +106,16 @@ function editFlow(item) {
     </div>
     <div class="hint" style="margin:.9rem 0 .4rem">自定义字段值（勾选「清除」= 提交 null 清除该值）</div>
     <div class="form-grid">
-      ${fieldsMeta.map((f) => ItemForm.fieldInputHtml(f, item.values[f.name], { withClear: true })).join("") ||
-        `<div class="hint">该店铺还没有自定义字段</div>`}
-    </div>`;
+      ${fieldsMeta.filter((f) => !ItemForm.isComputed(f))
+          .map((f) => ItemForm.fieldInputHtml(f, item.values[f.name], { withClear: true })).join("") ||
+        `<div class="hint">该店铺还没有可填写的自定义字段</div>`}
+    </div>
+    ${fieldsMeta.some(ItemForm.isComputed) ? `
+      <div class="hint" style="margin:.9rem 0 .4rem">计算字段（值由公式自动算出，不可手填或清除）</div>
+      <div class="form-grid">
+        ${fieldsMeta.filter(ItemForm.isComputed)
+            .map((f) => ItemForm.computedRowHtml(f, item.calculations?.[f.name])).join("")}
+      </div>` : ""}`;
   const { dlg, foot } = UI.baseDialog(`编辑单品 ${item.id}`, wrap);
 
   const mode = $("#edSpuMode", wrap);
@@ -132,7 +142,7 @@ function editFlow(item) {
     }
     const values = {};
     let bad = false;
-    fieldsMeta.forEach((f) => {
+    fieldsMeta.filter((f) => !ItemForm.isComputed(f)).forEach((f) => {
       const el = wrap.querySelector(`[data-fld="${CSS.escape(f.name)}"]`);
       const clearEl = wrap.querySelector(`[data-clear="${CSS.escape(f.name)}"]`);
       if (clearEl && clearEl.checked) { values[f.name] = null; return; }

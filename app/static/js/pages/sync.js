@@ -4,7 +4,7 @@ let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changes
 const limit=20;
 const $s=id=>document.getElementById(id);
 const text=(node,value)=>{node.textContent=value;};
-const labels={name:'名称',type:'类型',scale:'小数位数',allow_negative:'允许负数',qty:'数量',unit_price:'单价（分）',value_int:'数值编码',value_text:'文本值',created_at:'创建时间',updated_at:'修改时间',actor:'操作者',note:'备注',batch_no:'批次',supplier:'供应商',channel:'渠道',customer:'客户',definition:'字段定义',values:'关联值',seq:'组内序号',spu_id:'所属 SPU',item_id:'所属 SKU',field_id:'自定义字段',entity_type:'对象类型',entity_id:'事件发生时编号（不可用于查找当前对象）',entity_uid:'对象稳定标识',detail:'审计详情'};
+const labels={name:'名称',type:'类型',scale:'小数位数',allow_negative:'允许负数',formula_json:'公式',formula:'公式',qty:'数量',unit_price:'单价（分）',value_int:'数值编码',value_text:'文本值',created_at:'创建时间',updated_at:'修改时间',actor:'操作者',note:'备注',batch_no:'批次',supplier:'供应商',channel:'渠道',customer:'客户',definition:'字段定义',values:'关联值',seq:'组内序号',spu_id:'所属 SPU',item_id:'所属 SKU',field_id:'自定义字段',entity_type:'对象类型',entity_id:'事件发生时编号（不可用于查找当前对象）',entity_uid:'对象稳定标识',detail:'审计详情'};
 function printable(v){if(v===null||v===undefined)return '不存在／已删除';if(typeof v!=='object')return String(v);return Object.entries(v).map(([k,x])=>(labels[k]||k)+'：'+(typeof x==='object'?JSON.stringify(x,null,2):String(x??'空值'))).join('\n');}
 async function action(button,fn){await UI.withBusy(button,async()=>{try{await fn();}catch(e){UI.fail(e.message,{title:e.code||'SYNC_ERROR'});}await refresh().catch(showRefreshError);});}
 function showLocalOnly(){
@@ -52,7 +52,8 @@ async function loadConflicts(){
   const p=await Sync.api('GET','/conflicts/'+conflictSession+'?offset='+offset+'&limit='+limit+'&unresolved='+$s('onlyUnresolved').checked);
   revision=p.revision;total=p.total;
   text($s('conflictSummary'),'未解决 '+p.unresolved+' 项；当前筛选共 '+p.total+' 项；候选自动修改 '+p.changes_total+' 条。');
-  $s('conflictList').replaceChildren(...p.conflicts.map(card));
+  // 渲染期任何异常都不能让 revision 与服务端失同步：逐张卡片兜底，坏掉的卡片显示原因
+  $s('conflictList').replaceChildren(...p.conflicts.map(c=>{try{return card(c);}catch(error){console.error(error);const box=document.createElement('section');box.className='conflict-card';const h=document.createElement('h3');h.textContent='冲突项 '+(c&&c.id||'')+' 无法显示';const pre=document.createElement('pre');pre.textContent=error.message||String(error);box.append(h,pre);return box;}}));
   await loadChanges();
   $s('previousConflicts').disabled=offset===0;
   $s('nextConflicts').disabled=offset+limit>=total;

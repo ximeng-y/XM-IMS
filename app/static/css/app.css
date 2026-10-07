@@ -430,6 +430,99 @@ dialog .dlg-foot {
 .mini-table { font-size: .82rem; }
 .mini-table td, .mini-table th { padding: .3rem .55rem; }
 
+/* ---------- 数学计算字段 ---------- */
+/* 字段列表里的公式列：只读正文，长公式换行而不是把表格撑宽；宽度归零让列宽由内容与
+   相邻列分配，不因一条长公式把「操作」列挤走 */
+.fx-cell { max-width: 22rem; overflow-wrap: anywhere; font-size: .82rem; text-align: left; }
+
+/* 公式编辑器（字段页新建／编辑公式小窗）：预览行在上，字段与运算符面板并排在下，
+   窄窗口时自动堆叠。样式只作用于本组件，不改动全局 dialog 宽度 */
+.fx-editor { border: 1px solid var(--line-light); background: #fff; padding: .8rem .9rem; }
+.fx-pane-title { font-size: .78rem; color: var(--ink-soft); margin-bottom: .35rem; }
+.fx-preview {
+  border-bottom: 1px solid var(--line-light);
+  padding-bottom: .6rem; margin-bottom: .7rem;
+}
+/* 预览框内的公式组件块：每个 token 一个独立块，右上角 × 单独删除该项。
+   × 由包裹层绝对定位（与块右上角重合），块内文字因此可自由换行而不会压到 × */
+.fx-preview-text {
+  min-height: 2.2rem;
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--blue-dark);
+  overflow-wrap: anywhere;
+}
+.fx-tok-wrap {
+  position: relative;
+  display: inline-block;
+  /* 上留出 × 溢出的一半高度，右留出块间距 */
+  margin: .55rem .55rem 0 0;
+  vertical-align: top;
+}
+.fx-tok {
+  display: inline-block;
+  padding: .22rem .5rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  line-height: 1.5;
+}
+.fx-tok-x {
+  position: absolute;
+  top: -.5rem; right: -.5rem;
+  width: 1.05rem; height: 1.05rem;
+  padding: 0;
+  margin: 0;
+  font-size: .72rem;
+  line-height: 1;
+  color: var(--danger);
+  background: #fff;
+  border: 1px solid var(--danger);
+}
+.fx-tok-x:hover { background: #fdf0ef; color: #8f2a27; }
+.fx-palette {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: .9rem 1.1rem;
+}
+/* 窄窗口（含高分屏整数缩放下等效窄宽）：面板改为上下堆叠，避免按钮被压成竖排文字 */
+@media (max-width: 46rem) {
+  .fx-palette { grid-template-columns: 1fr; }
+}
+.fx-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.fx-chip {
+  width: auto;
+  margin: 0;
+  padding: .25rem .6rem;
+  font-size: .82rem;
+  line-height: 1.5;
+  background: #fff;
+  color: var(--blue);
+  border: 1px solid var(--blue);
+}
+.fx-chip:hover { background: var(--blue-pale); color: var(--blue-dark); border-color: var(--blue-dark); }
+.fx-chip.fx-op { min-width: 2.4rem; font-weight: 700; }
+.fx-tag {
+  font-size: .68rem;
+  color: #fff;
+  background: var(--blue);
+  padding: 0 .25em;
+  margin-left: .2em;
+  vertical-align: middle;
+}
+.fx-num { display: flex; gap: .4rem; align-items: center; }
+/* input 在 Pico 下是 width:100%，flex 收缩后仍会撑破容器，故显式允许收缩 */
+.fx-num input { min-width: 0; }
+.fx-num button { width: auto; margin: 0; flex: 0 0 auto; }
+.fx-actions { display: flex; gap: .5rem; margin-top: .7rem; }
+.fx-actions button { width: auto; margin: 0; }
+.fx-warn { color: var(--danger); }
+
+/* 单品页／编辑小窗里的计算字段只读单元格 */
+.calc-block { display: flex; gap: .45rem; align-items: baseline; flex-wrap: wrap; }
+.calc-msg { font-size: .78rem; color: var(--danger); overflow-wrap: anywhere; }
+/* 只读结果与同排的输入框对齐：给一个与输入框相当的高度，不参与编辑 */
+.calc-cell { min-height: 2.4rem; display: flex; align-items: center; }
+
 /* 无店铺时的引导横幅 */
 .no-shop {
   border: 1px dashed var(--blue);

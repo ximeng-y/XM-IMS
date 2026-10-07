@@ -5,6 +5,7 @@
 <div class="page-head">
   <div>
     <h1>自定义字段</h1>
+    <div class="sub">普通字段的值手工填写；数学计算字段的值由公式按当前 SKU 实时算出，不落库、不可手填</div>
   </div>
 </div>
 
@@ -24,15 +25,17 @@
           <option value="int">整数</option>
           <option value="decimal" selected>小数</option>
           <option value="percent">百分比</option>
+          <option value="__computed__">数学计算（由公式算出，不能手填）</option>
         </select>
       </div>
-      <div>
+      <div id="fldScaleBox">
         <label for="fldScale">小数位（仅小数类型）</label>
         <input id="fldScale" type="number" min="0" max="6" value="2">
       </div>
     </div>
-    <div class="form-check" style="margin-top:.8rem"><input id="fldNeg" type="checkbox"><label for="fldNeg" style="margin:0">允许负数（仅数值类）</label></div>
-    <div style="margin-top:.4rem"><button type="submit" class="btn-sm">创建</button></div>
+    <div class="form-check" id="fldNegBox" style="margin-top:.8rem"><input id="fldNeg" type="checkbox"><label for="fldNeg" style="margin:0">允许负数（仅数值类）</label></div>
+    <div class="hint" id="fldComputedHint" hidden>计算字段的名称、公式、结果类型与显示位数在下一步的小窗里填写；点击「创建」会打开公式编辑器。</div>
+    <div style="margin-top:.8rem"><button type="submit" class="btn-sm">创建</button></div>
   </form>
   <div id="createResult"></div>
 </div>
@@ -42,12 +45,15 @@
   <div class="table-scroll">
     <table>
       <thead><tr>
-        <th>标记</th><th class="num">ID</th><th>名称</th><th>类型</th>
-        <th>允许负数</th><th class="num">小数位</th><th style="width:11.875rem">操作</th>
+        <th>标记</th><th class="num">ID</th><th>名称</th><th>类型</th><th>公式</th>
+        <th>允许负数</th><th class="num">小数位</th><th style="width:15rem">操作</th>
       </tr></thead>
-      <tbody id="fieldRows"><tr><td colspan="7" class="t-empty">加载中…</td></tr></tbody>
+      <tbody id="fieldRows"><tr><td colspan="8" class="t-empty">加载中…</td></tr></tbody>
     </table>
   </div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/fields.js?v=4"></script>{% endblock %}
+{% block scripts %}
+<script src="/static/js/components/formula-editor.js?v=2"></script>
+<script src="/static/js/pages/fields.js?v=6"></script>
+{% endblock %}

@@ -52,6 +52,7 @@ class SyncManager:
             config.use_generation(self.runtime / self.active["generation"])
             with db.internal_access():
                 db.init()
+                self.upgrade_active_shops()
         # repo 目录替换中断时先恢复旧仓库，不丢未上传对象。
         if not (self.directory / "repo").exists() and (self.directory / "repo-old").exists():
             replace_path(self.directory / "repo-old", self.directory / "repo", self.directory)
@@ -65,6 +66,18 @@ class SyncManager:
         else:
             self.status_name = "local" if self.active else "setup"
             db.set_ready(bool(self.active))
+
+    def upgrade_active_shops(self):
+        """内部访问阶段把当前代次的店铺库升到当前结构版本
+
+        必须在开放业务之前完成：升级后的店铺库才与 v4 快照一致，否则首次捕获会因
+        版本不匹配而失败，业务接口也会读到未迁移的结构。
+        """
+        index = db.index_db()
+        with index.lock:
+            shops = index.conn.execute("SELECT id FROM shops ORDER BY id").fetchall()
+        for row in shops:
+            db.shop_db(row["id"])
 
     def stop(self):
         db.set_ready(False)
@@ -576,6 +589,7 @@ class SyncManager:
         source = self.object(digest)
         generation = uuid.uuid4().hex
         target = self.runtime / generation
+        upgraded = self.needs_upgrade(source)
         try:
             manifest = snapshot.restore_set(source, target)
         except BaseException:
@@ -597,8 +611,34 @@ class SyncManager:
             self.active = updated
             config.use_generation(target)
             db.init()
+            self.upgrade_active_shops()
         self.state["local_hash"] = digest
         self.captured_epoch = db.epoch()
+        self.save()
+        if upgraded:
+            # 恢复来源含 v3 店铺库，实际运行库已升到 v4：不能再把它当成与旧快照相同
+            self.invalidate_capture_cache()
+
+    @staticmethod
+    def needs_upgrade(source) -> bool:
+        """恢复来源中是否存在低于当前结构版本的店铺库"""
+        for item in read_json(Path(source) / "manifest.json", {}).get("databases", []):
+            meta = read_json(Path(source) / item["key"] / "schema.json", {})
+            if meta.get("kind") == "shop" and meta.get("user_version") != snapshot.VERSIONS["shop"]:
+                return True
+        return False
+
+    def invalidate_capture_cache(self):
+        """使本地捕获缓存失效，让下一次 capture 重新生成实际快照
+
+        local_hash 与 captured_epoch 必须一并清掉：只改前者时，没有业务写入的
+        情况下 capture 仍会命中「epoch 未变 + 有 local_hash」的复用分支，于是一直
+        沿用旧 hash。远端与共同基线的原始 hash 不受影响。
+        """
+        self.state.pop("local_hash", None)
+        self.state.pop("committed_hash", None)
+        self.state.pop("committed_head", None)
+        self.captured_epoch = None
         self.save()
 
     def mark_synced(self, digest, commit, compact=True):
