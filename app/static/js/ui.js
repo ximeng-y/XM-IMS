@@ -34,8 +34,15 @@ const UI = (() => {
   const fmtVal = (v) => v === null || v === undefined || v === "" ? "—" : esc(v);
 
   // ---------- toast ----------
+  // 小窗用 showModal() 打开后进入浏览器 top layer，普通定位的 #toasts 无论 z-index
+  // 多高都会被 dialog::backdrop 盖住。有小窗打开时把 toast 挂进该 dialog，让它与小窗
+  // 同层（自然位于遮罩之上）；没有小窗时仍挂在页面右下角的 #toasts 里。
+  function toastHost() {
+    return document.querySelector("dialog[open]") || $("#toasts");
+  }
+
   function toast(message, { title = "", hint = "", error = false, ms = 4200 } = {}) {
-    const box = $("#toasts");
+    const box = toastHost();
     const t = document.createElement("div");
     t.className = "toast" + (error ? " error" : "");
     t.innerHTML =
