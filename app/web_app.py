@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import web
 from .sync.api import local_request
+from .version import APP_VERSION
 from .errors import register_error_handlers
 
 # 后端地址：launcher.py 注入实际端口；未注入时回落默认端口
@@ -71,7 +72,7 @@ async def api_proxy(path: str, request: Request):
 def create_web_app() -> FastAPI:
     app = FastAPI(
         title="XM-IMS Frontend",
-        version="0.1.0",
+        version=APP_VERSION,
         docs_url=None, redoc_url=None, openapi_url=None,  # 文档属于后端进程
     )
     register_error_handlers(app)
