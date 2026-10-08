@@ -79,96 +79,21 @@ function openCreateDialog() {
     spus: spusList,
     onCreated: () => { offset = 0; loadItems(); },
     onSpuCreated: () => fillSpuSelects(),
+    // issue #33：重名提示里选「编辑这个当前已有的 SKU」时打开同一个编辑小窗
+    onEditExisting: (dup) => editFlow(dup),
   });
 }
 
 // ---------- 编辑（PATCH：改名 / 换挂 SPU / 改值，null = 清除） ----------
+// 小窗本体在 components/item-form.js：单品页与库存页（重名提示的「编辑这个当前已有的 SKU」）共用
 function editFlow(item) {
-  let done = false;
-  const wrap = document.createElement("div");
-  const valStr = (v) => v === true ? "yes" : v === false ? "no" : (v ?? "");
-  wrap.innerHTML = `
-    <div class="form-grid" style="grid-template-columns:1fr 1fr">
-      <div><label>SKU 名称</label>
-        <input id="edName" value="${UI.esc(item.name)}" maxlength="200"></div>
-      <div><label>SPU 归属</label>
-        <select id="edSpuMode">
-          <option value="keep">（保持：${UI.esc(item.spu_name)}）</option>
-          <option value="pick">选择已有 SPU</option>
-          <option value="name">输入名称（不存在则自动创建）</option>
-        </select></div>
-      <div id="edSpuPickBox" style="display:none"><label>已有 SPU</label>
-        <select id="edSpuPick">${spusList.map((s) =>
-          `<option value="${s.id}" ${s.id === item.spu_id ? "selected" : ""}>${UI.esc(s.name)}（#${s.id}）</option>`).join("")}
-        </select></div>
-      <div id="edSpuNameBox" style="display:none"><label>SPU 名称（新）</label>
-        <input id="edSpuName" maxlength="200"></div>
-    </div>
-    <div class="hint" style="margin:.9rem 0 .4rem">自定义字段值（勾选「清除」= 提交 null 清除该值）</div>
-    <div class="form-grid">
-      ${fieldsMeta.filter((f) => !ItemForm.isComputed(f))
-          .map((f) => ItemForm.fieldInputHtml(f, item.values[f.name], { withClear: true })).join("") ||
-        `<div class="hint">该店铺还没有可填写的自定义字段</div>`}
-    </div>
-    ${fieldsMeta.some(ItemForm.isComputed) ? `
-      <div class="hint" style="margin:.9rem 0 .4rem">计算字段（值由公式自动算出，不可手填或清除）</div>
-      <div class="form-grid">
-        ${fieldsMeta.filter(ItemForm.isComputed)
-            .map((f) => ItemForm.computedRowHtml(f, item.calculations?.[f.name])).join("")}
-      </div>` : ""}`;
-  const { dlg, foot } = UI.baseDialog(`编辑单品 ${item.id}`, wrap);
-
-  const mode = $("#edSpuMode", wrap);
-  mode.addEventListener("change", () => {
-    $("#edSpuPickBox", wrap).style.display = mode.value === "pick" ? "" : "none";
-    $("#edSpuNameBox", wrap).style.display = mode.value === "name" ? "" : "none";
+  ItemForm.openEditItem({
+    item,
+    fields: fieldsMeta,
+    spus: spusList,
+    onSaved: async () => { await loadMeta(); fillSpuSelects(); loadItems(); },
+    onSpuCreated: () => fillSpuSelects(),
   });
-
-  const save = UI.mkBtn("保存修改"), cancel = UI.mkBtn("取消", "btn-outline");
-  save.type = cancel.type = "button";
-  foot.append(cancel, save);
-  cancel.onclick = () => { done = true; dlg.close(); };
-  dlg.addEventListener("close", () => { done = true; dlg.remove(); });
-
-  save.onclick = () => UI.withBusy(save, async () => {
-    const body = {};
-    const name = $("#edName", wrap).value.trim();
-    if (name && name !== item.name) body.name = name;
-    if (mode.value === "pick") body.spu_id = Number($("#edSpuPick", wrap).value);
-    if (mode.value === "name") {
-      const sn = $("#edSpuName", wrap).value.trim();
-      if (!sn) { UI.fail("请填写 SPU 名称"); return; }
-      body.spu_name = sn;
-    }
-    const values = {};
-    let bad = false;
-    fieldsMeta.filter((f) => !ItemForm.isComputed(f)).forEach((f) => {
-      const el = wrap.querySelector(`[data-fld="${CSS.escape(f.name)}"]`);
-      const clearEl = wrap.querySelector(`[data-clear="${CSS.escape(f.name)}"]`);
-      if (clearEl && clearEl.checked) { values[f.name] = null; return; }
-      const orig = item.values[f.name];
-      const origStr = f.type === "bool" ? (valStr(orig) || "") : String(orig ?? "");
-      const v = ItemForm.readFieldInput(f, el);
-      if (v === null) { bad = true; return; }
-      if (v !== undefined && el.value.trim() !== origStr) values[f.name] = v;
-    });
-    if (bad) { UI.fail("字段值格式不正确"); return; }
-    if (Object.keys(values).length) body.values = values;
-    if (!Object.keys(body).length) { UI.toast("没有任何修改"); done = true; dlg.close(); return; }
-    try {
-      const updated = await XM.patch(`/items/${encodeURIComponent(item.id)}`, body);
-      // 换挂 SPU 会改变单品编号，提示时以新编号为准
-      const refChanged = updated.id !== item.id;
-      UI.ok(`单品 ${item.id} 已更新` + (refChanged ? `，编号变为 ${updated.id}` : ""),
-            { title: "ITEM_UPDATED" });
-      done = true; dlg.close();
-      await loadMeta(); fillSpuSelects();
-      loadItems();
-    } catch (e) { UI.apiFail(e, "保存失败"); }
-  });
-
-  dlg.showModal();
-  setTimeout(() => $("#edName", wrap).focus(), 50);
 }
 
 // ---------- 启动 ----------

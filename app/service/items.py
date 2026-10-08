@@ -238,11 +238,17 @@ def create_item(shop_id: int, payload: ItemCreate) -> dict:
 
 
 def list_items(shop_id: int, offset: int = 0, limit: int = 50,
-               q: str | None = None, spu_id: int | None = None) -> dict:
+               q: str | None = None, spu_id: int | None = None,
+               name: str | None = None) -> dict:
     where, params = [], []
     if q:
         where.append("i.name LIKE ?")
         params.append(f"%{q}%")
+    # name 为精确匹配：前端创建单品前按「SPU + 完整名称」查重（不设唯一约束，
+    # 只做创建时的一道把关）
+    if name:
+        where.append("i.name = ?")
+        params.append(name)
     if spu_id is not None:
         where.append("i.spu_id = ?")
         params.append(spu_id)
