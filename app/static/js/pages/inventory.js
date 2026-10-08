@@ -76,7 +76,8 @@ function renderOverview() {
     const tri = spu.sku_count > 0
       ? `<button type="button" class="tri-btn${open ? " open" : ""}" data-spu="${spu.id}" aria-label="展开/收起 SKU">▼</button>`
       : "";
-    let row = `<tr class="spu-row">
+    // data-spu 让整行都可作为展开/收起的点击目标（有附属 SKU 时才标记）
+    let row = `<tr class="spu-row"${spu.sku_count > 0 ? ` data-spu="${spu.id}"` : ""}>
       <td class="tri-cell">${tri}</td>
       <td class="num mono">${spu.id}</td>
       <td>${UI.esc(spu.name)}</td>
@@ -130,16 +131,21 @@ function bindOpsBar() {
   clearBtn.addEventListener("click", () => { q.value = ""; sync(); q.focus(); });
 }
 
+function toggleSpu(id) {
+  if (expandedSpus.has(id)) expandedSpus.delete(id);
+  else expandedSpus.add(id);
+  renderOverview();
+}
+
 window.PAGE_INIT = async function () {
   if (!UI.requireShop()) return;
   // 事件委托绑在 tbody 上：重渲染后无需重绑
+  // 三角按钮与 SPU 行空白区域都触发同一个展开/收起，一次点击只切换一次
   $("#spuRows").addEventListener("click", (e) => {
     const btn = e.target.closest(".tri-btn[data-spu]");
-    if (!btn) return;
-    const id = Number(btn.dataset.spu);
-    if (expandedSpus.has(id)) expandedSpus.delete(id);
-    else expandedSpus.add(id);
-    renderOverview();
+    if (btn) { toggleSpu(Number(btn.dataset.spu)); return; }
+    const row = e.target.closest("tr.spu-row[data-spu]");
+    if (row) toggleSpu(Number(row.dataset.spu));
   });
   bindOpsBar();
   await loadOverview();

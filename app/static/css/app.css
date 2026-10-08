@@ -610,3 +610,6 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 .conflict-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}.conflict-grid>div{min-width:0}.conflict-grid pre,#automaticChanges pre,#mergePreview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:22rem;overflow:auto;font-size:.8rem;padding:.7rem}
 .sync-page [hidden]{display:none!important}
 @media(max-width:75rem){.conflict-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* 有附属 SKU 的 SPU 行整行可点击展开/收起（见 inventory.js 的点击委托） */
+tr.spu-row[data-spu] { cursor: pointer; }
