@@ -1,10 +1,18 @@
-/* 自动更新提示：页面加载后延迟检查 /update/status，发现新版本时弹窗询问
+/* 自动更新提示：页面加载后查询 /update/status，发现新版本时弹窗询问
    - 同步页（数据安全操作）不打扰
+   - 后台检查是启动时另起线程跑的 git ls-remote，可能比页面加载慢，
+     因此 checked=false 时按间隔重试若干次，避免整次启动都不提示
    - 检查类网络/接口错误一律静默（console.warn），不弹错误 toast */
 "use strict";
 
+const UPDATE_FIRST_DELAY = 800;   // 首查延迟，避免抢首屏
+const UPDATE_RETRY_MS = 3000;     // 后台检查未完成时的重试间隔
+const UPDATE_MAX_RETRY = 5;       // 最多重试次数
+
 window.addEventListener("load", () => {
-  setTimeout(async () => {
+  setTimeout(() => check(0), UPDATE_FIRST_DELAY);
+
+  async function check(tries) {
     if (document.body.dataset.page === "sync") return;
     let st;
     try {
@@ -13,10 +21,17 @@ window.addEventListener("load", () => {
       console.warn("[update] 检查更新失败（静默）", e);
       return;
     }
+    if (st && st.checked === false && tries < UPDATE_MAX_RETRY) {
+      setTimeout(() => check(tries + 1), UPDATE_RETRY_MS);
+      return;
+    }
     if (!st || !st.has_update || !st.latest_tag) return;
     // 本次会话已提示过该版本则不再打扰
     if (sessionStorage.getItem("xmims.updatePrompted") === st.latest_tag) return;
+    prompt(st);
+  }
 
+  function prompt(st) {
     const wrap = document.createElement("div");
     wrap.innerHTML =
       "<ul class='update-info'>" +
@@ -65,5 +80,5 @@ window.addEventListener("load", () => {
       dlg.close();
     };
     dlg.showModal();
-  }, 800);
+  }
 });
