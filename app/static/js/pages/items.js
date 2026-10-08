@@ -4,6 +4,7 @@
 
 const LIMIT = 50;
 let offset = 0;
+let pageTotal = 0;   // 最近一次加载的总条数（删除后据此回退分页）
 let fieldsMeta = [];   // 自定义字段定义
 let spusList = [];     // SPU 列表（与新建单品小窗内的组合框共享引用）
 
@@ -31,6 +32,7 @@ async function loadItems() {
   if (spu) params.set("spu_id", spu);
   try {
     const data = await XM.get("/items?" + params);
+    pageTotal = data.total;
     renderTable(data);
     UI.renderPager("#itemPager", { offset, limit: LIMIT, total: data.total },
       (go) => { offset = go; loadItems(); });
@@ -93,6 +95,8 @@ async function deleteFlow(item) {
     UI.ok(`单品 ${res.item}「${res.name}」已删除` +
           (res.deleted_values ? `，连带清除 ${res.deleted_values} 个字段值` : ""),
           { title: "ITEM_DELETED" });
+    // 删除的是当前页最后一条时回退一页，避免停留在空页
+    if (pageTotal === 1 && offset > 0) offset = Math.max(0, offset - LIMIT);
     loadItems();
   } catch (e) { UI.apiFail(e, "删除失败"); }
 }
