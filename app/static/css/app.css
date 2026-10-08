@@ -334,6 +334,25 @@ input:focus, select:focus, textarea:focus {
   display: flex; flex-direction: column; gap: .5rem;
   z-index: 100; max-width: 23.75rem;
 }
+/* ---------- 自建右键菜单 ---------- */
+.ctx-menu {
+  position: fixed; z-index: 200;
+  min-width: 10rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: .25rem 0;
+}
+.ctx-menu-item {
+  display: block; width: 100%;
+  margin: 0; padding: .45rem .9rem;
+  background: none; border: 0;
+  color: var(--ink); font-size: .85rem; text-align: left;
+  cursor: pointer;
+}
+.ctx-menu-item:hover:not(:disabled) { background: var(--blue-pale); color: var(--blue-dark); }
+.ctx-menu-item.danger { color: var(--danger); }
+.ctx-menu-item.danger:hover:not(:disabled) { background: #fdf0ef; color: #8f2a27; }
+.ctx-menu-item:disabled { color: var(--ink-soft); cursor: not-allowed; }
 .toast {
   background: #fff; border: 1px solid var(--blue);
   border-left: 4px solid var(--blue);

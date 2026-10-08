@@ -101,7 +101,8 @@ const ItemForm = (() => {
 
   // ---------- SPU 可搜索组合框 ----------
   // 在容器内构建「输入框 + 下拉」；返回 { wrap, input, getSelected, destroy }
-  function buildSpuCombo(spus, { onSpuCreated } = {}) {
+  // initialId 非空时预选该 SPU（库存页右键 SPU 行「在此 SPU 下新建单品」用）
+  function buildSpuCombo(spus, { onSpuCreated, initialId = null } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "spu-combo";
     wrap.innerHTML = `<input placeholder="点击展开全部 SPU，或输入名称即时过滤" autocomplete="off">
@@ -128,6 +129,10 @@ const ItemForm = (() => {
       selected = spu;
       input.value = spu.name;
       closeList();
+    }
+    if (initialId !== null) {
+      const preset = spus.find((s) => s.id === initialId);
+      if (preset) choose(preset);
     }
 
     // 快捷新建 SPU：小窗内创建后立即选中，不离开当前页
@@ -174,7 +179,7 @@ const ItemForm = (() => {
   // ---------- 新建单品（SKU）小窗 ----------
   // fields：自定义字段定义数组；spus：SPU 数组（引用共享）
   // onCreated(item)：创建成功后回调；onSpuCreated(spu)：窗内快捷新建 SPU 后回调
-  function openCreateItem({ fields = [], spus = [], onCreated, onSpuCreated } = {}) {
+  function openCreateItem({ fields = [], spus = [], onCreated, onSpuCreated, initialSpuId = null } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "dlg-form dlg-form-wide";
     wrap.innerHTML = `
@@ -198,7 +203,7 @@ const ItemForm = (() => {
     const valueGrid = wrap.querySelector("[data-values]");
     const resultBox = wrap.querySelector("[data-result]");
     valueGrid.innerHTML = fieldsGridHtml(fields);
-    const combo = buildSpuCombo(spus, { onSpuCreated });
+    const combo = buildSpuCombo(spus, { onSpuCreated, initialId: initialSpuId });
     wrap.querySelector("[data-combo]").appendChild(combo.wrap);
 
     let done = false;
