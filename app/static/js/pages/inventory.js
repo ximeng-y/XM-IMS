@@ -147,8 +147,10 @@ window.PAGE_INIT = async function () {
     // 拖拽选中行内文字后松开也会触发 click，此时不应切换展开状态
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
+    // data-spu 也可能被其它功能（例如右键菜单识别目标行）加到不可展开的行上：
+    // 这里以「行内存在三角按钮」作为可展开的判据，避免空 SPU 行被误展开
     const row = e.target.closest("tr.spu-row[data-spu]");
-    if (row) toggleSpu(Number(row.dataset.spu));
+    if (row && row.querySelector(".tri-btn")) toggleSpu(Number(row.dataset.spu));
   });
   bindOpsBar();
   await loadOverview();
