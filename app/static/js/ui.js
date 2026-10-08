@@ -37,8 +37,20 @@ const UI = (() => {
   // 小窗用 showModal() 打开后进入浏览器 top layer，普通定位的 #toasts 无论 z-index
   // 多高都会被 dialog::backdrop 盖住。有小窗打开时把 toast 挂进该 dialog，让它与小窗
   // 同层（自然位于遮罩之上）；没有小窗时仍挂在页面右下角的 #toasts 里。
+  // 小窗关闭后其子节点不再渲染，所以关窗时要把残留在里面的提示移回 #toasts，
+  // 否则「先提示、紧接着关窗」的流程（编辑保存、删除确认等）会看不到提示。
+  const toastHosts = new WeakSet();
   function toastHost() {
-    return document.querySelector("dialog[open]") || $("#toasts");
+    const dlg = document.querySelector("dialog[open]");
+    if (!dlg) return $("#toasts");
+    if (!toastHosts.has(dlg)) {
+      toastHosts.add(dlg);
+      dlg.addEventListener("close", () => {
+        const box = $("#toasts");
+        dlg.querySelectorAll(".toast").forEach((t) => box.appendChild(t));
+      });
+    }
+    return dlg;
   }
 
   function toast(message, { title = "", hint = "", error = false, ms = 4200 } = {}) {
