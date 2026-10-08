@@ -144,6 +144,9 @@ window.PAGE_INIT = async function () {
   $("#spuRows").addEventListener("click", (e) => {
     const btn = e.target.closest(".tri-btn[data-spu]");
     if (btn) { toggleSpu(Number(btn.dataset.spu)); return; }
+    // 拖拽选中行内文字后松开也会触发 click，此时不应切换展开状态
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
     const row = e.target.closest("tr.spu-row[data-spu]");
     if (row) toggleSpu(Number(row.dataset.spu));
   });
