@@ -226,9 +226,10 @@ const ItemForm = (() => {
         try {
           const it = await XM.post("/items", body);
           resultBox.className = "result-box";
+          // 展示用「SPU 名-SKU 名」，让用户一眼看出新单品挂在哪个 SPU 下
           resultBox.innerHTML =
             `<div class="headline"><span class="badge">ITEM_CREATED</span> ` +
-            `${esc(it.id)}「${esc(it.name)}」已创建，当前库存 ${it.qty}</div>`;
+            `${esc(it.spu_name)}-${esc(it.name)} 已创建，当前库存 ${it.qty}</div>`;
           // 清空名称与字段值，方便连续录入同 SPU 下的多个 SKU
           nameEl.value = "";
           valueGrid.innerHTML = fieldsGridHtml(fields);
