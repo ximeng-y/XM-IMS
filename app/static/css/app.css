@@ -270,6 +270,9 @@ button { margin-bottom: 0; }
 .btn-danger-outline:hover { background: #fdf0ef; color: #8f2a27; }
 .btn:disabled, button:disabled { opacity: .45; cursor: not-allowed; }
 
+/* 表格操作列：同一格内并排多个按钮 */
+.row-actions { display: flex; gap: .4rem; justify-content: center; flex-wrap: wrap; }
+
 /* ---------- 表单 ---------- */
 form { margin: 0; }
 .form-grid {

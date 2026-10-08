@@ -46,7 +46,7 @@ function renderTable(data) {
   const extraHead = fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("");
   $("#itemHead").innerHTML =
     `<tr><th class="num">ID</th><th>名称</th><th>SPU</th><th class="num">库存</th>` +
-    extraHead + `<th style="width:5.625rem">操作</th></tr>`;
+    extraHead + `<th style="width:9rem">操作</th></tr>`;
   if (!data.items.length) {
     tbody.innerHTML = `<tr><td colspan="${5 + fieldsMeta.length}" class="t-empty">没有符合条件的单品</td></tr>`;
     return;
@@ -62,7 +62,10 @@ function renderTable(data) {
       <td>${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
       <td class="num">${it.qty}</td>
       ${extra}
-      <td><button type="button" class="btn-outline btn-sm" data-idx="${idx}">编辑</button></td>
+      <td class="row-actions">
+        <button type="button" class="btn-outline btn-sm" data-idx="${idx}">编辑</button>
+        <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${idx}">删除</button>
+      </td>
     </tr>`;
   }).join("");
   $$("button[data-idx]", tbody).forEach((b) =>
@@ -70,6 +73,28 @@ function renderTable(data) {
       try { editFlow(data.items[Number(b.dataset.idx)]); }
       catch (e) { UI.fail("打开编辑对话框失败：" + (e.message || e)); console.error(e); }
     }));
+  $$("button[data-del]", tbody).forEach((b) =>
+    b.addEventListener("click", () => deleteFlow(data.items[Number(b.dataset.del)])));
+}
+
+// ---------- 删除（仅限从未产生过流水的单品） ----------
+async function deleteFlow(item) {
+  const confirmed = await UI.confirmDialog({
+    title: `删除单品 ${item.id}`,
+    bodyHtml: `<p>将删除单品 <b>${UI.esc(item.spu_name)}-${UI.esc(item.name)}</b>` +
+              `（当前库存 ${item.qty}）及其全部自定义字段值，<b style="color:var(--danger)">操作不可恢复</b>。</p>` +
+              `<p class="hint">已有库存流水的单品不能删除：流水是不可变账本，` +
+              `录错请用反向操作或盘点调整修正。</p>`,
+    confirmText: "确认删除", danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    const res = await XM.del(`/items/${encodeURIComponent(item.id)}?confirm=true`);
+    UI.ok(`单品 ${res.item}「${res.name}」已删除` +
+          (res.deleted_values ? `，连带清除 ${res.deleted_values} 个字段值` : ""),
+          { title: "ITEM_DELETED" });
+    loadItems();
+  } catch (e) { UI.apiFail(e, "删除失败"); }
 }
 
 // ---------- 新建（共享小窗） ----------

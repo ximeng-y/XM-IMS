@@ -1,7 +1,7 @@
 """SPU（顶层分类）端点"""
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from ...schemas import SpuCreate, SpuList, SpuOut
 from ...service import spus
@@ -25,3 +25,11 @@ def list_spus(shop_id: ShopDep):
 @router.patch("/{spu_id}", response_model=SpuOut, summary="SPU 改名（全局一处生效）")
 def rename_spu(shop_id: ShopDep, spu_id: int, body: SpuCreate):
     return spus.rename_spu(shop_id, spu_id, body.name)
+
+
+@router.delete("/{spu_id}", response_model=None, summary="删除 SPU（仅限其下已无单品）")
+def delete_spu(shop_id: ShopDep, spu_id: int,
+               confirm: bool = Query(default=False,
+                                     description="必须显式传 true 才会执行删除")) -> Any:
+    """删除其下已无任何 SKU 的 SPU。仍有单品时返回 409 SPU_HAS_ITEMS。"""
+    return spus.delete_spu(shop_id, spu_id, confirm)

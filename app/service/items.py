@@ -324,3 +324,42 @@ def patch_item(shop_id: int, item_ref: str, payload: ItemPatch) -> dict:
                            (now_iso(), item_id))
         item = _load_item(d.conn, item_id)
     return item
+
+
+def delete_item(shop_id: int, item_ref: str, confirm: bool) -> dict:
+    """删除单品（仅限从未产生过流水的 SKU）
+
+    流水是不可变账本，一旦该 SKU 有 movement 就不能删除——否则历史流水会指向
+    一个不存在的单品。有流水时按 item_type 给出可操作的纠正方向，不提供
+    「连同流水一起删」的路径。
+    """
+    if not confirm:
+        raise ApiError("CONFIRM_REQUIRED", "删除单品需要显式确认",
+                       hint="删除后不可恢复；确认请附带 ?confirm=true", status=400)
+    d = db.shop_db(shop_id)
+    with d.lock, d.conn:
+        item_id = resolve_item_ref(d.conn, item_ref)
+        row = d.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        if row is None:
+            raise ApiError("ITEM_NOT_FOUND", f"单品 {item_ref} 不存在",
+                           hint=_existing_hint(d.conn), status=404)
+        used = [r["type"] for r in d.conn.execute(
+            "SELECT DISTINCT type FROM movements WHERE item_id = ?", (item_id,))]
+        if used:
+            kinds = {"in": "入库", "out": "出库", "adjust": "盘点调整"}
+            raise ApiError(
+                "ITEM_HAS_MOVEMENTS",
+                f"单品 {item_ref} 已有流水，不能删除",
+                hint="已有流水类型：" + "、".join(kinds.get(t, t) for t in used) +
+                     "；请用反向操作或盘点调整修正库存，而不是删除该单品", status=409)
+        values_deleted = d.conn.execute(
+            "SELECT COUNT(*) FROM custom_values WHERE item_id = ?", (item_id,)).fetchone()[0]
+        # custom_values 的 item_id 外键没有级联，必须先清值再删单品
+        d.conn.execute("DELETE FROM custom_values WHERE item_id = ?", (item_id,))
+        db.write_audit(d.conn, "item_delete", "item", item_id,
+                       {"name": row["name"], "spu_id": row["spu_id"],
+                        "ref": format_item_ref(row["spu_id"], row["seq"]),
+                        "deleted_values": values_deleted})
+        d.conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+    return {"deleted": True, "item": item_ref, "name": row["name"],
+            "spu_id": row["spu_id"], "deleted_values": values_deleted}
