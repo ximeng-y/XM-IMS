@@ -19,7 +19,7 @@ from . import web
 from .api.v1.update import local_update_request
 from .sync.api import local_request
 from .version import APP_VERSION
-from .errors import register_error_handlers
+from .errors import error_dict, register_error_handlers
 from .service import update
 
 # 后端地址：launcher.py 注入实际端口；未注入时回落默认端口
@@ -50,12 +50,13 @@ def _forward(method: str, path: str, query: str, body: bytes, headers: dict) -> 
             resp_headers["content-type"] = e.headers["content-type"]
         return Response(e.read(), status_code=e.code, headers=resp_headers)
     except urllib.error.URLError:
+        # 后端进程不可达：前端仍在运行，用户看到的是页面上的提示而非浏览器错误页
         return JSONResponse(
             status_code=502,
-            content={
-                "code": "UPSTREAM_UNAVAILABLE",
-                "message": "后端服务不可用，请稍后重试或关闭窗口重新启动",
-            },
+            content=error_dict(
+                "UPSTREAM_UNAVAILABLE", "后端服务不可用，请稍后重试或关闭窗口重新启动",
+                user_message="程序后台服务没有响应",
+                user_hint="请稍后重试；若一直如此，请关闭后重新启动程序"),
         )
 
 

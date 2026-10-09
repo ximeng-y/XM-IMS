@@ -583,4 +583,4 @@ def _raise_upstream(field, source, payload):
                     f"字段「{field['name']}」依赖的「{name}」计算失败",
                     hint=payload.get("message") or "",
                     user_message=f"字段「{field['name']}」依赖的「{name}」计算失败",
-                    user_hint=payload.get("user_message") or payload.get("message") or "")
+                    user_hint=payload.get("user_hint") or "")

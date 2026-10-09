@@ -7,7 +7,7 @@ import time
 import uuid
 from pathlib import Path
 from .. import config, db
-from ..errors import ApiError
+from ..errors import ApiError, error_dict
 from . import snapshot
 from .common import atomic_json, read_json, remove_tree, replace_path, fail, ProcessLock
 from .gitstore import GitStore
@@ -39,12 +39,7 @@ class SyncManager:
     @staticmethod
     def _error_entry(exc):
         """状态栏错误：同时保留面向接口的文案与面向界面的文案，界面优先取后者。"""
-        entry = {"code": exc.code, "message": exc.message}
-        if getattr(exc, "user_message", None):
-            entry["user_message"] = exc.user_message
-        if getattr(exc, "user_hint", None):
-            entry["user_hint"] = exc.user_hint
-        return entry
+        return error_dict(exc.code, exc.message, exc.hint, exc.user_message, exc.user_hint)
 
     def save(self):
         atomic_json(self.directory / "state.json", self.state)

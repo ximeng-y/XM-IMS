@@ -6,8 +6,10 @@ let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changes
 const limit=20;
 const $s=id=>document.getElementById(id);
 const text=(node,value)=>{node.textContent=value;};
-const labels={name:'名称',type:'类型',scale:'小数位数',allow_negative:'允许负数',formula_json:'公式',formula:'公式',qty:'数量',unit_price:'单价（元）',value_int:'数值',value_text:'文本值',created_at:'创建时间',updated_at:'修改时间',actor:'操作者',note:'备注',batch_no:'批次',supplier:'供应商',channel:'渠道',customer:'客户',definition:'字段定义',values:'关联值',seq:'组内序号',spu_id:'所属 SPU',item_id:'所属 SKU',field_id:'自定义字段',entity_type:'对象类型',entity_id:'事件发生时编号（不可用于查找当前对象）',entity_uid:'对象稳定标识',detail:'审计详情'};
-function printable(v){if(v===null||v===undefined)return '不存在／已删除';if(typeof v!=='object')return String(v);return Object.entries(v).map(([k,x])=>(labels[k]||'该记录的一项内容')+'：'+(typeof x==='object'?JSON.stringify(x,null,2):String(x??'空值'))).join('\n');}
+const labels={name:'名称',type:'类型',scale:'小数位数',allow_negative:'允许负数',formula_json:'公式',formula:'公式',qty:'数量',unit_price:'单价',value_int:'数值',value_text:'文本值',created_at:'创建时间',updated_at:'修改时间',actor:'操作者',note:'备注',batch_no:'批次',supplier:'供应商',channel:'渠道',customer:'客户',definition:'字段定义',values:'关联值',seq:'组内序号',spu_id:'所属 SPU',item_id:'所属 SKU',field_id:'自定义字段',entity_type:'对象类型',entity_id:'事件发生时编号（不可用于查找当前对象）',entity_uid:'对象稳定标识',detail:'审计详情'};
+// 库表里的金额列以分为单位存储，直接输出会与「单价」标签的元单位对不上，这里统一换算
+const money=(x)=>x===null||x===undefined?'空值':(Number(x)/100).toFixed(2)+' 元';
+function printable(v){if(v===null||v===undefined)return '不存在／已删除';if(typeof v!=='object')return String(v);return Object.entries(v).map(([k,x])=>k==='unit_price'?labels[k]+'：'+money(x):(labels[k]||'该记录的一项内容')+'：'+(typeof x==='object'?JSON.stringify(x,null,2):String(x??'空值'))).join('\n');}
 async function action(button,fn){await UI.withBusy(button,async()=>{try{await fn();}catch(e){if(e.code)console.warn('[sync]',e.code,e.message);UI.fail(e.user_message||e.message||'同步操作未完成',{title:UI.codeTitle(e.code)||'同步操作未完成',hint:e.user_hint||''});}await refresh().catch(showRefreshError);});}
 function showLocalOnly(){
   text($s('syncHeading'),'同步管理仅限本机');
