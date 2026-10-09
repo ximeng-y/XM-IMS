@@ -597,9 +597,15 @@ class Engine:
 
 
 def _raise_upstream(field, source, payload):
+    """下游字段转述上游失败。
+
+    user_hint 取上游的「提示」而非「描述」：上游的 user_message 是问题描述（如
+    「字段 A 的计算结果为负数…」），user_hint 才是可操作的那一步（如「请勾选允许负数」）。
+    取错会让下游单元格只显示问题、丢失修复建议。
+    """
     name = (source or {}).get("name") or "上游字段"
     raise CellError("FORMULA_UPSTREAM",
                     f"字段「{field['name']}」依赖的「{name}」计算失败",
                     hint=payload.get("message") or "",
                     user_message=f"字段「{field['name']}」依赖的「{name}」计算失败",
-                    user_hint=payload.get("user_message") or payload.get("message") or "")
+                    user_hint=payload.get("user_hint") or payload.get("hint") or "")
