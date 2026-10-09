@@ -8,8 +8,9 @@ from pathlib import Path
 from ..errors import ApiError
 
 
-def fail(code, message, hint=None):
-    raise ApiError(code, message, hint=hint, status=409)
+def fail(code, message, hint=None, user_message=None, user_hint=None):
+    raise ApiError(code, message, hint=hint, status=409,
+                   user_message=user_message, user_hint=user_hint)
 
 
 def dump(value):
@@ -80,7 +81,9 @@ class ProcessLock:
         except OSError:
             self.file.close()
             self.file = None
-            fail("DATA_IN_USE", "该数据目录已有业务后端运行，请关闭重复实例")
+            fail("DATA_IN_USE", "该数据目录已有业务后端运行，请关闭重复实例",
+                 user_message="这个数据目录已经在使用中",
+                 user_hint="请先关闭另一个正在运行的程序窗口，再重新打开")
 
     def close(self):
         if self.file:

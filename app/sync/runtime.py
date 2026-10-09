@@ -4,7 +4,7 @@ import contextlib
 import time
 from fastapi.responses import JSONResponse
 from .. import db
-from ..errors import ApiError
+from ..errors import ApiError, error_dict
 from ..service import update
 from .manager import SyncManager
 from .api import router
@@ -24,11 +24,14 @@ async def lifespan(app):
             await asyncio.to_thread(manager.start)
         except ApiError as exc:
             manager.status_name = "blocked"
-            manager.error = {"code": exc.code, "message": exc.message}
+            manager.error = manager._error_entry(exc)
             db.set_ready(False)
         except Exception:
             manager.status_name = "blocked"
-            manager.error = {"code": "SYNC_START_FAILED", "message": "同步初始化失败，请检查数据目录或重复运行的实例"}
+            manager.error = error_dict(
+                "SYNC_START_FAILED", "同步初始化失败，请检查数据目录或重复运行的实例",
+                user_message="数据同步没有启动成功",
+                user_hint="请确认程序没有重复打开，且数据目录可正常读写后重启程序")
             db.set_ready(False)
         last_run = time.monotonic()
         while not stop.is_set():
@@ -41,9 +44,12 @@ async def lifespan(app):
                     try:
                         await asyncio.to_thread(manager.run)
                     except ApiError as exc:
-                        manager.error = {"code": exc.code, "message": exc.message}
+                        manager.error = manager._error_entry(exc)
                     except Exception:
-                        manager.error = {"code": "SYNC_CHECK_FAILED", "message": "后台同步未完成，请进入同步页重试"}
+                        manager.error = error_dict(
+                            "SYNC_CHECK_FAILED", "后台同步未完成，请进入同步页重试",
+                            user_message="后台同步没有完成",
+                            user_hint="请进入同步页面点击「立即同步」重试")
                 last_run = time.monotonic()
     task = asyncio.create_task(loop())
     try:
@@ -66,5 +72,8 @@ def install(app):
                 return JSONResponse(status_code=503, content=error)
         if request.url.path.startswith("/api/v1/") and not request.url.path.startswith("/api/v1/sync/"):
             if not db.business_ready and not request.url.path.startswith("/api/v1/update/"):
-                return JSONResponse(status_code=503, content={"code": "SYNC_REQUIRED", "message": "请先完成初始化或数据同步"})
+                return JSONResponse(status_code=503, content=error_dict(
+                    "SYNC_REQUIRED", "请先完成初始化或数据同步",
+                    user_message="程序还没有完成初始化或数据同步",
+                    user_hint="请先完成初始化或数据同步后再继续"))
         return await call_next(request)

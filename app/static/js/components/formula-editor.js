@@ -67,10 +67,10 @@ const FormulaEditor = (() => {
     const numInput = wrap.querySelector("[data-fx-number]");
     const numHint = wrap.querySelector("[data-fx-numhint]");
 
-    // 人类可读的公式文本：与后端 SYMBOL_TEXT 保持同一套符号呈现
+    // 人类可读的公式文本：取字段/系统字段/运算符的中文呈现，不出现内部标识
     function labelOf(t) {
       if (t.kind === "number") return t.value;
-      if (t.kind === "field") return nameOf[t.uid] || `（未知字段 ${String(t.uid).slice(0, 8)}）`;
+      if (t.kind === "field") return nameOf[t.uid] || "已失效的字段";
       if (t.kind === "system") return sysName[t.key] || t.key;
       return SYMBOL_TEXT[t.value] || t.value;
     }

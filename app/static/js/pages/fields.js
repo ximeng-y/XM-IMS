@@ -34,7 +34,7 @@ function formulaText(f) {
     if (t.kind === "system") return { qty: "库存数量", spu_id: "SPU ID" }[t.key] || t.key;
     if (t.kind === "field") {
       const ref = defs.find((x) => x.uid === t.uid);
-      return ref ? ref.name : `（未知字段 ${String(t.uid).slice(0, 8)}）`;
+      return ref ? ref.name : "已失效的字段";
     }
     return FormulaEditor.SYMBOL_TEXT[t.value] || t.value;
   }).join(" ");
@@ -48,7 +48,7 @@ async function loadFields() {
     const data = await XM.get("/fields");
     fieldCache = data.fields;
     if (!data.fields.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="t-empty">（异常：系统字段缺失）</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="t-empty">字段列表为空，请刷新页面后重试</td></tr>`;
       return;
     }
     tbody.innerHTML = data.fields.map((f, i) => {
@@ -87,7 +87,7 @@ async function loadFields() {
       if (b.dataset.act === "rename") b.addEventListener("click", () => renameFlow(f));
       if (b.dataset.act === "convert") b.addEventListener("click", () => convertFlow(f));
       if (b.dataset.act === "formula") b.addEventListener("click", () => formulaFlow(f));
-      if (b.dataset.act === "del") b.addEventListener("click", () => deleteFlow(f));
+      if (b.dataset.act === "del") b.addEventListener("click", () => { void deleteFlow(f); });
     });
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="8" class="t-empty">加载失败：${UI.esc(e.message)}</td></tr>`;
@@ -102,24 +102,19 @@ async function renameFlow(f) {
   if (name === null || name === f.name) return;
   try {
     await XM.patch(`/fields/${f.id}`, { name });
-    UI.ok(`字段已改名为「${name}」`, { title: "FIELD_RENAMED" });
+    UI.ok(`字段已改名为「${name}」`);
     loadFields();
   } catch (e) { UI.apiFail(e, "改名失败"); }
 }
 
-async function deleteFlow(f) {
-  const confirmed = await UI.confirmDialog({
+function deleteFlow(f) {
+  return DeleteFlow.run({
     title: `删除字段「${f.name}」`,
     bodyHtml: `<p>将删除该字段（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">级联清空所有单品的该字段值</b>，操作不可恢复。</p>`,
-    confirmText: "确认删除", danger: true,
+    path: `/fields/${f.id}?confirm=true`,
+    okText: (res) => `字段「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个字段值`,
+    onDone: loadFields,
   });
-  if (!confirmed) return;
-  try {
-    const res = await XM.del(`/fields/${f.id}?confirm=true`);
-    UI.ok(`字段「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个字段值`,
-          { title: "FIELD_DELETED" });
-    loadFields();
-  } catch (e) { UI.apiFail(e, "删除失败"); }
 }
 
 // ---------- 计算字段：公式编辑器小窗（新建与编辑共用） ----------
@@ -214,16 +209,18 @@ function formulaDialog({ field = null, onSaved }) {
           });
       UI.ok(creating
         ? `计算字段「${out.name}」已创建（${typeText(out)}）`
-        : `字段「${out.name}」的公式已更新（${typeText(out)}）`,
-        { title: creating ? "FIELD_CREATED" : "FIELD_FORMULA_UPDATED" });
+        : `字段「${out.name}」的公式已更新（${typeText(out)}）`);
       dlg.close();
       if (onSaved) onSaved(out);
     } catch (e) {
       // 校验失败：保留名称、公式与结果格式，只显示错误，对话框不关闭
+      // 展示用户版文案；e.code/e.hint 是给 Agent 与日志用的，不进界面
+      if (e.code) console.warn("[fields] 公式保存失败", e.code, e.message);
       resultBox.className = "result-box error-box";
       resultBox.innerHTML =
-        `<div class="headline"><span class="badge red">${UI.esc(e.code)}</span> ${UI.esc(e.message)}</div>` +
-        (e.hint ? `<div class="hint">${UI.esc(e.hint)}</div>` : "") +
+        `<div class="headline"><span class="badge red">${
+          UI.esc(UI.codeTitle(e.code) || "公式有误")}</span> ${UI.esc(e.display || e.message)}</div>` +
+        (e.displayHint ? `<div class="hint">${UI.esc(e.displayHint)}</div>` : "") +
         `<div class="hint">当前填写内容已保留，可直接修改公式后再次保存。</div>`;
     }
   });
@@ -374,12 +371,14 @@ function renderReport(box, res, isPreview) {
   bits.push(isPreview || res.dry_run ? `<span class="badge">预览</span>` : `<span class="badge fill">已执行</span>`);
   // 清空类转换没有值换算可言，不做「无损/有损」判定，只标「清空值」
   const cleared = res.requires_clear || res.cleared;
-  if (cleared) bits.push(`<span class="badge red">清空值</span>`);
-  else if (res.lossy) bits.push(`<span class="badge red">有损</span>`);
-  else if (res.converted || res.dry_run) bits.push(`<span class="badge green">无损</span>`);
+  if (cleared) bits.push(`<span class="badge red">将清空全部值</span>`);
+  else if (res.lossy) bits.push(`<span class="badge red">精度会变化</span>`);
+  else if (res.converted || res.dry_run) bits.push(`<span class="badge green">数值不变</span>`);
 
   let html = `<div class="result-box"><div class="headline">${bits.join(" ")}</div>`;
-  if (res.description) html += `<div style="margin-top:.4rem">换算规则：${UI.esc(res.description)}</div>`;
+  if (res.description_text) {
+    html += `<div style="margin-top:.4rem">换算方式：${UI.esc(res.description_text)}</div>`;
+  }
   if (res.note) html += `<div style="margin-top:.4rem">${UI.esc(res.note)}</div>`;
   html += `<div style="margin-top:.4rem">受影响单品：<b>${res.affected_items}</b> 个</div>`;
 
@@ -449,8 +448,7 @@ window.PAGE_INIT = async function () {
       try {
         const f = await XM.post("/fields", body);
         UI.resultBox("#createResult", {
-          html: `<div class="headline"><span class="badge">FIELD_CREATED</span> ` +
-                `「${UI.esc(f.name)}」（${typeText(f)}）已创建</div>`,
+          html: UI.okHtml(`「${f.name}」（${typeText(f)}）已创建`),
         });
         $("#fldName").value = "";
         loadFields();

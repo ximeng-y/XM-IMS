@@ -13,11 +13,16 @@ const ItemForm = (() => {
 
   // ---------- 计算结果只读呈现 ----------
   // calc：后端 ItemOut.calculations 中的一项 {display, error}；缺失表示后端未给出该字段
+  // error 里 message/hint 是给 API 调用方的文案，界面一律取 user_message/user_hint（缺失时
+  // 回落 message），错误码只用于确定中文标签，不直接展示。
+  const calcText = (err) => [err && (err.user_message || err.message),
+                             err && (err.user_hint || "")].filter(Boolean).join("；");
   function calcHtml(calc) {
     if (!calc) return `<span class="muted">—</span>`;
     if (calc.error) {
-      const tip = esc([calc.error.message, calc.error.hint].filter(Boolean).join("；"));
-      return `<span class="badge red" title="${tip}">${esc(calc.error.code)}</span>`;
+      const tip = esc(calcText(calc.error));
+      const label = UI.codeTitle(calc.error.code) || "无法计算";
+      return `<span class="badge red" title="${tip}">${esc(label)}</span>`;
     }
     return `<span class="mono">${esc(calc.display)}</span>`;
   }
@@ -26,7 +31,7 @@ const ItemForm = (() => {
   function computedRowHtml(f, calc) {
     const body = calc && calc.error
       ? `<div class="calc-block">${calcHtml(calc)}<span class="calc-msg">${
-          esc([calc.error.message, calc.error.hint].filter(Boolean).join("；"))}</span></div>`
+          esc(calcText(calc.error))}</span></div>`
       : calcHtml(calc);
     return `<div>
       <label>${esc(f.name)} <span class="badge gray">计算</span></label>
@@ -94,7 +99,7 @@ const ItemForm = (() => {
     if (name === null) return null;
     try {
       const spu = await XM.post("/spus", { name });
-      UI.ok(`SPU「${name}」已创建（#${spu.id}）`, { title: "SPU_CREATED" });
+      UI.ok(`SPU「${name}」已创建（#${spu.id}）`);
       return spu;
     } catch (e) { UI.apiFail(e, "创建 SPU 失败"); return null; }
   }
@@ -264,8 +269,7 @@ const ItemForm = (() => {
         const updated = await XM.patch(`/items/${encodeURIComponent(item.id)}`, body);
         // 换挂 SPU 会改变单品编号，提示时以新编号为准
         const refChanged = updated.id !== item.id;
-        UI.ok(`单品 ${item.id} 已更新` + (refChanged ? `，编号变为 ${updated.id}` : ""),
-              { title: "ITEM_UPDATED" });
+        UI.ok(`单品 ${item.id} 已更新` + (refChanged ? `，编号变为 ${updated.id}` : ""));
         dlg.close();
         if (onSpuCreated) onSpuCreated();
         if (onSaved) onSaved(updated);
@@ -437,9 +441,8 @@ const ItemForm = (() => {
         return;
       }
       resultBox.className = "result-box";
-      resultBox.innerHTML =
-        `<div class="headline"><span class="badge">ITEM_CREATED</span> ` +
-        `${esc(it.spu_name)}-${esc(it.name)} 已创建，当前库存 ${it.qty}</div>`;
+      resultBox.innerHTML = UI.okHtml(
+        `${it.spu_name}-${it.name} 已创建，当前库存 ${it.qty}`);
       // 使用写入响应中的真实 ID，刷新失败时连续录入仍能走已有 SPU 的查重。
       combo.choose({ id: it.spu_id, name: it.spu_name });
       nameEl.value = "";

@@ -121,8 +121,12 @@ def outbound(shop_id: int, payload: OutboundIn) -> dict:
         if current < payload.qty:
             raise ApiError("INSUFFICIENT_STOCK",
                            f"库存不足：当前库存 {current}，本次出库 {payload.qty}",
-                           hint=f"可出库上限为 {current}；如需修正库存请使用 POST /api/v1/adjust 盘点调整",
-                           status=409)
+                           hint=f"可出库上限为 {current}；"
+                                "如需修正库存请使用 POST /api/v1/adjust 盘点调整",
+                           status=409,
+                           user_message=f"库存不足：当前库存 {current}，本次出库 {payload.qty}",
+                           user_hint=f"可出库上限为 {current}；"
+                                     "如需修正库存，请先用「盘点调整」改成实际数量")
 
     return _execute_movement(shop_id, item_ref=payload.item_id, mtype="out",
                              qty_delta=-payload.qty, payload=payload, validate=check)

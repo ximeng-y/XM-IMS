@@ -80,27 +80,22 @@ function renderTable(data) {
       catch (e) { UI.fail("打开编辑对话框失败：" + (e.message || e)); console.error(e); }
     }));
   $$("button[data-del]", tbody).forEach((b) =>
-    b.addEventListener("click", () => deleteFlow(data.items[Number(b.dataset.del)])));
+    b.addEventListener("click", () => { void deleteFlow(data.items[Number(b.dataset.del)]); }));
 }
 
 // ---------- 删除（仅限从未产生过流水的单品） ----------
-async function deleteFlow(item) {
-  const confirmed = await UI.confirmDialog({
+function deleteFlow(item) {
+  return DeleteFlow.run({
     title: `删除单品 ${item.id}`,
     bodyHtml: `<p>将删除单品 <b>${UI.esc(item.spu_name)}-${UI.esc(item.name)}</b>` +
               `（当前库存 ${item.qty}）及其全部自定义字段值，<b style="color:var(--danger)">操作不可恢复</b>。</p>` +
               `<p class="hint">已有库存流水的单品不能删除：流水是不可变账本，` +
               `录错请用反向操作或盘点调整修正。</p>`,
-    confirmText: "确认删除", danger: true,
+    path: `/items/${encodeURIComponent(item.id)}?confirm=true`,
+    okText: (res) => `单品 ${res.item}「${res.name}」已删除` +
+                     (res.deleted_values ? `，连带清除 ${res.deleted_values} 个字段值` : ""),
+    onDone: loadItems,
   });
-  if (!confirmed) return;
-  try {
-    const res = await XM.del(`/items/${encodeURIComponent(item.id)}?confirm=true`);
-    UI.ok(`单品 ${res.item}「${res.name}」已删除` +
-          (res.deleted_values ? `，连带清除 ${res.deleted_values} 个字段值` : ""),
-          { title: "ITEM_DELETED" });
-    loadItems();
-  } catch (e) { UI.apiFail(e, "删除失败"); }
 }
 
 // ---------- 新建（共享小窗） ----------

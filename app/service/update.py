@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from .. import db
 from ..config import BASE_DIR, DATA_ROOT
+from ..errors import error_dict
 from ..version import APP_VERSION
 
 # 远端操作超时（秒）
@@ -244,9 +245,13 @@ def require_complete_installation():
 def maintenance_error():
     """供两个后端和独立前端暂停请求；磁盘标记也能被另一个进程看到。"""
     if _installed_tag is not None or _restart_required():
-        return {"code": "UPDATE_RESTART_REQUIRED", "message": "程序已更新，请关闭程序并重新启动后继续使用"}
+        return error_dict("UPDATE_RESTART_REQUIRED", "程序已更新，请关闭程序并重新启动后继续使用",
+                          user_message="程序已经更新，需要重新启动",
+                          user_hint="请关闭全部程序窗口后重新打开")
     if _install_lock.locked() or _incomplete_updates():
-        return {"code": "UPDATE_MAINTENANCE", "message": "程序正在更新或等待恢复，暂不能使用；若安装已中断，请恢复后重新启动"}
+        return error_dict("UPDATE_MAINTENANCE", "程序正在更新或等待恢复，暂不能使用；若安装已中断，请恢复后重新启动",
+                          user_message="程序正在更新，暂时不能使用",
+                          user_hint="请等待更新结束；若长时间没有反应，请关闭后重新启动程序")
     return None
 
 
@@ -352,7 +357,9 @@ def _install_update(tag):
         temp_root = _target(".XMTEMP")
         temp_root.mkdir(exist_ok=True)
         if _incomplete_updates():
-            return {"ok": False, "message": "存在未完成安装的恢复资料，请先检查 .XMTEMP/xmims-update-*/pending.json 与 backup/，恢复后再更新"}
+            return {"ok": False,
+                    "message": "上一次更新没有完成，请先恢复后再更新",
+                    "hint": "检查 .XMTEMP/xmims-update-*/pending.json 与 backup/ 后恢复"}
         tmp = Path(tempfile.mkdtemp(prefix="xmims-update-", dir=temp_root))
         src = tmp / "src"
         src.mkdir()
@@ -369,20 +376,23 @@ def _install_update(tag):
                 break
             last_err = (r.stderr or r.stdout or "git fetch 失败").strip()
         else:
-            return {"ok": False, "message": f"无法从远端拉取 tag {tag}：{_sanitize(last_err, url)}"}
+            return {"ok": False, "message": f"无法下载版本 {tag}，请检查网络后重试",
+                    "hint": f"git fetch 失败：{_sanitize(last_err, url)}"}
         # 固定本次拉取的提交，避免 archive 意外使用旧本地同名 tag。
         revision = _git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"], 10)
         if revision.returncode != 0:
-            return {"ok": False, "message": "更新标签不是有效提交，未改动程序文件"}
+            return {"ok": False, "message": "该版本的更新包不可用，未改动程序文件",
+                    "hint": "更新标签不是有效提交"}
         # 2) 用 git archive 导出该提交的内容为 zip
         zip_path = tmp / "update.zip"
         try:
             r = _git(["archive", "--format=zip", "-o", str(zip_path), revision.stdout.strip()], ARCHIVE_TIMEOUT)
         except (OSError, subprocess.SubprocessError) as e:
-            return {"ok": False, "message": f"导出更新包失败：{e}"}
+            return {"ok": False, "message": "导出更新包失败", "hint": str(e)}
         if r.returncode != 0:
             err = (r.stderr or r.stdout or "未知错误").strip()
-            return {"ok": False, "message": f"导出更新包失败：{_sanitize(err, '')}"}
+            return {"ok": False, "message": "导出更新包失败",
+                    "hint": _sanitize(err, "")}
         # 3) 解压并校验更新包结构
         _extract_update(zip_path, src)
         # 4) 备份、替换，失败回滚；业务数据不在安装计划中。
@@ -400,7 +410,7 @@ def _install_update(tag):
             # 成功或恢复不完整都保持暂停；新进程走原有启动同步流程重新开放业务。
         return {"ok": True, "tag": tag, "message": f"已更新到 {tag}，请关闭本页并重新启动程序后生效"}
     except Exception as e:
-        return {"ok": False, "message": f"更新失败：{e}"}
+        return {"ok": False, "message": "更新失败，程序文件未被改动", "hint": str(e)}
     finally:
         if (tmp is not None and tmp.resolve().is_relative_to(BASE_DIR.resolve())
                 and tmp.resolve().parent == (BASE_DIR / ".XMTEMP").resolve()

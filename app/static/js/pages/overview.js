@@ -29,7 +29,7 @@ window.PAGE_INIT = async function () {
     <tr>
       <td class="mono">${m.id}</td>
       <td>${UI.fmtTimeShort(m.created_at)}</td>
-      <td>${typeBadge[m.type] || UI.esc(m.type)}</td>
+      <td>${typeBadge[m.type] || `<span class="muted">未知类型</span>`}</td>
       <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
       <td class="num">${UI.fmtMoney(m.unit_price)}</td>
       <td>${UI.fmtVal(m.supplier || m.channel)}</td>

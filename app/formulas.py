@@ -39,24 +39,35 @@ TYPE_NAMES = {"string": "文本", "bool": "开关", "int": "整数",
 _PRECEDENCE = {"neg": 3, "*": 2, "/": 2, "+": 1, "-": 1}
 
 
-def _invalid(message, hint=None):
-    return ApiError("FORMULA_INVALID", message, hint=hint, status=400)
+def _invalid(message, hint=None, user_message=None, user_hint=None):
+    return ApiError("FORMULA_INVALID", message, hint=hint, status=400,
+                    user_message=user_message, user_hint=user_hint)
 
 
 def _cycle_error(path):
     return ApiError("FORMULA_CYCLE", "公式存在循环引用：" + path,
                     hint="循环路径上的字段互相依赖，请调整其中一个字段的公式引用关系；"
-                         "计算字段不能直接或间接引用自身", status=400)
+                         "计算字段不能直接或间接引用自身", status=400,
+                    user_message="公式存在循环引用：" + path,
+                    user_hint="循环路径上的字段互相依赖，请调整其中一个字段的公式引用关系；"
+                              "计算字段不能直接或间接引用自身")
 
 
 class CellError(Exception):
-    """单个 SKU 上的单元格错误：只影响该字段及其下游，不令整个列表失败"""
+    """单个 SKU 上的单元格错误：只影响该字段及其下游，不令整个列表失败
 
-    def __init__(self, code, message, hint=None):
+    payload 与 ApiError 同构（code/message/hint 给 Agent，user_message/user_hint 给界面）。
+    """
+
+    def __init__(self, code, message, hint=None, user_message=None, user_hint=None):
         super().__init__(message)
         self.payload = {"code": code, "message": message}
         if hint:
             self.payload["hint"] = hint
+        if user_message:
+            self.payload["user_message"] = user_message
+        if user_hint:
+            self.payload["user_hint"] = user_hint
 
 
 # ---------- token 规范化 ----------
@@ -67,7 +78,9 @@ def _as_dict(token) -> dict:
     dump = getattr(token, "model_dump", None)
     if callable(dump):
         return dump()
-    raise _invalid("公式组件格式无效：应为 {kind, ...} 结构")
+    raise _invalid("公式组件格式无效：应为 {kind, ...} 结构",
+                   user_message="公式里有无法识别的内容",
+                   user_hint="请清空公式后重新从下方按钮逐项加入")
 
 
 def canonical_number(text: str) -> str:
@@ -86,29 +99,40 @@ def _one_token(token) -> dict:
         if isinstance(value, bool) or not isinstance(value, str) or not NUMBER_RE.fullmatch(value.strip()):
             raise _invalid(f"无效的数字常量：{value}",
                            hint="只接受普通十进制整数或小数（如 12、-3.5）；"
-                                "不支持科学计数法、NaN、Infinity 或表达式")
+                                "不支持科学计数法、NaN、Infinity 或表达式",
+                           user_message=f"无效的数字常量：{value}",
+                           user_hint="只接受普通十进制整数或小数（如 12、-3.5）")
         return {"kind": "number", "value": canonical_number(value.strip())}
     if kind == "field":
         uid = item.get("uid")
         if not isinstance(uid, str) or not uid.strip():
             raise _invalid("字段引用的稳定标识缺失",
-                           hint="请重新从「可引用字段」区域点击选择字段")
+                           hint="请重新从「可引用字段」区域点击选择字段",
+                           user_message="公式里的字段引用已失效",
+                           user_hint="请重新从「可引用字段」区域点击选择字段")
         return {"kind": "field", "uid": uid.strip()}
     if kind == "system":
         key = item.get("key")
         if key not in SYSTEM_KEYS:
             raise _invalid(f"不能引用该系统字段：{key}",
                            hint="可引用的系统字段只有：" +
-                                "、".join(f"{v}（{k}）" for k, v in SYSTEM_KEYS.items()))
+                                "、".join(f"{v}（{k}）" for k, v in SYSTEM_KEYS.items()),
+                           user_message=f"不能引用该系统字段：{key}",
+                           user_hint="可引用的系统字段只有：" +
+                                     "、".join(SYSTEM_KEYS.values()))
         return {"kind": "system", "key": key}
     if kind == "symbol":
         value = item.get("value")
         if value not in SYMBOL_TEXT:
             raise _invalid(f"无效的运算符：{value}",
-                           hint="支持的运算符与括号：+ − × ÷ ( )")
+                           hint="支持的运算符与括号：+ − × ÷ ( )",
+                           user_message=f"无效的运算符：{value}",
+                           user_hint="支持的运算符与括号：+ − × ÷ ( )")
         return {"kind": "symbol", "value": value}
     raise _invalid(f"无效的公式组件类型：{kind}",
-                   hint="可用组件类型：number / field / system / symbol")
+                   hint="可用组件类型：number / field / system / symbol",
+                   user_message="公式里有无法识别的内容",
+                   user_hint="请清空公式后重新从下方按钮逐项加入")
 
 
 # ---------- 解析 ----------
@@ -140,7 +164,9 @@ def _static_check(rpn) -> None:
         b, a = stack.pop(), stack.pop()
         if op == "/" and b is not None and b == 0:
             raise _invalid("公式中存在可以直接确定的除以零",
-                           hint="请检查作为除数或分母的常量与括号内算式，其值不能为 0")
+                           hint="请检查作为除数或分母的常量与括号内算式，其值不能为 0",
+                           user_message="公式里出现了除以零",
+                           user_hint="请检查作为除数或分母的常量与括号内算式，其值不能为 0")
         if a is None or b is None:
             stack.append(None)
             continue
@@ -164,7 +190,9 @@ def parse(tokens) -> Parsed:
     items = [_one_token(t) for t in (tokens or [])]
     if not items:
         raise _invalid("公式为空：请至少加入一个字段或数字",
-                       hint="空公式没有可计算的内容，无法保存")
+                       hint="空公式没有可计算的内容，无法保存",
+                       user_message="公式还是空的",
+                       user_hint="请至少加入一个字段或数字")
 
     output, operators = [], []
     expect_operand, prev = True, None
@@ -172,7 +200,9 @@ def parse(tokens) -> Parsed:
         if item["kind"] != "symbol":
             if not expect_operand:
                 raise _invalid("两个字段或数字相邻，缺少运算符",
-                               hint="如 A(B+C) 需要写成 A×(B+C)；不支持隐式乘法")
+                               hint="如 A(B+C) 需要写成 A×(B+C)；不支持隐式乘法",
+                               user_message="两个字段或数字相邻，缺少运算符",
+                               user_hint="如 A(B+C) 需要写成 A×(B+C)")
             key = item["value"] if item["kind"] == "number" else (
                 item["uid"] if item["kind"] == "field" else item["key"])
             output.append(({"number": "num", "field": "field", "system": "sys"}[item["kind"]], key))
@@ -183,19 +213,25 @@ def parse(tokens) -> Parsed:
         if sym == "(":
             if not expect_operand:
                 raise _invalid("左括号前缺少运算符",
-                               hint="如 A(B+C) 需要写成 A×(B+C)；不支持隐式乘法")
+                               hint="如 A(B+C) 需要写成 A×(B+C)；不支持隐式乘法",
+                               user_message="左括号前缺少运算符",
+                               user_hint="如 A(B+C) 需要写成 A×(B+C)")
             operators.append(sym)
             prev = "("
             continue
         if sym == ")":
             if expect_operand:
                 raise _invalid("括号内容不完整或为空",
-                               hint="请检查括号内是否缺少字段、数字或运算符")
+                               hint="请检查括号内是否缺少字段、数字或运算符",
+                               user_message="括号内容不完整或为空",
+                               user_hint="请检查括号内是否缺少字段、数字或运算符")
             while operators and operators[-1] != "(":
                 output.append(("op", operators.pop()))
             if not operators:
                 raise _invalid("右括号没有对应的左括号",
-                               hint="请检查括号是否配对")
+                               hint="请检查括号是否配对",
+                               user_message="右括号没有对应的左括号",
+                               user_hint="请检查括号是否配对")
             operators.pop()
             prev, expect_operand = ")", False
             continue
@@ -207,20 +243,30 @@ def parse(tokens) -> Parsed:
                 continue
             raise _invalid("负号只能出现在公式开头或左括号之后",
                            hint="表示减法的负号要求左右都有操作数；"
-                                "负常量请直接输入负数（如 -3）")
+                                "负常量请直接输入负数（如 -3）",
+                           user_message="负号只能出现在公式开头或左括号之后",
+                           user_hint="表示减法的负号要求左右都有操作数；"
+                                     "负常量请直接输入负数（如 -3）")
         if expect_operand:
             raise _invalid(f"运算符「{SYMBOL_TEXT[sym]}」的位置不正确：缺少参与运算的字段或数字",
-                           hint="公式不能以运算符开头，也不能出现连续的运算符")
+                           hint="公式不能以运算符开头，也不能出现连续的运算符",
+                           user_message=f"运算符「{SYMBOL_TEXT[sym]}」的位置不正确："
+                                        "缺少参与运算的字段或数字",
+                           user_hint="公式不能以运算符开头，也不能出现连续的运算符")
         while operators and operators[-1] != "(" and _PRECEDENCE[operators[-1]] >= _PRECEDENCE[sym]:
             output.append(("op", operators.pop()))
         operators.append(sym)
         prev, expect_operand = "op", True
 
     if any(op == "(" for op in operators):
-        raise _invalid("左括号没有对应的右括号", hint="请检查括号是否配对")
+        raise _invalid("左括号没有对应的右括号", hint="请检查括号是否配对",
+                       user_message="左括号没有对应的右括号",
+                       user_hint="请检查括号是否配对")
     if expect_operand:
         raise _invalid("公式结尾缺少字段或数字：不能以运算符结尾",
-                       hint="请在结尾补上参与运算的字段或数字")
+                       hint="请在结尾补上参与运算的字段或数字",
+                       user_message="公式结尾缺少字段或数字：不能以运算符结尾",
+                       user_hint="请在结尾补上参与运算的字段或数字")
     while operators:
         output.append(("op", operators.pop()))
     _static_check(output)
@@ -243,7 +289,9 @@ def load(text) -> dict:
     if not isinstance(data, dict) or data.get("version") != VERSION:
         raise ApiError("FORMULA_INVALID",
                        f"公式定义版本不受支持：{data.get('version') if isinstance(data, dict) else '?'}",
-                       hint=f"当前支持的公式版本为 {VERSION}，请升级应用后重试", status=409)
+                       hint=f"当前支持的公式版本为 {VERSION}，请升级应用后重试", status=409,
+                       user_message="该公式由更高版本的程序保存，当前版本无法识别",
+                       user_hint="请升级程序后重新打开该字段的公式")
     parse(data.get("tokens") or [])
     return {"version": VERSION, "tokens": [_one_token(t) for t in (data.get("tokens") or [])]}
 
@@ -264,12 +312,18 @@ def check_refs(parsed: Parsed, by_uid: dict) -> None:
         if target is None:
             raise ApiError("FORMULA_REF_INVALID",
                            f"公式引用的字段不存在（标识 {uid[:8]}）",
-                           hint="该字段可能已被删除；请重新从「可引用字段」区域选择", status=400)
+                           hint="该字段可能已被删除；请重新从「可引用字段」区域选择", status=400,
+                           user_message="公式引用的字段不存在",
+                           user_hint="该字段可能已被删除；请重新从「可引用字段」区域选择")
         if target["type"] not in fieldtypes.NUMERIC_TYPES:
             raise ApiError("FORMULA_REF_INVALID",
                            f"字段「{target['name']}」是{TYPE_NAMES.get(target['type'], target['type'])}类型，"
                            "不能参与数学计算",
-                           hint="只有整数、小数、百分比字段以及计算字段可以引用", status=400)
+                           hint="只有整数、小数、百分比字段以及计算字段可以引用", status=400,
+                           user_message=f"字段「{target['name']}」是"
+                                        f"{TYPE_NAMES.get(target['type'], target['type'])}类型，"
+                                        "不能参与数学计算",
+                           user_hint="只有整数、小数、百分比字段以及计算字段可以引用")
 
 
 def graph_of(parsed_by_uid: dict) -> dict:
@@ -419,7 +473,9 @@ class Engine:
             name = (self.by_uid.get(key) or {}).get("name") or key[:8]
             raise CellError("FORMULA_SOURCE_MISSING",
                             f"字段「{field['name']}」引用的「{name}」没有值",
-                            hint=f"请先为该 SKU 填写「{name}」，或调整公式")
+                            hint=f"请先为该 SKU 填写「{name}」，或调整公式",
+                            user_message=f"字段「{field['name']}」引用的「{name}」没有值",
+                            user_hint=f"请先为该单品填写「{name}」，或调整公式")
         return values[key]
 
     def _evaluate(self, parsed, values, errors, systems, field):
@@ -447,23 +503,31 @@ class Engine:
                     if b == 0:
                         raise CellError("FORMULA_DIV_ZERO",
                                         f"字段「{field['name']}」的计算出现了除以零",
-                                        hint="请检查作为除数或分母的字段取值")
+                                        hint="请检查作为除数或分母的字段取值",
+                                        user_message=f"字段「{field['name']}」的计算出现了除以零",
+                                        user_hint="请检查作为除数或分母的字段取值")
                     stack.append(a / b)
         except CellError:
             raise
         except DecimalException:
             raise CellError("FORMULA_RANGE",
                             f"字段「{field['name']}」的计算结果无法表示",
-                            hint="请检查公式取值范围是否过大")
+                            hint="请检查公式取值范围是否过大",
+                            user_message=f"字段「{field['name']}」的计算结果无法表示",
+                            user_hint="请检查公式取值范围是否过大")
         result = stack[0]
         if not result.is_finite():
             raise CellError("FORMULA_RANGE",
                             f"字段「{field['name']}」的计算结果无法表示",
-                            hint="请检查公式取值范围是否过大")
+                            hint="请检查公式取值范围是否过大",
+                            user_message=f"字段「{field['name']}」的计算结果无法表示",
+                            user_hint="请检查公式取值范围是否过大")
         if result < 0 and not field["allow_negative"]:
             raise CellError("FORMULA_NEGATIVE",
                             f"字段「{field['name']}」的计算结果为负数，但该字段不允许负数",
-                            hint="如确需负值，请编辑该字段并勾选「允许负数」；否则请调整公式")
+                            hint="如确需负值，请编辑该字段并勾选「允许负数」；否则请调整公式",
+                            user_message=f"字段「{field['name']}」的计算结果为负数，但该字段不允许负数",
+                            user_hint="如确需负值，请编辑该字段并勾选「允许负数」；否则请调整公式")
         return result
 
     def _output(self, field, result):
@@ -475,7 +539,9 @@ class Engine:
         except (DecimalException, ArithmeticError, OverflowError, ValueError):
             raise CellError("FORMULA_RANGE",
                             f"字段「{field['name']}」的计算结果无法按显示位数输出",
-                            hint="结果数值过大或位数过多，请缩小公式的取值范围")
+                            hint="结果数值过大或位数过多，请缩小公式的取值范围",
+                            user_message=f"字段「{field['name']}」的计算结果无法按显示位数输出",
+                            user_hint="结果数值过大或位数过多，请缩小公式的取值范围")
 
     def compute(self, context):
         """context: {"qty": int, "spu_id": int, "stored": {字段 uid: 编码值}}
@@ -515,4 +581,6 @@ def _raise_upstream(field, source, payload):
     name = (source or {}).get("name") or "上游字段"
     raise CellError("FORMULA_UPSTREAM",
                     f"字段「{field['name']}」依赖的「{name}」计算失败",
-                    hint=payload.get("message") or "")
+                    hint=payload.get("message") or "",
+                    user_message=f"字段「{field['name']}」依赖的「{name}」计算失败",
+                    user_hint=payload.get("user_hint") or "")

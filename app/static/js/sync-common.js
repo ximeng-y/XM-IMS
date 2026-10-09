@@ -14,7 +14,7 @@ window.Sync = (() => {
   async function api(method, endpoint, body) {
     const response = await fetch('/api/v1/sync' + endpoint, {method, headers:{'Content-Type':'application/json','X-XM-Sync':'1'}, body:body === undefined ? undefined : JSON.stringify(body)});
     const data = await response.json();
-    if (!response.ok) {if (data.code === 'SYNC_LOCAL_ONLY') localOnly(); const error = new Error(data.message || '同步请求失败'); error.code = data.code; throw error;}
+    if (!response.ok) {if (data.code === 'SYNC_LOCAL_ONLY') localOnly(); const error = new Error(data.user_message || data.message || '同步请求失败'); error.code = data.code; error.user_message = data.user_message; error.user_hint = data.user_hint; throw error;}
     return data;
   }
   function label(s) {return s.dirty && s.business_ready ? (s.state === 'behind' || s.state === 'conflict' ? names[s.state] + ' · 本地有修改' : '已保存本地 · 待同步') : names[s.state] || s.state;}
