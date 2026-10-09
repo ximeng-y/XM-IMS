@@ -38,7 +38,8 @@ const OpsForm = (() => {
       endpoint: "/adjust", label: "盘点调整",
       target: { label: "目标库存" },
       extras: [{ key: "note", label: "备注", max: 200 }],
-      hint: "填「盘点后的应有数量」；系统自动记录 目标−当前 的带符号增量，与当前相同则报 400",
+      hint: "填「盘点后的应有数量」；系统自动记录 目标−当前 的带符号增量，"
+            + "与当前数量相同时会被拦下",
       submitText: "提交盘点",
     },
   };
@@ -75,13 +76,13 @@ const OpsForm = (() => {
 
   function renderResult(box, cfg, res) {
     const m = res.movement;
-    const badges = [
-      `<span class="badge fill">已执行</span>`,
-      res.idempotent_replay ? `<span class="badge red">幂等重放</span>` : "",
-    ].join(" ");
+    // 重复提交的成功结果不再标注「幂等重放」——这是接口机制词，用户只需要知道
+    // 「没有重复记账」；具体机制与幂等键在控制台留一条记录便于排查。
+    if (res.idempotent_replay) console.info("[ops] idempotent replay", m.id);
+    const badges = `<span class="badge fill">已执行</span>`;
     const dl = [
       ["流水 ID", m.id],
-      ["类型", TYPE_BADGE[m.type] || esc(m.type)],
+      ["类型", TYPE_BADGE[m.type] || `<span class="muted">未知类型</span>`],
       ["数量增量", UI.fmtDelta(m.qty_delta)],
       ["单价", UI.fmtMoney(m.unit_price)],
       m.target_qty !== null && m.target_qty !== undefined ? ["目标库存", m.target_qty] : null,
@@ -189,7 +190,7 @@ const OpsForm = (() => {
           return;
         }
         renderResult(resultBox, cfg, res);
-        if (res.idempotent_replay) UI.toast("重复提交：返回首次提交的结果，未重复记账");
+        if (res.idempotent_replay) UI.toast("这次提交之前已经成功记账，本次没有重复记账");
         else UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
         // 真实落库后换新幂等键，避免下次误重放
         dlg.dataset.key = genKey();

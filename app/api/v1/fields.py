@@ -17,8 +17,9 @@ def create_field(shop_id: ShopDep, body: FieldCreate, response: Response):
     """创建自定义字段；与系统字段（ID/名称/库存数量/SPU ID/SPU 名称）重名返回 409。
 
     不带 formula 时按普通字段创建，保持原有行为：返回 201，字段可手填值。
-    带 formula 时创建数学计算字段：type 为结果类型（decimal/percent）、scale 为显示位数，
-    公式的语法、引用与循环引用一并校验；dry_run=true 只校验并预览（返回 200，不分配 ID）。
+    带 formula 时创建数学计算字段：type 为结果类型（int/decimal/percent）、scale 为显示位数
+    （结果类型为整数时只能是省略或 0，否则 400 SCALE_NOT_APPLICABLE），公式的语法、引用与
+    循环引用一并校验；dry_run=true 只校验并预览（返回 200，不分配 ID）。
     """
     if body.dry_run:
         response.status_code = status.HTTP_200_OK
@@ -44,6 +45,8 @@ def update_formula(shop_id: ShopDep, field_id: int, body: FieldFormulaIn):
     """完整提交 formula/type/scale/allow_negative，整体替换该计算字段的定义。
 
     仅计算字段可用（普通字段返回 409 FORMULA_NOT_COMPUTED）；普通字段与计算字段不能互转。
+    结果类型可为整数／小数／百分比；结果类型为整数时 scale 只能省略或传 0（否则 400
+    SCALE_NOT_APPLICABLE），小数与百分比省略 scale 则沿用当前显示位数。
     提交与现值完全相同的定义不会重复写审计。dry_run=true 只校验，不落库；统一返回 200。
     """
     return fields.update_formula(shop_id, field_id, body)

@@ -46,7 +46,9 @@ def rename_spu(shop_id: int, spu_id: int, name: str) -> dict:
         row = d.conn.execute("SELECT * FROM spus WHERE id = ?", (spu_id,)).fetchone()
         if row is None:
             raise ApiError("SPU_NOT_FOUND", f"SPU {spu_id} 不存在",
-                           hint="GET /api/v1/spus 查看现有 SPU", status=404)
+                           hint="GET /api/v1/spus 查看现有 SPU", status=404,
+                           user_message=f"SPU {spu_id} 不存在",
+                           user_hint="该 SPU 可能已被删除，请刷新页面或改用「选择已有 SPU」")
         ts = now_iso()
         d.conn.execute("UPDATE spus SET name = ?, updated_at = ? WHERE id = ?", (name, ts, spu_id))
         db.write_audit(d.conn, "spu_rename", "spu", spu_id,
@@ -69,7 +71,10 @@ def resolve_spu(conn, spu_id: int | None, spu_name: str | None) -> tuple[int, bo
                 "SELECT name FROM spus ORDER BY id LIMIT 5")]
             hint = ("现有 SPU：" + "、".join(names)) if names else \
                 "该店铺还没有 SPU，可通过 spu_name 自动创建"
-            raise ApiError("SPU_NOT_FOUND", f"SPU {spu_id} 不存在", hint=hint, status=404)
+            user_hint = ("现有 SPU：" + "、".join(names)) if names else \
+                "该店铺还没有 SPU，可在「SPU 名称」中输入新名称自动创建"
+            raise ApiError("SPU_NOT_FOUND", f"SPU {spu_id} 不存在", hint=hint, status=404,
+                           user_message=f"SPU {spu_id} 不存在", user_hint=user_hint)
         return spu_id, False
     if spu_name:
         spu_name = spu_name.strip()
@@ -86,7 +91,9 @@ def resolve_spu(conn, spu_id: int | None, spu_name: str | None) -> tuple[int, bo
         return cur.lastrowid, True
     raise ApiError("ITEM_SPU_REQUIRED", "单品必须指定 SPU",
                    hint="请求体中 spu_id 与 spu_name 二选一必填；"
-                        "spu_name 精确匹配已有 SPU 则复用，否则自动创建", status=400)
+                        "spu_name 精确匹配已有 SPU 则复用，否则自动创建", status=400,
+                   user_message="请填写或选择 SPU",
+                   user_hint="请在下拉框中选择已有 SPU，或输入一个新名称自动创建")
 
 
 def delete_spu(shop_id: int, spu_id: int, confirm: bool) -> dict:
@@ -97,18 +104,24 @@ def delete_spu(shop_id: int, spu_id: int, confirm: bool) -> dict:
     """
     if not confirm:
         raise ApiError("CONFIRM_REQUIRED", "删除 SPU 需要显式确认",
-                       hint="删除后不可恢复；确认请附带 ?confirm=true", status=400)
+                       hint="删除后不可恢复；确认请附带 ?confirm=true", status=400,
+                       user_message="删除 SPU 需要再次确认",
+                       user_hint="删除后不可恢复，请在确认框中确认删除")
     d = db.shop_db(shop_id)
     with d.lock, d.conn:
         row = d.conn.execute("SELECT * FROM spus WHERE id = ?", (spu_id,)).fetchone()
         if row is None:
             raise ApiError("SPU_NOT_FOUND", f"SPU {spu_id} 不存在",
-                           hint="GET /api/v1/spus 查看现有 SPU", status=404)
+                           hint="GET /api/v1/spus 查看现有 SPU", status=404,
+                           user_message=f"SPU {spu_id} 不存在",
+                           user_hint="该 SPU 可能已被删除，请刷新页面后重试")
         sku_count = d.conn.execute(
             "SELECT COUNT(*) FROM items WHERE spu_id = ?", (spu_id,)).fetchone()[0]
         if sku_count:
             raise ApiError("SPU_HAS_ITEMS", f"SPU「{row['name']}」下还有 {sku_count} 个单品，不能删除",
-                           hint="请先删除该 SPU 下的全部单品（仅从未产生过流水的单品可删除）", status=409)
+                           hint="请先删除该 SPU 下的全部单品（仅从未产生过流水的单品可删除）", status=409,
+                           user_message=f"SPU「{row['name']}」下还有 {sku_count} 个单品，不能删除",
+                           user_hint="请先删除该 SPU 下的全部单品（仅从未产生过流水的单品可删除）")
         db.write_audit(d.conn, "spu_delete", "spu", spu_id, {"name": row["name"]})
         d.conn.execute("DELETE FROM spus WHERE id = ?", (spu_id,))
     return {"deleted": True, "spu_id": spu_id, "name": row["name"]}

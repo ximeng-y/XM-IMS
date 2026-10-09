@@ -461,6 +461,26 @@ dialog .dlg-foot {
 
 /* 公式编辑器（字段页新建／编辑公式小窗）：预览行在上，字段与运算符面板并排在下，
    窄窗口时自动堆叠。样式只作用于本组件，不改动全局 dialog 宽度 */
+/* 公式编辑器专用弹窗：正方形（宽高同尺寸），受视口约束，中间正文区滚动，
+   标题与底部操作区始终可见。样式只作用于本弹窗，其他弹窗宽度不变。
+   选择器带上 :has(.dlg-form-wide)：其特异性高于下方通用宽表单弹窗的定宽规则，
+   否则会被那条规则改写成 32rem */
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) {
+  width: min(60rem, calc(100vw - 2rem));
+  height: min(60rem, calc(100vh - 2rem));
+  /* 纵向三段布局：头部与底部固定，正文吃剩余高度并自行滚动 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-head,
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-foot { flex: 0 0 auto; }
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .fx-editor { border: 1px solid var(--line-light); background: #fff; padding: .8rem .9rem; }
 .fx-pane-title { font-size: .78rem; color: var(--ink-soft); margin-bottom: .35rem; }
 .fx-preview {
@@ -505,12 +525,15 @@ dialog .dlg-foot {
 .fx-tok-x:hover { background: #fdf0ef; color: #8f2a27; }
 .fx-palette {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  /* 字段区与运算区等宽：右栏不再被挤窄 */
+  grid-template-columns: 1fr 1fr;
   gap: .9rem 1.1rem;
 }
 /* 窄窗口（含高分屏整数缩放下等效窄宽）：面板改为上下堆叠，避免按钮被压成竖排文字 */
 @media (max-width: 46rem) {
   .fx-palette { grid-template-columns: 1fr; }
+  /* 窄窗口下结果格式区也改为单列 */
+  .dlg-form-formula .form-grid { grid-template-columns: 1fr !important; }
 }
 .fx-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
 .fx-chip {
@@ -533,9 +556,9 @@ dialog .dlg-foot {
   margin-left: .2em;
   vertical-align: middle;
 }
-.fx-num { display: flex; gap: .4rem; align-items: center; }
-/* input 在 Pico 下是 width:100%，flex 收缩后仍会撑破容器，故显式允许收缩 */
-.fx-num input { min-width: 0; }
+.fx-num { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+/* input 在 Pico 下是 width:100%，flex 收缩后仍会撑破容器，故显式允许收缩并给出可用下限 */
+.fx-num input { min-width: 6rem; flex: 1 1 6rem; }
 .fx-num button { width: auto; margin: 0; flex: 0 0 auto; }
 .fx-actions { display: flex; gap: .5rem; margin-top: .7rem; }
 .fx-actions button { width: auto; margin: 0; }

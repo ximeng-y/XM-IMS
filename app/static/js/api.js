@@ -1,18 +1,25 @@
 /* API 访问层：统一走真实 /api/v1 JSON 端点（验证后端契约本身）
    - 自动附带 X-Shop-Id 头（业务端点约定）
-   - 错误统一解析为 {code, message, hint, status} 抛出 ApiFail */
+   - 错误统一解析为 {code, message, hint, userMessage, userHint, status} 抛出 ApiFail
+   - message/hint 是给 API 调用方（Agent）的文案，可能含端点与参数名；界面一律取
+     userMessage/userHint（缺失时回落 message 且不展示 hint），避免接口类文案出现在页面上 */
 "use strict";
 
 const XM = (() => {
   const state = { shopId: null, shops: [] };
 
   class ApiFail extends Error {
-    constructor(code, message, hint, status) {
+    constructor(code, message, hint, status, userMessage, userHint) {
       super(message);
       this.code = code;
       this.hint = hint;
       this.status = status;
+      this.userMessage = userMessage;
+      this.userHint = userHint;
     }
+    // 面向界面的文案：优先后端给出的用户版，其次错误消息本身
+    get display() { return this.userMessage || this.message; }
+    get displayHint() { return this.userHint || ""; }
   }
 
   async function api(method, path, body) {
@@ -30,15 +37,18 @@ const XM = (() => {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (e) {
-      throw new ApiFail("NETWORK_ERROR", "网络请求失败，后端服务可能未启动", String(e), 0);
+      throw new ApiFail("NETWORK_ERROR", "网络请求失败: " + String(e), null, 0,
+                        "无法连接到本地服务，程序可能已退出", "请重新启动程序后重试");
     }
     let data = null;
     try { data = await res.json(); } catch (_) { /* 非 JSON 响应 */ }
     if (!res.ok) {
+      const code = (data && data.code) || ("HTTP_" + res.status);
       throw new ApiFail(
-        (data && data.code) || ("HTTP_" + res.status),
+        code,
         (data && data.message) || res.statusText || "请求失败",
-        data && data.hint, res.status);
+        data && data.hint, res.status,
+        data && data.user_message, data && data.user_hint);
     }
     return data;
   }

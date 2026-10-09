@@ -31,10 +31,10 @@ function formulaText(f) {
   const defs = fieldCache;
   return tokens.map((t) => {
     if (t.kind === "number") return t.value;
-    if (t.kind === "system") return { qty: "库存数量", spu_id: "SPU ID" }[t.key] || t.key;
+    if (t.kind === "system") return { qty: "库存数量" }[t.key] || t.key;
     if (t.kind === "field") {
       const ref = defs.find((x) => x.uid === t.uid);
-      return ref ? ref.name : `（未知字段 ${String(t.uid).slice(0, 8)}）`;
+      return ref ? ref.name : "已失效的字段";
     }
     return FormulaEditor.SYMBOL_TEXT[t.value] || t.value;
   }).join(" ");
@@ -48,7 +48,7 @@ async function loadFields() {
     const data = await XM.get("/fields");
     fieldCache = data.fields;
     if (!data.fields.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="t-empty">（异常：系统字段缺失）</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="t-empty">字段列表为空，请刷新页面后重试</td></tr>`;
       return;
     }
     tbody.innerHTML = data.fields.map((f, i) => {
@@ -87,7 +87,7 @@ async function loadFields() {
       if (b.dataset.act === "rename") b.addEventListener("click", () => renameFlow(f));
       if (b.dataset.act === "convert") b.addEventListener("click", () => convertFlow(f));
       if (b.dataset.act === "formula") b.addEventListener("click", () => formulaFlow(f));
-      if (b.dataset.act === "del") b.addEventListener("click", () => deleteFlow(f));
+      if (b.dataset.act === "del") b.addEventListener("click", () => { void deleteFlow(f); });
     });
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="8" class="t-empty">加载失败：${UI.esc(e.message)}</td></tr>`;
@@ -102,56 +102,53 @@ async function renameFlow(f) {
   if (name === null || name === f.name) return;
   try {
     await XM.patch(`/fields/${f.id}`, { name });
-    UI.ok(`字段已改名为「${name}」`, { title: "FIELD_RENAMED" });
+    UI.ok(`字段已改名为「${name}」`);
     loadFields();
   } catch (e) { UI.apiFail(e, "改名失败"); }
 }
 
-async function deleteFlow(f) {
-  const confirmed = await UI.confirmDialog({
+function deleteFlow(f) {
+  return DeleteFlow.run({
     title: `删除字段「${f.name}」`,
     bodyHtml: `<p>将删除该字段（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">级联清空所有单品的该字段值</b>，操作不可恢复。</p>`,
-    confirmText: "确认删除", danger: true,
+    path: `/fields/${f.id}?confirm=true`,
+    okText: (res) => `字段「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个字段值`,
+    onDone: loadFields,
   });
-  if (!confirmed) return;
-  try {
-    const res = await XM.del(`/fields/${f.id}?confirm=true`);
-    UI.ok(`字段「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个字段值`,
-          { title: "FIELD_DELETED" });
-    loadFields();
-  } catch (e) { UI.apiFail(e, "删除失败"); }
 }
 
 // ---------- 计算字段：公式编辑器小窗（新建与编辑共用） ----------
-// field 为 null 时是新建：名称可填，公式、结果类型、显示位数、允许负数一次性提交。
-// 保存失败一律保留当前输入（名称、公式 token、常量输入框、结果格式），只更新错误区域，
-// 不重建编辑器、不关闭对话框。
-function formulaDialog({ field = null, onSaved }) {
+// field 为 null 时是新建：名称初始取外侧表单已填写的名称（可在窗内修改），公式、结果类型、
+// 显示位数、允许负数一次性提交。保存失败一律保留当前输入（名称、公式 token、常量输入框、
+// 结果格式），只更新错误区域，不重建编辑器、不关闭对话框。
+function formulaDialog({ field = null, initialName = "", onSaved }) {
   const creating = field === null;
   const others = fieldCache.filter((f) => !f.system && f.uid !== (field && field.uid));
   const initials = field && field.formula ? field.formula.tokens : [];
 
   const wrap = document.createElement("div");
-  wrap.className = "dlg-form dlg-form-wide";
+  wrap.className = "dlg-form dlg-form-wide dlg-form-formula";
   wrap.innerHTML = `
     <div class="form-grid" style="grid-template-columns:1fr 1fr">
       <div>
         <label>字段名称 <span class="fieldreq">*</span></label>
-        <input data-fx-name maxlength="50" value="${UI.esc(field ? field.name : "")}"
+        <input data-fx-name maxlength="50" value="${UI.esc(field ? field.name : initialName)}"
                placeholder="如：毛利 / 毛利率" autocomplete="off">
       </div>
       <div>
         <label>计算结果类型</label>
         <select data-fx-type>
+          <option value="int">整数</option>
           <option value="decimal">小数</option>
           <option value="percent">百分比（显示时带 % 号）</option>
         </select>
       </div>
-      <div>
+      <div data-fx-scale-box>
         <label>显示小数位（0~6，默认 2）</label>
         <input data-fx-scale type="number" min="0" max="6" value="2">
       </div>
     </div>
+    <div class="hint" data-fx-scale-hint hidden>整数结果按四舍五入取整，其他公式引用时使用取整后的值。</div>
     <div class="form-check" style="margin-top:.8rem">
       <input data-fx-neg type="checkbox"><label style="margin:0">允许结果为负数</label>
     </div>
@@ -159,15 +156,29 @@ function formulaDialog({ field = null, onSaved }) {
     <div data-fx-editor></div>
     <div data-fx-result></div>`;
   const { dlg, foot } = UI.baseDialog(creating ? "新建数学计算字段" : `编辑公式「${field.name}」`, wrap);
+  dlg.classList.add("dlg-formula");
 
   // 结果格式控件：编辑时回填当前定义；显示位数对小数与百分比都生效
   const nameEl = wrap.querySelector("[data-fx-name]");
   const typeEl = wrap.querySelector("[data-fx-type]");
   const scaleEl = wrap.querySelector("[data-fx-scale]");
   const negEl = wrap.querySelector("[data-fx-neg]");
+  const scaleBox = wrap.querySelector("[data-fx-scale-box]");
+  const scaleHint = wrap.querySelector("[data-fx-scale-hint]");
+  const isInt = () => typeEl.value === "int";
   typeEl.value = field ? field.type : "decimal";
-  scaleEl.value = String(field ? field.scale : 2);
+  // 小数与百分比回填当前显示位数；整数没有小数位，回填「切回其它类型时使用的」默认 2 位
+  scaleEl.value = String(field && field.type !== "int" ? field.scale : 2);
   negEl.checked = !!(field && field.allow_negative);
+
+  // 整数结果没有小数位：收起并禁用输入框；不销毁其内容，切回小数/百分比即恢复原值
+  function syncScale() {
+    scaleBox.hidden = isInt();
+    scaleHint.hidden = !isInt();
+    scaleEl.disabled = isInt();
+  }
+  typeEl.addEventListener("change", syncScale);
+  syncScale();
 
   const editor = FormulaEditor.create({
     fields: others, excludeUid: field && field.uid,
@@ -197,33 +208,37 @@ function formulaDialog({ field = null, onSaved }) {
       return;
     }
     const scale = scaleEl.value === "" ? 2 : Number(scaleEl.value);
-    if (!Number.isInteger(scale) || scale < 0 || scale > 6) {
+    // 整数结果没有小数位：提交 type=int, scale=0，并跳过小数位校验
+    if (!isInt() && (!Number.isInteger(scale) || scale < 0 || scale > 6)) {
       resultBox.innerHTML = UI.warnHtml("显示小数位必须是 0~6 的整数");
       return;
     }
     const tokens = editor.getTokens();
+    const type = typeEl.value;
     try {
       const out = creating
         ? await XM.post("/fields", {
-            name, type: typeEl.value, scale, allow_negative: negEl.checked,
+            name, type, scale: type === "int" ? 0 : scale, allow_negative: negEl.checked,
             formula: { version: 1, tokens },
           })
         : await XM.put(`/fields/${field.id}/formula`, {
             formula: { version: 1, tokens },
-            type: typeEl.value, scale, allow_negative: negEl.checked,
+            type, scale: type === "int" ? 0 : scale, allow_negative: negEl.checked,
           });
       UI.ok(creating
         ? `计算字段「${out.name}」已创建（${typeText(out)}）`
-        : `字段「${out.name}」的公式已更新（${typeText(out)}）`,
-        { title: creating ? "FIELD_CREATED" : "FIELD_FORMULA_UPDATED" });
+        : `字段「${out.name}」的公式已更新（${typeText(out)}）`);
       dlg.close();
       if (onSaved) onSaved(out);
     } catch (e) {
       // 校验失败：保留名称、公式与结果格式，只显示错误，对话框不关闭
+      // 展示用户版文案；e.code/e.hint 是给 Agent 与日志用的，不进界面
+      if (e.code) console.warn("[fields] 公式保存失败", e.code, e.message);
       resultBox.className = "result-box error-box";
       resultBox.innerHTML =
-        `<div class="headline"><span class="badge red">${UI.esc(e.code)}</span> ${UI.esc(e.message)}</div>` +
-        (e.hint ? `<div class="hint">${UI.esc(e.hint)}</div>` : "") +
+        `<div class="headline"><span class="badge red">${
+          UI.esc(UI.codeTitle(e.code) || "公式有误")}</span> ${UI.esc(e.display || e.message)}</div>` +
+        (e.displayHint ? `<div class="hint">${UI.esc(e.displayHint)}</div>` : "") +
         `<div class="hint">当前填写内容已保留，可直接修改公式后再次保存。</div>`;
     }
   });
@@ -374,12 +389,14 @@ function renderReport(box, res, isPreview) {
   bits.push(isPreview || res.dry_run ? `<span class="badge">预览</span>` : `<span class="badge fill">已执行</span>`);
   // 清空类转换没有值换算可言，不做「无损/有损」判定，只标「清空值」
   const cleared = res.requires_clear || res.cleared;
-  if (cleared) bits.push(`<span class="badge red">清空值</span>`);
-  else if (res.lossy) bits.push(`<span class="badge red">有损</span>`);
-  else if (res.converted || res.dry_run) bits.push(`<span class="badge green">无损</span>`);
+  if (cleared) bits.push(`<span class="badge red">将清空全部值</span>`);
+  else if (res.lossy) bits.push(`<span class="badge red">精度会变化</span>`);
+  else if (res.converted || res.dry_run) bits.push(`<span class="badge green">数值不变</span>`);
 
   let html = `<div class="result-box"><div class="headline">${bits.join(" ")}</div>`;
-  if (res.description) html += `<div style="margin-top:.4rem">换算规则：${UI.esc(res.description)}</div>`;
+  if (res.description_text) {
+    html += `<div style="margin-top:.4rem">换算方式：${UI.esc(res.description_text)}</div>`;
+  }
   if (res.note) html += `<div style="margin-top:.4rem">${UI.esc(res.note)}</div>`;
   html += `<div style="margin-top:.4rem">受影响单品：<b>${res.affected_items}</b> 个</div>`;
 
@@ -407,14 +424,24 @@ window.PAGE_INIT = async function () {
 
   const typeSel = $("#fldType"), scaleInp = $("#fldScale"), negChk = $("#fldNeg");
   const scaleBox = $("#fldScaleBox"), negBox = $("#fldNegBox"), computedHint = $("#fldComputedHint");
+  const createBtn = $("#fCreateBtn");
   const isComputed = () => typeSel.value === COMPUTED_VALUE;
 
-  // 计算字段用「编辑公式」小窗创建（那里有公式面板与校验反馈），表单里不再重复一份
+  // 计算字段用「打开公式编辑器」小窗创建（那里有公式面板与校验反馈），表单里不再重复一份；
+  // 入口按钮只负责打开编辑器，不创建字段，外侧已填写的名称会带入窗内
   function openCreateComputed() {
     if (!fieldCache.some((f) => !f.system)) {
-      UI.toast("该店铺还没有可引用的数值字段；公式仍可用数字常量与库存数量／SPU ID 组成");
+      UI.toast("该店铺还没有可引用的数值字段；公式仍可用数字常量与库存数量组成");
     }
-    formulaDialog({ field: null, onSaved: () => loadFields() });
+    formulaDialog({
+      field: null,
+      initialName: $("#fldName").value.trim(),
+      onSaved: () => {
+        // 创建成功后清空外侧名称；取消或保存失败都不动它
+        $("#fldName").value = "";
+        loadFields();
+      },
+    });
   }
 
   const syncType = () => {
@@ -425,6 +452,8 @@ window.PAGE_INIT = async function () {
     scaleBox.hidden = computed;
     negBox.hidden = computed;
     computedHint.hidden = !computed;
+    // 入口按钮的文案随类型切换：数学计算是「打开公式编辑器」，其余仍是「创建」
+    createBtn.textContent = computed ? "打开公式编辑器" : "创建";
     scaleInp.disabled = t !== "decimal";
     negChk.disabled = t === "string" || t === "bool";
     if (negChk.disabled) negChk.checked = false;
@@ -449,8 +478,7 @@ window.PAGE_INIT = async function () {
       try {
         const f = await XM.post("/fields", body);
         UI.resultBox("#createResult", {
-          html: `<div class="headline"><span class="badge">FIELD_CREATED</span> ` +
-                `「${UI.esc(f.name)}」（${typeText(f)}）已创建</div>`,
+          html: UI.okHtml(`「${f.name}」（${typeText(f)}）已创建`),
         });
         $("#fldName").value = "";
         loadFields();

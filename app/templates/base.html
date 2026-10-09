@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}概览{% endblock %} · XM-IMS 验证前端</title>
+  <title>{% block title %}概览{% endblock %} · XM-IMS</title>
   <link rel="stylesheet" href="/static/vendor/pico.min.css?v=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=28">
+  <link rel="stylesheet" href="/static/css/app.css?v=29">
 </head>
 <body data-page="{% block nav %}{% endblock %}">
 <header class="topbar">
-  <a class="brand" href="/"><span class="logo">X</span>XM-IMS<span class="muted" style="font-size:.72rem;font-weight:400">验证前端</span></a>
+  <a class="brand" href="/"><span class="logo">X</span>XM-IMS</a>
   <div class="spacer"></div>
   <a id="syncStatus" class="sync-status" href="/sync">检查同步状态</a>
   <div class="shop-box">
@@ -30,16 +30,17 @@
   </nav>
   <main class="content fade-in">
     <div id="noShopBox" class="no-shop" hidden>
-      当前还没有店铺。点击右上角 <b>＋ 新建店铺</b> 创建一个（多店铺可用于验证数据隔离），即可开始使用下方功能。
+      当前还没有店铺。点击右上角 <b>＋ 新建店铺</b> 创建一个，即可开始使用下方功能。
     </div>
     {% block content %}{% endblock %}
   </main>
 </div>
 <div id="toasts"></div>
-<script src="/static/js/api.js?v=2"></script>
-<script src="/static/js/sync-common.js?v=2"></script>
-<script src="/static/js/ui.js?v=10"></script>
+<script src="/static/js/api.js?v=3"></script>
+<script src="/static/js/sync-common.js?v=4"></script>
+<script src="/static/js/ui.js?v=11"></script>
 <script src="/static/js/components/context-menu.js?v=2"></script>
+<script src="/static/js/components/delete-flow.js?v=1"></script>
 <script src="/static/js/update.js?v=3"></script>
 {% block scripts %}{% endblock %}
 </body>

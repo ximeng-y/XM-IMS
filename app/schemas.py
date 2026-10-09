@@ -31,7 +31,7 @@ class FormulaFieldRef(BaseModel):
 
 class FormulaSystemRef(BaseModel):
     kind: Literal["system"]
-    key: Literal["qty", "spu_id"] = Field(description="数值型系统字段：qty 库存数量 / spu_id SPU ID")
+    key: Literal["qty"] = Field(description="数值型系统字段：qty 库存数量（SPU ID 是编号，不可参与计算）")
 
 
 class FormulaSymbol(BaseModel):
@@ -61,19 +61,24 @@ class SpuCreate(BaseModel):
 
 class FieldCreate(BaseModel):
     name: str = Field(min_length=1, max_length=50, description="字段显示名，不得与系统字段重名")
-    type: str = Field(description="string | bool | int | decimal | percent；带 formula 时为结果类型")
+    type: str = Field(description="string | bool | int | decimal | percent；带 formula 时为结果类型（int/decimal/percent）")
     allow_negative: bool = Field(default=False, description="是否允许负数，仅数值类（int/decimal/percent）有效")
     scale: Optional[int] = Field(default=None, ge=0, le=6,
-                                 description="小数位数：decimal 字段 0~6（默认 2）；计算字段为显示位数（默认 2）")
+                                 description="小数位数：decimal 字段 0~6（默认 2）；计算字段为显示位数"
+                                             "（默认 2；结果类型为整数时只能为 0）")
     formula: Optional[Formula] = Field(default=None,
-                                       description="提交即创建数学计算字段：type 为结果类型（decimal/percent）")
+                                       description="提交即创建数学计算字段：type 为结果类型"
+                                                   "（int/decimal/percent），整数结果按四舍五入取整")
     dry_run: bool = Field(default=False, description="只校验公式与引用，不落库")
 
 
 class FieldFormulaIn(BaseModel):
     formula: Formula = Field(description="完整公式定义，整体替换")
-    type: Optional[str] = Field(default=None, description="结果类型：decimal | percent；缺省保持不变")
-    scale: Optional[int] = Field(default=None, ge=0, le=6, description="显示小数位 0~6；缺省保持不变")
+    type: Optional[str] = Field(default=None,
+                                description="结果类型：int | decimal | percent；缺省保持不变")
+    scale: Optional[int] = Field(default=None, ge=0, le=6,
+                                 description="显示小数位 0~6；缺省保持不变。"
+                                             "结果类型为整数时只能省略或传 0")
     allow_negative: Optional[bool] = Field(default=None, description="是否允许负数；缺省保持不变")
     dry_run: bool = Field(default=False, description="只校验，不落库")
 
