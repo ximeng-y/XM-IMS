@@ -622,3 +622,6 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 .dup-row:last-child{border-bottom:none}
 .dup-key{flex:0 0 6rem;color:var(--pico-muted-color)}
 .dup-val{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+
+/* 有附属 SKU 的 SPU 行整行可点击展开/收起（见 inventory.js 的点击委托） */
+tr.spu-row:has(.tri-btn) { cursor: pointer; }
