@@ -191,8 +191,46 @@ function bindContextMenu() {
   });
 }
 
+// ---------- 限高滚动容器（issue #54） ----------
+const MIN_SCROLL_H = 160;       // 10rem：窗口极矮时保底，仍不足则由整页滚动兜底
+
+// 元素在文档中的布局位置：offsetTop 链不受 fade-in 的 translateY 影响
+function docTop(el) {
+  let top = 0;
+  for (let node = el; node; node = node.offsetParent) top += node.offsetTop || 0;
+  return top;
+}
+
+// 容器最大可视高度 = 视口高度 − 容器上沿文档位置 − 外层面板下内边距与下边框 − 页面下方既有留白
+function computeScrollMax() {
+  const scroller = $("#inventoryScroll"), panel = $("#inventoryPanel");
+  if (!scroller || !panel) return 0;
+  const pcs = getComputedStyle(panel);
+  const panelBottom = (parseFloat(pcs.paddingBottom) || 0) + (parseFloat(pcs.borderBottomWidth) || 0);
+  const main = $("main.content");
+  const bottomGap = (main ? (parseFloat(getComputedStyle(main).paddingBottom) || 0) : 0) +
+                    (parseFloat(getComputedStyle(document.body).marginBottom) || 0);
+  const avail = window.innerHeight - docTop(scroller) - panelBottom - bottomGap;
+  return Math.max(MIN_SCROLL_H, Math.floor(avail));
+}
+
+function applyScrollMax() {
+  const scroller = $("#inventoryScroll");
+  // 用 max-height 而非固定高度：数据少时自然收缩，不撑出空白
+  if (scroller) scroller.style.maxHeight = computeScrollMax() + "px";
+}
+
+// 观察上方各块的实际占位变化（操作区换行、侧栏与标题高度变化）
+function installScrollSizing() {
+  applyScrollMax();
+  const ro = new ResizeObserver(() => applyScrollMax());
+  $$(".topbar, .sidenav, .page-head, .ops-bar").forEach((el) => ro.observe(el));
+  window.addEventListener("resize", applyScrollMax);
+}
+
 window.PAGE_INIT = async function () {
   if (!UI.requireShop()) return;
+  installScrollSizing();
   // 事件委托绑在 tbody 上：重渲染后无需重绑
   // 三角按钮与 SPU 行空白区域都触发同一个展开/收起，一次点击只切换一次
   $("#spuRows").addEventListener("click", (e) => {

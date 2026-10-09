@@ -644,3 +644,20 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 
 /* 有附属 SKU 的 SPU 行整行可点击展开/收起（见 inventory.js 的点击委托） */
 tr.spu-row:has(.tri-btn) { cursor: pointer; }
+
+/* ---------- 库存页：限高滚动容器（issue #54） ----------
+   #inventoryScroll 的 max-height 由 inventory.js 按视口与上方实际占位实时算出并写成内联样式：
+   CSS 只负责滚动方式与表头吸顶，避免用固定高度把少量数据也撑满。
+   最小高度 10rem（见脚本）保证窗口极矮时表格仍可操作，此时由页面整体滚动兜底。 */
+#inventoryScroll {
+  /* 双向滚动：横向保留宽表滚动，纵向在限高内滚动 */
+  overflow: auto;
+  /* 内部滚动容器禁用滚动锚定：定位与底部留白回收都是显式的，不希望浏览器再自动补偿 */
+  overflow-anchor: none;
+}
+/* 表头在容器内吸顶，沿用既有表头底色（仅库存页，不动全站规则） */
+#inventoryScroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
