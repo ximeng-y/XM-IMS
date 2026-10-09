@@ -101,6 +101,9 @@ class ItemCreate(BaseModel):
                                     description="SPU 名称：精确匹配已有 SPU 则复用，否则自动创建")
     values: dict[str, Any] = Field(default_factory=dict,
                                    description='自定义字段值，按字段名传，如 {"售价": 12.34, "供应商": "XX贸易"}')
+    qty: int = Field(default=0, ge=0,
+                     description="初始库存数量；大于 0 时在同一事务内记一条 type=in 的入库流水"
+                                 "（不带单价/批次/供应商），省略或为 0 则不记流水")
 
 
 class ItemPatch(BaseModel):

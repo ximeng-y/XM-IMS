@@ -2,6 +2,8 @@
 
 改价 = 修改价格类自定义字段的值（记审计 old/new），与改其他字段值同一路径。
 
+创建时可带初始库存：在同一事务内补记一条 type=in 的入库流水（库存仍是流水之和）。
+
 对外标识：SKU 的 id 呈现为「SPU 号-组内序号」（如 1-2），由 items.spu_id 与
 items.seq 实时拼出；内部仍以 items.id（整数）作为流水与字段值的外键。因此换挂
 SPU 时 SKU 的显示编号会随之变化，历史流水显示的是当前归属，而非当时归属。
@@ -12,7 +14,7 @@ SPU 时 SKU 的显示编号会随之变化，历史流水显示的是当前归�
 """
 import re
 
-from .. import db, fieldtypes, formulas
+from .. import config, db, fieldtypes, formulas
 from ..config import now_iso
 from ..errors import ApiError
 from ..schemas import ItemCreate, ItemPatch
@@ -24,6 +26,10 @@ ITEM_REF_RE = re.compile(r"^([1-9]\d*)-([1-9]\d*)$")
 # 两侧数字各自的上界（SQLite INTEGER 为 64 位有符号）。超出后绑定参数会抛
 # OverflowError，须在解析阶段拦成可读错误，不能让客户端自由文本打到 500
 REF_PART_MAX = 2 ** 63 - 1
+
+# 创建单品时填了初始库存，所记那一条入库流水的备注：事后在流水里能分辨出
+# 「建号时带的数量」与「后来补录的入库」，两者的业务含义不同
+INITIAL_QTY_NOTE = "新建单品时的初始库存"
 
 
 def format_item_ref(spu_id: int, seq: int) -> str:
@@ -230,8 +236,17 @@ def create_item(shop_id: int, payload: ItemCreate) -> dict:
         item_id = cur.lastrowid
         for fname, value in payload.values.items():
             _set_value(d.conn, item_id, by_name[fname], value)
+        # 初始库存与建号在同一事务内完成：要么一起留下，要么一起回滚，不会出现
+        # 「有单品却没记上数量」的中间态。库存是流水之和，故这里只追加一条入库
+        # 流水，不直接写任何数量字段。
+        if payload.qty > 0:
+            d.conn.execute(
+                "INSERT INTO movements (sync_uid, item_id, type, qty, note, actor, created_at) "
+                "VALUES (?, ?, 'in', ?, ?, ?, ?)",
+                (db.new_uid(), item_id, payload.qty, INITIAL_QTY_NOTE, config.ACTOR, ts))
         db.write_audit(d.conn, "item_create", "item", item_id,
-                       {"name": name, "spu_id": spu_id, "spu_auto_created": spu_created})
+                       {"name": name, "spu_id": spu_id, "spu_auto_created": spu_created,
+                        "initial_qty": payload.qty})
         item = _load_item(d.conn, item_id)
     item["spu_auto_created"] = spu_created
     return item
