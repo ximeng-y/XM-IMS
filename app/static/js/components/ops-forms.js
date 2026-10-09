@@ -119,10 +119,21 @@ const OpsForm = (() => {
       const it = itemsCache.find((x) => String(x.id) === itemSel.value);
       qtyHint.textContent = it ? `当前库存：${it.qty}` : "";
     };
+    // 下拉只覆盖前 200 个单品（全店加载不在此处展开）。明确指定了目标又不在列表中时，
+    // 用单个单品接口把它补进下拉再选中，避免静默落到第一条上。
+    async function ensureTargetOption(ref) {
+      if (!ref || itemsCache.some((x) => String(x.id) === String(ref))) return;
+      const it = await XM.get(`/items/${encodeURIComponent(ref)}`);
+      itemsCache.push(it);
+      itemSel.append(new Option(`${it.id} ${it.name}（库存 ${it.qty}）`, it.id));
+    }
     const refreshPickers = async (selected) => {
       const cur = selected ?? itemSel.value;
       itemsCache = await UI.fillItemOptions(itemSel);
-      if (cur) itemSel.value = cur;
+      if (cur) {
+        await ensureTargetOption(cur);
+        itemSel.value = String(cur);
+      }
       showQtyHint();
     };
 

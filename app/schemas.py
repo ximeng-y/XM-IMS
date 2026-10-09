@@ -166,8 +166,16 @@ class SpuOut(BaseModel):
     updated_at: str
 
 
+class SpuListItem(SpuOut):
+    """列表专用的 SPU 条目：在 SpuOut 之上补一个库存合计，供库存页不展开也能显示合计。
+
+    创建/改名接口仍返回 SpuOut，不改动其必需字段。
+    """
+    total_qty: int = Field(description="该 SPU 下全部 SKU 的当前库存之和")
+
+
 class SpuList(BaseModel):
-    spus: list[SpuOut]
+    spus: list[SpuListItem]
 
 
 class FieldOut(BaseModel):
