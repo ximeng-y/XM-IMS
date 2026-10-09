@@ -15,7 +15,9 @@ ShopDep = Annotated[int, Depends(require_shop)]
              summary="创建单品（SKU）")
 def create_item(shop_id: ShopDep, body: ItemCreate):
     """spu_id/spu_name 二选一必填；spu_name 精确匹配已有 SPU 则复用，否则自动创建。
-    values 按自定义字段名传值（如 {"售价": 12.34}）。"""
+    values 按自定义字段名传值（如 {"售价": 12.34}）。
+    qty 为初始库存，大于 0 时在同一事务内记一条 type=in 的入库流水（不带单价/批次/
+    供应商），响应的 qty 即该数量；省略或为 0 则不记流水，行为与以前一致。"""
     return items.create_item(shop_id, body)
 
 
