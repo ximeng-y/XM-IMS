@@ -610,3 +610,10 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 .conflict-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}.conflict-grid>div{min-width:0}.conflict-grid pre,#automaticChanges pre,#mergePreview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:22rem;overflow:auto;font-size:.8rem;padding:.7rem}
 .sync-page [hidden]{display:none!important}
 @media(max-width:75rem){.conflict-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* SKU 重名对照竖列表（issue #33） */
+.dup-list{border:1px solid var(--pico-muted-border-color);border-radius:.5rem;padding:.15rem .75rem;margin:.7rem 0 .2rem}
+.dup-row{display:flex;gap:.75rem;padding:.35rem 0;border-bottom:1px solid var(--pico-muted-border-color)}
+.dup-row:last-child{border-bottom:none}
+.dup-key{flex:0 0 6rem;color:var(--pico-muted-color)}
+.dup-val{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}

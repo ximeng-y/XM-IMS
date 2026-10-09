@@ -100,7 +100,7 @@ const ItemForm = (() => {
   }
 
   // ---------- SPU 可搜索组合框 ----------
-  // 在容器内构建「输入框 + 下拉」；返回 { wrap, input, getSelected, destroy }
+  // 在容器内构建「输入框 + 下拉」；提供选择、名称匹配与销毁方法
   function buildSpuCombo(spus, { onSpuCreated } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "spu-combo";
@@ -128,6 +128,12 @@ const ItemForm = (() => {
       selected = spu;
       input.value = spu.name;
       closeList();
+    }
+    // 输入了完整名称但没点候选：按名称精确匹配已有 SPU，命中即选中
+    function matchByName(raw) {
+      const hit = spus.find((s) => s.name === raw);
+      if (hit) choose(hit);
+      return hit || null;
     }
 
     // 快捷新建 SPU：小窗内创建后立即选中，不离开当前页
@@ -167,14 +173,107 @@ const ItemForm = (() => {
     return {
       wrap, input,
       getSelected: () => selected,
+      getTypedName: () => input.value.trim(),
+      matchByName, choose,
       destroy: () => document.removeEventListener("click", onDocClick),
     };
   }
 
+  // ---------- 编辑单品（SKU）小窗 ----------
+  // PATCH：改名 / 换挂 SPU / 改值（null = 清除）。单品页与库存页（重名提示里的
+  // 「编辑这个当前已有的 SKU」）共用同一实现，避免两处各写一份。
+  // onSaved(updated)：保存成功后回调；onSpuCreated()：需要刷新调用方 SPU 列表时回调
+  function openEditItem({ item, fields = [], spus = [], onSaved, onSpuCreated } = {}) {
+    const valStr = (v) => v === true ? "yes" : v === false ? "no" : (v ?? "");
+    const wrap = document.createElement("div");
+    wrap.innerHTML = `
+      <div class="form-grid" style="grid-template-columns:1fr 1fr">
+        <div><label>SKU 名称</label>
+          <input id="edName" value="${esc(item.name)}" maxlength="200"></div>
+        <div><label>SPU 归属</label>
+          <select id="edSpuMode">
+            <option value="keep">（保持：${esc(item.spu_name)}）</option>
+            <option value="pick">选择已有 SPU</option>
+            <option value="name">输入名称（不存在则自动创建）</option>
+          </select></div>
+        <div id="edSpuPickBox" style="display:none"><label>已有 SPU</label>
+          <select id="edSpuPick">${spus.map((s) =>
+            `<option value="${s.id}" ${s.id === item.spu_id ? "selected" : ""}>${esc(s.name)}（#${s.id}）</option>`).join("")}
+          </select></div>
+        <div id="edSpuNameBox" style="display:none"><label>SPU 名称（新）</label>
+          <input id="edSpuName" maxlength="200"></div>
+      </div>
+      <div class="hint" style="margin:.9rem 0 .4rem">自定义字段值（勾选「清除」= 提交 null 清除该值）</div>
+      <div class="form-grid">
+        ${fields.filter((f) => !isComputed(f))
+            .map((f) => fieldInputHtml(f, item.values[f.name], { withClear: true })).join("") ||
+          `<div class="hint">该店铺还没有可填写的自定义字段</div>`}
+      </div>
+      ${fields.some(isComputed) ? `
+        <div class="hint" style="margin:.9rem 0 .4rem">计算字段（值由公式自动算出，不可手填或清除）</div>
+        <div class="form-grid">
+          ${fields.filter(isComputed)
+              .map((f) => computedRowHtml(f, item.calculations?.[f.name])).join("")}
+        </div>` : ""}`;
+    const { dlg, foot } = UI.baseDialog(`编辑单品 ${item.id}`, wrap);
+
+    const mode = $("#edSpuMode", wrap);
+    mode.addEventListener("change", () => {
+      $("#edSpuPickBox", wrap).style.display = mode.value === "pick" ? "" : "none";
+      $("#edSpuNameBox", wrap).style.display = mode.value === "name" ? "" : "none";
+    });
+
+    const save = UI.mkBtn("保存修改"), cancel = UI.mkBtn("取消", "btn-outline");
+    save.type = cancel.type = "button";
+    foot.append(cancel, save);
+    cancel.onclick = () => { dlg.close(); };
+    dlg.addEventListener("close", () => dlg.remove());
+
+    save.onclick = () => UI.withBusy(save, async () => {
+      const body = {};
+      const name = $("#edName", wrap).value.trim();
+      if (name && name !== item.name) body.name = name;
+      if (mode.value === "pick") body.spu_id = Number($("#edSpuPick", wrap).value);
+      if (mode.value === "name") {
+        const sn = $("#edSpuName", wrap).value.trim();
+        if (!sn) { UI.fail("请填写 SPU 名称"); return; }
+        body.spu_name = sn;
+      }
+      const values = {};
+      let bad = false;
+      fields.filter((f) => !isComputed(f)).forEach((f) => {
+        const el = wrap.querySelector(`[data-fld="${CSS.escape(f.name)}"]`);
+        const clearEl = wrap.querySelector(`[data-clear="${CSS.escape(f.name)}"]`);
+        if (clearEl && clearEl.checked) { values[f.name] = null; return; }
+        const orig = item.values[f.name];
+        const origStr = f.type === "bool" ? (valStr(orig) || "") : String(orig ?? "");
+        const v = readFieldInput(f, el);
+        if (v === null) { bad = true; return; }
+        if (v !== undefined && el.value.trim() !== origStr) values[f.name] = v;
+      });
+      if (bad) { UI.fail("字段值格式不正确"); return; }
+      if (Object.keys(values).length) body.values = values;
+      if (!Object.keys(body).length) { UI.toast("没有任何修改"); dlg.close(); return; }
+      try {
+        const updated = await XM.patch(`/items/${encodeURIComponent(item.id)}`, body);
+        // 换挂 SPU 会改变单品编号，提示时以新编号为准
+        const refChanged = updated.id !== item.id;
+        UI.ok(`单品 ${item.id} 已更新` + (refChanged ? `，编号变为 ${updated.id}` : ""),
+              { title: "ITEM_UPDATED" });
+        dlg.close();
+        if (onSpuCreated) onSpuCreated();
+        if (onSaved) onSaved(updated);
+      } catch (e) { UI.apiFail(e, "保存失败"); }
+    });
+
+    dlg.showModal();
+    setTimeout(() => $("#edName", wrap).focus(), 50);
+  }
+
   // ---------- 新建单品（SKU）小窗 ----------
   // fields：自定义字段定义数组；spus：SPU 数组（引用共享）
-  // onCreated(item)：创建成功后回调；onSpuCreated(spu)：窗内快捷新建 SPU 后回调
-  function openCreateItem({ fields = [], spus = [], onCreated, onSpuCreated } = {}) {
+  // onCreated(item)：创建成功后回调；onSpuCreated(spu)：快捷新建或单品创建后刷新 SPU 时回调
+  function openCreateItem({ fields = [], spus = [], onCreated, onSpuCreated, onEditExisting } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "dlg-form dlg-form-wide";
     wrap.innerHTML = `
@@ -208,12 +307,93 @@ const ItemForm = (() => {
     cancel.onclick = () => { done = true; dlg.close(); };
     dlg.addEventListener("close", () => { done = true; combo.destroy(); dlg.remove(); });
 
-    submit.onclick = () => {
+    async function refreshSpus() {
+      const data = await XM.get("/spus");
+      // 保留共享数组引用，让组合框与调用页同时获得最新列表。
+      spus.splice(0, spus.length, ...data.spus);
+    }
+
+    // 已选中直接用；按名称提交时先刷新列表，避免过期缓存漏掉已有 SPU 的 SKU 查重。
+    // 确认只返回待创建名称，SPU 与单品统一交给 POST /items 在同一事务中创建。
+    async function resolveSpu() {
+      const selected = combo.getSelected();
+      if (selected) return selected;
+      const typed = combo.getTypedName();
+      if (!typed) { UI.fail("请选择 SPU，或点击下拉首项「新建 SPU」快速创建"); return undefined; }
+      try {
+        await refreshSpus();
+        if (done) return undefined;
+        const spu = combo.matchByName(typed);
+        if (spu) return spu;
+        const ok = await UI.confirmDialog({
+          title: "SPU 不存在",
+          bodyHtml: `<p>SPU「<b>${esc(typed)}</b>」不存在，是否直接创建？</p>` +
+                    `<p class="hint">将与单品一起创建；单品创建失败时不会留下空 SPU。</p>`,
+          confirmText: "创建并继续",
+        });
+        if (!ok || done) return undefined;
+        // 确认期间也可能有其他操作创建同名 SPU；重新匹配后仍走已有 SPU 的查重。
+        await refreshSpus();
+        if (done) return undefined;
+        return combo.matchByName(typed) || { name: typed };
+      } catch (e) { UI.apiFail(e, "加载 SPU 失败"); return undefined; }
+    }
+
+    // SKU 重名把关（issue #33）：同一 SPU 下已存在完全相同名称时给出对照与两个操作。
+    // 返回 true 表示可以继续创建；false 表示已被拦下
+    async function checkDuplicate(spu, name) {
+      let data;
+      try {
+        data = await XM.get(`/items?spu_id=${spu.id}&name=${encodeURIComponent(name)}&limit=1`);
+      } catch (e) { UI.apiFail(e, "查重失败"); return false; }
+      if (done) return false;
+      if (!data.total) return true;
+      const dup = data.items[0];
+      const rows = [
+        ["编号", dup.id], ["名称", dup.name], ["所属 SPU", dup.spu_name],
+        ["当前库存", String(dup.qty)],
+        ...fields.map((f) => [f.name, isComputed(f)
+          ? (dup.calculations?.[f.name]?.display ?? "—")
+          : (dup.values[f.name] === undefined || dup.values[f.name] === null || dup.values[f.name] === ""
+              ? "—" : String(dup.values[f.name]))]),
+      ];
+      const listHtml = `<div class="dup-list">` + rows.map(([k, v]) =>
+        `<div class="dup-row"><span class="dup-key">${esc(k)}</span><span class="dup-val">${esc(v)}</span></div>`
+      ).join("") + `</div>`;
+      const edit = await new Promise((resolve) => {
+        const wrap2 = document.createElement("div");
+        wrap2.innerHTML =
+          `<p>当前 SPU 下已有一个完全相同的 SKU 名，请查看这是否与你想要添加的单品相同，并选择对应操作。</p>` +
+          listHtml;
+        const { dlg: d2, foot: f2 } = UI.baseDialog("SKU 重名", wrap2);
+        const back = UI.mkBtn("返回修改这个 SKU 名", "btn-outline");
+        const go = UI.mkBtn("编辑这个当前已有的 SKU");
+        back.type = go.type = "button";
+        f2.append(back, go);
+        let done = false;
+        const finish = (v) => { if (!done) { done = true; d2.close(); resolve(v); } };
+        back.onclick = () => finish(false);
+        go.onclick = () => finish(true);
+        d2.addEventListener("close", () => { finish(false); d2.remove(); });
+        d2.showModal();
+      });
+      if (done) return false;
+      if (edit) {
+        dlg.close();
+        if (onEditExisting) onEditExisting(dup);
+        else UI.fail("当前页面无法打开编辑小窗");
+      } else {
+        nameEl.focus();
+        nameEl.select();
+      }
+      return false;
+    }
+
+    submit.onclick = () => UI.withBusy(submit, async () => {
+      if (done) return;
       const name = nameEl.value.trim();
       if (!name) { UI.fail("请填写 SKU 名称"); return; }
-      const spu = combo.getSelected();
-      if (!spu) { UI.fail("请选择 SPU，或点击下拉首项「新建 SPU」快速创建"); return; }
-      const body = { name, spu_id: spu.id, values: {} };
+      const body = { name, values: {} };
       let bad = false;
       UI.$$("[data-fld]", valueGrid).forEach((el) => {
         const f = fields.find((x) => x.name === el.dataset.fld);
@@ -222,30 +402,43 @@ const ItemForm = (() => {
         else if (v !== undefined) body.values[f.name] = v;
       });
       if (bad) { UI.fail("字段值格式不正确"); return; }
-      UI.withBusy(submit, async () => {
-        try {
-          const it = await XM.post("/items", body);
-          resultBox.className = "result-box";
-          // 展示用「SPU 名-SKU 名」，让用户一眼看出新单品挂在哪个 SPU 下
-          resultBox.innerHTML =
-            `<div class="headline"><span class="badge">ITEM_CREATED</span> ` +
-            `${esc(it.spu_name)}-${esc(it.name)} 已创建，当前库存 ${it.qty}</div>`;
-          // 清空名称与字段值，方便连续录入同 SPU 下的多个 SKU
-          nameEl.value = "";
-          valueGrid.innerHTML = fieldsGridHtml(fields);
-          nameEl.focus();
-          if (onCreated) onCreated(it);
-        } catch (e) {
-          resultBox.className = "result-box error-box";
-          resultBox.innerHTML = UI.apiFailHtml(e);
-        }
-      });
-    };
+      const spu = await resolveSpu();
+      if (!spu || done) return;
+      if (spu.id !== undefined) {
+        if (!await checkDuplicate(spu, name) || done) return;
+        body.spu_id = spu.id;
+      } else {
+        body.spu_name = spu.name;
+      }
+      let it;
+      try {
+        it = await XM.post("/items", body);
+      } catch (e) {
+        resultBox.className = "result-box error-box";
+        resultBox.innerHTML = UI.apiFailHtml(e);
+        return;
+      }
+      resultBox.className = "result-box";
+      resultBox.innerHTML =
+        `<div class="headline"><span class="badge">ITEM_CREATED</span> ` +
+        `${esc(it.spu_name)}-${esc(it.name)} 已创建，当前库存 ${it.qty}</div>`;
+      // 使用写入响应中的真实 ID，刷新失败时连续录入仍能走已有 SPU 的查重。
+      combo.choose({ id: it.spu_id, name: it.spu_name });
+      nameEl.value = "";
+      valueGrid.innerHTML = fieldsGridHtml(fields);
+      if (!done) nameEl.focus();
+      // 写入已成功，列表刷新失败不能再显示成创建失败。
+      try {
+        await refreshSpus();
+        if (onSpuCreated) onSpuCreated(spus.find((s) => s.id === it.spu_id));
+      } catch (e) { UI.apiFail(e, "单品已创建，但刷新 SPU 列表失败，请刷新页面"); }
+      if (onCreated) onCreated(it);
+    });
 
     dlg.showModal();
     setTimeout(() => nameEl.focus(), 50);
   }
 
   return { fieldInputHtml, readFieldInput, fieldsGridHtml, calcHtml, computedRowHtml,
-           isComputed, openCreateSpu, openCreateItem };
+           isComputed, openCreateSpu, openCreateItem, openEditItem };
 })();

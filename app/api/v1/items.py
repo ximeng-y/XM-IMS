@@ -22,10 +22,12 @@ def create_item(shop_id: ShopDep, body: ItemCreate):
 @router.get("", response_model=ItemList, summary="单品列表")
 def list_items(shop_id: ShopDep,
                q: str | None = Query(default=None, description="SKU 名子串模糊搜索"),
+               name: str | None = Query(default=None,
+                                        description="SKU 名精确匹配（创建前查重用，与 spu_id 配合）"),
                spu_id: int | None = Query(default=None),
                offset: int = Query(default=0, ge=0),
                limit: int = Query(default=50, ge=1, le=200)):
-    return items.list_items(shop_id, offset=offset, limit=limit, q=q, spu_id=spu_id)
+    return items.list_items(shop_id, offset=offset, limit=limit, q=q, spu_id=spu_id, name=name)
 
 
 @router.get("/{item_id}", response_model=ItemOut, summary="单品详情")
