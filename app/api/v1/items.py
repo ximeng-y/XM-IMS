@@ -1,5 +1,5 @@
 """单品（SKU）端点"""
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
 
@@ -42,3 +42,16 @@ def patch_item(shop_id: ShopDep, item_id: str, body: ItemPatch):
     values 中某字段传 null 表示清除该字段值。
     换挂 SPU 后编号变为「新 SPU 号-新序号」（落在目标 SPU 组内末尾）。"""
     return items.patch_item(shop_id, item_id, body)
+
+
+@router.delete("/{item_id}", response_model=None, summary="删除单品（仅限从未产生过流水）")
+def delete_item(shop_id: ShopDep, item_id: str,
+                confirm: bool = Query(default=False,
+                                      description="必须显式传 true 才会执行删除")) -> Any:
+    """删除从未产生过流水的单品，连同其自定义字段值一起清除。
+
+    已有流水的单品返回 409 ITEM_HAS_MOVEMENTS：流水是不可变账本，
+    库存错误请用反向操作或盘点调整修正。返回
+    {deleted, item, name, spu_id, deleted_values}。
+    """
+    return items.delete_item(shop_id, item_id, confirm)

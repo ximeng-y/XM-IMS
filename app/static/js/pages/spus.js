@@ -15,9 +15,13 @@ async function loadSpus() {
         <td>${UI.esc(s.name)}</td>
         <td class="num">${s.sku_count}</td>
         <td class="muted">${UI.fmtTime(s.updated_at)}</td>
-        <td><button type="button" class="btn-outline btn-sm" data-rename="${s.id}" data-name="${UI.esc(s.name)}">改名</button></td>
+        <td class="row-actions">
+          <button type="button" class="btn-outline btn-sm" data-rename="${s.id}" data-name="${UI.esc(s.name)}">改名</button>
+          <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${s.id}" data-name="${UI.esc(s.name)}" data-count="${s.sku_count}">删除</button>
+        </td>
       </tr>`).join("");
     $$("button[data-rename]", tbody).forEach((b) => b.addEventListener("click", renameFlow));
+    $$("button[data-del]", tbody).forEach((b) => b.addEventListener("click", deleteFlow));
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" class="t-empty">加载失败：${UI.esc(e.message)}</td></tr>`;
   }
@@ -37,6 +41,30 @@ async function renameFlow(ev) {
     UI.ok(`SPU #${id} 已改名为「${name}」`, { title: "SPU_RENAMED" });
     loadSpus();
   } catch (e) { UI.apiFail(e, "改名失败"); }
+}
+
+// 删除 SPU：其下还有单品时后端会拒绝，这里先按已知的 sku_count 给出提示
+async function deleteFlow(ev) {
+  const btn = ev.currentTarget;
+  const id = Number(btn.dataset.del);
+  const name = btn.dataset.name;
+  const count = Number(btn.dataset.count);
+  if (count > 0) {
+    UI.fail(`SPU「${name}」下还有 ${count} 个单品，不能删除`,
+            { title: "SPU_HAS_ITEMS", hint: "请先删除该 SPU 下的全部单品（仅从未产生过流水的单品可删除）" });
+    return;
+  }
+  const confirmed = await UI.confirmDialog({
+    title: `删除 SPU「${name}」`,
+    bodyHtml: `<p>该 SPU 下没有任何单品，删除后<b style="color:var(--danger)">不可恢复</b>。</p>`,
+    confirmText: "确认删除", danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    const res = await XM.del(`/spus/${id}?confirm=true`);
+    UI.ok(`SPU「${res.name}」已删除`, { title: "SPU_DELETED" });
+    loadSpus();
+  } catch (e) { UI.apiFail(e, "删除失败"); }
 }
 
 window.PAGE_INIT = async function () {
