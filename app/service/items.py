@@ -183,7 +183,8 @@ def _load_values(conn, contexts: list, defs: list | None = None, engine=None):
     """批量取自定义字段值，返回 (item_id → 显示值字典, item_id → calculations)
 
     contexts 为内部行上下文 [{"id", "qty", "spu_id"}]（内部整数 id，不是对外编号）。
-    普通字段沿用原有编码还原；计算字段按公式求值，中间结果保留内部精度。
+    普通字段沿用原有编码还原；计算字段按公式求值，中间结果保留内部精度，整数字段
+    用取整后的结果供下游引用。
     """
     ids = [c["id"] for c in contexts]
     values = {iid: {} for iid in ids}
@@ -213,10 +214,11 @@ def _load_values(conn, contexts: list, defs: list | None = None, engine=None):
                 field["type"], field["scale"], raw)
     if not has_computed:
         return values, calculations
-    # 用原始编码还原数学值（百分比 25% → 0.25），避免经 float 往返
+    # 用原始编码还原数学值（百分比 25% → 0.25），避免经 float 往返；
+    # 商品自身的 spu_id 不进公式上下文：SPU ID 不参与数学计算
     for c in contexts:
         computed, cells = engine.compute(
-            {"qty": c["qty"], "spu_id": c["spu_id"], "stored": stored[c["id"]]})
+            {"qty": c["qty"], "stored": stored[c["id"]]})
         values[c["id"]].update(computed)
         calculations[c["id"]] = cells
     return values, calculations

@@ -31,7 +31,7 @@ function formulaText(f) {
   const defs = fieldCache;
   return tokens.map((t) => {
     if (t.kind === "number") return t.value;
-    if (t.kind === "system") return { qty: "库存数量", spu_id: "SPU ID" }[t.key] || t.key;
+    if (t.kind === "system") return { qty: "库存数量" }[t.key] || t.key;
     if (t.kind === "field") {
       const ref = defs.find((x) => x.uid === t.uid);
       return ref ? ref.name : "已失效的字段";
@@ -118,35 +118,37 @@ function deleteFlow(f) {
 }
 
 // ---------- 计算字段：公式编辑器小窗（新建与编辑共用） ----------
-// field 为 null 时是新建：名称可填，公式、结果类型、显示位数、允许负数一次性提交。
-// 保存失败一律保留当前输入（名称、公式 token、常量输入框、结果格式），只更新错误区域，
-// 不重建编辑器、不关闭对话框。
-function formulaDialog({ field = null, onSaved }) {
+// field 为 null 时是新建：名称初始取外侧表单已填写的名称（可在窗内修改），公式、结果类型、
+// 显示位数、允许负数一次性提交。保存失败一律保留当前输入（名称、公式 token、常量输入框、
+// 结果格式），只更新错误区域，不重建编辑器、不关闭对话框。
+function formulaDialog({ field = null, initialName = "", onSaved }) {
   const creating = field === null;
   const others = fieldCache.filter((f) => !f.system && f.uid !== (field && field.uid));
   const initials = field && field.formula ? field.formula.tokens : [];
 
   const wrap = document.createElement("div");
-  wrap.className = "dlg-form dlg-form-wide";
+  wrap.className = "dlg-form dlg-form-wide dlg-form-formula";
   wrap.innerHTML = `
     <div class="form-grid" style="grid-template-columns:1fr 1fr">
       <div>
         <label>字段名称 <span class="fieldreq">*</span></label>
-        <input data-fx-name maxlength="50" value="${UI.esc(field ? field.name : "")}"
+        <input data-fx-name maxlength="50" value="${UI.esc(field ? field.name : initialName)}"
                placeholder="如：毛利 / 毛利率" autocomplete="off">
       </div>
       <div>
         <label>计算结果类型</label>
         <select data-fx-type>
+          <option value="int">整数</option>
           <option value="decimal">小数</option>
           <option value="percent">百分比（显示时带 % 号）</option>
         </select>
       </div>
-      <div>
+      <div data-fx-scale-box>
         <label>显示小数位（0~6，默认 2）</label>
         <input data-fx-scale type="number" min="0" max="6" value="2">
       </div>
     </div>
+    <div class="hint" data-fx-scale-hint hidden>整数结果按四舍五入取整，其他公式引用时使用取整后的值。</div>
     <div class="form-check" style="margin-top:.8rem">
       <input data-fx-neg type="checkbox"><label style="margin:0">允许结果为负数</label>
     </div>
@@ -154,15 +156,29 @@ function formulaDialog({ field = null, onSaved }) {
     <div data-fx-editor></div>
     <div data-fx-result></div>`;
   const { dlg, foot } = UI.baseDialog(creating ? "新建数学计算字段" : `编辑公式「${field.name}」`, wrap);
+  dlg.classList.add("dlg-formula");
 
   // 结果格式控件：编辑时回填当前定义；显示位数对小数与百分比都生效
   const nameEl = wrap.querySelector("[data-fx-name]");
   const typeEl = wrap.querySelector("[data-fx-type]");
   const scaleEl = wrap.querySelector("[data-fx-scale]");
   const negEl = wrap.querySelector("[data-fx-neg]");
+  const scaleBox = wrap.querySelector("[data-fx-scale-box]");
+  const scaleHint = wrap.querySelector("[data-fx-scale-hint]");
+  const isInt = () => typeEl.value === "int";
   typeEl.value = field ? field.type : "decimal";
-  scaleEl.value = String(field ? field.scale : 2);
+  // 小数与百分比回填当前显示位数；整数没有小数位，回填「切回其它类型时使用的」默认 2 位
+  scaleEl.value = String(field && field.type !== "int" ? field.scale : 2);
   negEl.checked = !!(field && field.allow_negative);
+
+  // 整数结果没有小数位：收起并禁用输入框；不销毁其内容，切回小数/百分比即恢复原值
+  function syncScale() {
+    scaleBox.hidden = isInt();
+    scaleHint.hidden = !isInt();
+    scaleEl.disabled = isInt();
+  }
+  typeEl.addEventListener("change", syncScale);
+  syncScale();
 
   const editor = FormulaEditor.create({
     fields: others, excludeUid: field && field.uid,
@@ -192,20 +208,22 @@ function formulaDialog({ field = null, onSaved }) {
       return;
     }
     const scale = scaleEl.value === "" ? 2 : Number(scaleEl.value);
-    if (!Number.isInteger(scale) || scale < 0 || scale > 6) {
+    // 整数结果没有小数位：提交 type=int, scale=0，并跳过小数位校验
+    if (!isInt() && (!Number.isInteger(scale) || scale < 0 || scale > 6)) {
       resultBox.innerHTML = UI.warnHtml("显示小数位必须是 0~6 的整数");
       return;
     }
     const tokens = editor.getTokens();
+    const type = typeEl.value;
     try {
       const out = creating
         ? await XM.post("/fields", {
-            name, type: typeEl.value, scale, allow_negative: negEl.checked,
+            name, type, scale: type === "int" ? 0 : scale, allow_negative: negEl.checked,
             formula: { version: 1, tokens },
           })
         : await XM.put(`/fields/${field.id}/formula`, {
             formula: { version: 1, tokens },
-            type: typeEl.value, scale, allow_negative: negEl.checked,
+            type, scale: type === "int" ? 0 : scale, allow_negative: negEl.checked,
           });
       UI.ok(creating
         ? `计算字段「${out.name}」已创建（${typeText(out)}）`
@@ -406,14 +424,24 @@ window.PAGE_INIT = async function () {
 
   const typeSel = $("#fldType"), scaleInp = $("#fldScale"), negChk = $("#fldNeg");
   const scaleBox = $("#fldScaleBox"), negBox = $("#fldNegBox"), computedHint = $("#fldComputedHint");
+  const createBtn = $("#fCreateBtn");
   const isComputed = () => typeSel.value === COMPUTED_VALUE;
 
-  // 计算字段用「编辑公式」小窗创建（那里有公式面板与校验反馈），表单里不再重复一份
+  // 计算字段用「打开公式编辑器」小窗创建（那里有公式面板与校验反馈），表单里不再重复一份；
+  // 入口按钮只负责打开编辑器，不创建字段，外侧已填写的名称会带入窗内
   function openCreateComputed() {
     if (!fieldCache.some((f) => !f.system)) {
-      UI.toast("该店铺还没有可引用的数值字段；公式仍可用数字常量与库存数量／SPU ID 组成");
+      UI.toast("该店铺还没有可引用的数值字段；公式仍可用数字常量与库存数量组成");
     }
-    formulaDialog({ field: null, onSaved: () => loadFields() });
+    formulaDialog({
+      field: null,
+      initialName: $("#fldName").value.trim(),
+      onSaved: () => {
+        // 创建成功后清空外侧名称；取消或保存失败都不动它
+        $("#fldName").value = "";
+        loadFields();
+      },
+    });
   }
 
   const syncType = () => {
@@ -424,6 +452,8 @@ window.PAGE_INIT = async function () {
     scaleBox.hidden = computed;
     negBox.hidden = computed;
     computedHint.hidden = !computed;
+    // 入口按钮的文案随类型切换：数学计算是「打开公式编辑器」，其余仍是「创建」
+    createBtn.textContent = computed ? "打开公式编辑器" : "创建";
     scaleInp.disabled = t !== "decimal";
     negChk.disabled = t === "string" || t === "bool";
     if (negChk.disabled) negChk.checked = false;
