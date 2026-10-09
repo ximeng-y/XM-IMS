@@ -46,7 +46,8 @@ async function loadOverview() {
   }
 }
 
-// SPU 列表刷新后，缓存里已不存在的组、SKU 数对不上的组都不可信
+// SPU 列表刷新后，缓存里已不存在的组、SKU 数对不上的组都不可信；
+// 展开状态同理——SPU 被删掉后若仍留在展开集合里，之后的每次写入都会为它重拉一次空列表
 function reconcileCaches() {
   const live = new Map(spusList.map((s) => [s.id, s.sku_count]));
   for (const [id, e] of [...skuCache]) {
@@ -54,6 +55,7 @@ function reconcileCaches() {
     if (n === undefined || n !== e.items.length) releaseCache(id);
   }
   for (const id of [...loadErrors.keys()]) if (!live.has(id)) loadErrors.delete(id);
+  for (const id of [...expandedSpus]) if (!live.has(id)) expandedSpus.delete(id);
 }
 
 // 包含式匹配：SPU 名或任一 SKU 名命中即保留该 SPU 组
@@ -419,10 +421,16 @@ function openCreateItemForSpu(spuId) {
   });
 }
 
-// 按对外标识 n-m 找单品。搜索筛选只改变展示的 SKU，删除目标仍以完整数据为准，
-// 避免「筛选状态下删错行」；个人规模（单页 ≤200 个 SKU）线性查找足够。
-function findItem(itemRef) {
-  return overviewRows.flatMap((r) => r.items).find((it) => it.id === itemRef) || null;
+// 删除前取目标单品。SKU 明细按需加载，缓存只覆盖已展开的组，不能拿本地数据查找，
+// 改为按行上的标识向单品接口取一次；取不到说明该单品已不在，按删除失败的既有文案处理。
+async function loadItemForDelete(itemRef) {
+  try {
+    return await XM.get(`/items/${encodeURIComponent(itemRef)}`);
+  } catch (e) {
+    console.info("[inventory] 取删除目标失败", itemRef, e);
+    UI.fail("该单品可能已被删除，请刷新页面后重试");
+    return null;
+  }
 }
 
 // 删除单品：与单品页同一口径，仅从未产生过流水的 SKU 可删
@@ -436,7 +444,7 @@ function deleteItemFlow(item) {
     path: `/items/${encodeURIComponent(item.id)}?confirm=true`,
     okText: (res) => `单品 ${res.item}「${res.name}」已删除` +
                      (res.deleted_values ? `，连带清除 ${res.deleted_values} 个字段值` : ""),
-    onDone: loadOverview,
+    onDone: afterWrite,
   });
 }
 
@@ -453,7 +461,7 @@ function deleteSpuFlow(spu) {
     bodyHtml: `<p>该 SPU 下没有任何单品，删除后<b style="color:var(--danger)">不可恢复</b>。</p>`,
     path: `/spus/${spu.id}?confirm=true`,
     okText: (res) => `SPU「${res.name}」已删除`,
-    onDone: loadOverview,
+    onDone: afterWrite,
   });
 }
 
@@ -468,10 +476,9 @@ function bindContextMenu() {
         { label: "新建同 SPU 单品",
           onClick: () => openCreateItemForSpu(Number(sku.dataset.spu)) },
         { label: "删除", danger: true,
-          onClick: () => {
-            const it = findItem(sku.dataset.item);
+          onClick: async () => {
+            const it = await loadItemForDelete(sku.dataset.item);
             if (it) void deleteItemFlow(it);
-            else UI.fail("该单品可能已被删除，请刷新页面后重试");
           } },
       ]);
       return;
@@ -544,6 +551,9 @@ function setTail(px) {
   t.style.height = tailAmount + "px";
 }
 
+// 约定：底部留白只在跳转定位（centerSpuRow）时补，其它路径一律清除。
+// 每次重渲染都会调用本函数，因此「补留白 → 重渲染」不会互相打架；
+// 搜索自动展开期间的重渲染会顺带清掉跳转留下的留白，这是预期行为，不会重新居中。
 // 搜索变化、展开状态变化、数据刷新、窗口尺寸变化都会清掉旧留白，且不重新居中
 function clearTail() {
   const t = $("#inventoryTail");
@@ -576,9 +586,9 @@ function centerSpuRow(spuId) {
   const scroller = $("#inventoryScroll");
   const row = scroller && scroller.querySelector(`tr.spu-row[data-spu="${spuId}"]`);
   if (!row) return;
-  // 基准取限高算出的最大可视高度，不用短表当前自然高度的一半
-  const hbar = Math.max(0, scroller.offsetHeight - scroller.clientHeight);
-  const viewH = Math.max(MIN_SCROLL_H, computeScrollMax() - hbar);
+  // 基准取容器实际可视内容高度（clientHeight 已扣掉横向滚动条厚度），
+  // 不用短表当前自然高度的一半，也不用「限高 − 滚动条」反推
+  const viewH = Math.max(MIN_SCROLL_H, scroller.clientHeight);
   const scRect = scroller.getBoundingClientRect();
   const rRect = row.getBoundingClientRect();
   const rowCenter = rRect.top - scRect.top + scroller.scrollTop + rRect.height / 2;
