@@ -100,7 +100,7 @@ const ItemForm = (() => {
   }
 
   // ---------- SPU 可搜索组合框 ----------
-  // 在容器内构建「输入框 + 下拉」；返回 { wrap, input, getSelected, destroy }
+  // 在容器内构建「输入框 + 下拉」；提供选择、名称匹配与销毁方法
   function buildSpuCombo(spus, { onSpuCreated } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "spu-combo";
@@ -174,7 +174,7 @@ const ItemForm = (() => {
       wrap, input,
       getSelected: () => selected,
       getTypedName: () => input.value.trim(),
-      matchByName,
+      matchByName, choose,
       destroy: () => document.removeEventListener("click", onDocClick),
     };
   }
@@ -272,7 +272,7 @@ const ItemForm = (() => {
 
   // ---------- 新建单品（SKU）小窗 ----------
   // fields：自定义字段定义数组；spus：SPU 数组（引用共享）
-  // onCreated(item)：创建成功后回调；onSpuCreated(spu)：窗内快捷新建 SPU 后回调
+  // onCreated(item)：创建成功后回调；onSpuCreated(spu)：快捷新建或单品创建后刷新 SPU 时回调
   function openCreateItem({ fields = [], spus = [], onCreated, onSpuCreated, onEditExisting } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "dlg-form dlg-form-wide";
@@ -307,31 +307,36 @@ const ItemForm = (() => {
     cancel.onclick = () => { done = true; dlg.close(); };
     dlg.addEventListener("close", () => { done = true; combo.destroy(); dlg.remove(); });
 
-    // SPU 解析：已选中直接用；只输入了完整名称则先精确匹配已有 SPU；
-    // 仍不存在则询问是否直接创建（issue #29）
+    async function refreshSpus() {
+      const data = await XM.get("/spus");
+      // 保留共享数组引用，让组合框与调用页同时获得最新列表。
+      spus.splice(0, spus.length, ...data.spus);
+    }
+
+    // 已选中直接用；按名称提交时先刷新列表，避免过期缓存漏掉已有 SPU 的 SKU 查重。
+    // 确认只返回待创建名称，SPU 与单品统一交给 POST /items 在同一事务中创建。
     async function resolveSpu() {
-      let spu = combo.getSelected();
-      if (!spu) {
-        const typed = combo.getTypedName();
-        if (!typed) { UI.fail("请选择 SPU，或点击下拉首项「新建 SPU」快速创建"); return undefined; }
-        spu = combo.matchByName(typed);
-        if (!spu) {
-          const ok = await UI.confirmDialog({
-            title: "SPU 不存在",
-            bodyHtml: `<p>SPU「<b>${esc(typed)}</b>」不存在，是否直接创建？</p>` +
-                      `<p class="hint">创建后会选中该 SPU，并继续创建单品。</p>`,
-            confirmText: "创建并继续",
-          });
-          if (!ok) return undefined;
-          try {
-            spu = await XM.post("/spus", { name: typed });
-          } catch (e) { UI.apiFail(e, "创建 SPU 失败"); return undefined; }
-          spus.push(spu);
-          if (onSpuCreated) onSpuCreated(spu);
-          combo.matchByName(spu.name);
-        }
-      }
-      return spu;
+      const selected = combo.getSelected();
+      if (selected) return selected;
+      const typed = combo.getTypedName();
+      if (!typed) { UI.fail("请选择 SPU，或点击下拉首项「新建 SPU」快速创建"); return undefined; }
+      try {
+        await refreshSpus();
+        if (done) return undefined;
+        const spu = combo.matchByName(typed);
+        if (spu) return spu;
+        const ok = await UI.confirmDialog({
+          title: "SPU 不存在",
+          bodyHtml: `<p>SPU「<b>${esc(typed)}</b>」不存在，是否直接创建？</p>` +
+                    `<p class="hint">将与单品一起创建；单品创建失败时不会留下空 SPU。</p>`,
+          confirmText: "创建并继续",
+        });
+        if (!ok || done) return undefined;
+        // 确认期间也可能有其他操作创建同名 SPU；重新匹配后仍走已有 SPU 的查重。
+        await refreshSpus();
+        if (done) return undefined;
+        return combo.matchByName(typed) || { name: typed };
+      } catch (e) { UI.apiFail(e, "加载 SPU 失败"); return undefined; }
     }
 
     // SKU 重名把关（issue #33）：同一 SPU 下已存在完全相同名称时给出对照与两个操作。
@@ -341,6 +346,7 @@ const ItemForm = (() => {
       try {
         data = await XM.get(`/items?spu_id=${spu.id}&name=${encodeURIComponent(name)}&limit=1`);
       } catch (e) { UI.apiFail(e, "查重失败"); return false; }
+      if (done) return false;
       if (!data.total) return true;
       const dup = data.items[0];
       const rows = [
@@ -371,6 +377,7 @@ const ItemForm = (() => {
         d2.addEventListener("close", () => { finish(false); d2.remove(); });
         d2.showModal();
       });
+      if (done) return false;
       if (edit) {
         dlg.close();
         if (onEditExisting) onEditExisting(dup);
@@ -383,12 +390,10 @@ const ItemForm = (() => {
     }
 
     submit.onclick = () => UI.withBusy(submit, async () => {
+      if (done) return;
       const name = nameEl.value.trim();
       if (!name) { UI.fail("请填写 SKU 名称"); return; }
-      const spu = await resolveSpu();
-      if (!spu) return;
-      if (!await checkDuplicate(spu, name)) return;
-      const body = { name, spu_id: spu.id, values: {} };
+      const body = { name, values: {} };
       let bad = false;
       UI.$$("[data-fld]", valueGrid).forEach((el) => {
         const f = fields.find((x) => x.name === el.dataset.fld);
@@ -397,21 +402,37 @@ const ItemForm = (() => {
         else if (v !== undefined) body.values[f.name] = v;
       });
       if (bad) { UI.fail("字段值格式不正确"); return; }
+      const spu = await resolveSpu();
+      if (!spu || done) return;
+      if (spu.id !== undefined) {
+        if (!await checkDuplicate(spu, name) || done) return;
+        body.spu_id = spu.id;
+      } else {
+        body.spu_name = spu.name;
+      }
+      let it;
       try {
-        const it = await XM.post("/items", body);
-        resultBox.className = "result-box";
-        resultBox.innerHTML =
-          `<div class="headline"><span class="badge">ITEM_CREATED</span> ` +
-          `${esc(it.spu_name)}-${esc(it.name)} 已创建，当前库存 ${it.qty}</div>`;
-        // 清空名称与字段值，方便连续录入同 SPU 下的多个 SKU
-        nameEl.value = "";
-        valueGrid.innerHTML = fieldsGridHtml(fields);
-        nameEl.focus();
-        if (onCreated) onCreated(it);
+        it = await XM.post("/items", body);
       } catch (e) {
         resultBox.className = "result-box error-box";
         resultBox.innerHTML = UI.apiFailHtml(e);
+        return;
       }
+      resultBox.className = "result-box";
+      resultBox.innerHTML =
+        `<div class="headline"><span class="badge">ITEM_CREATED</span> ` +
+        `${esc(it.spu_name)}-${esc(it.name)} 已创建，当前库存 ${it.qty}</div>`;
+      // 使用写入响应中的真实 ID，刷新失败时连续录入仍能走已有 SPU 的查重。
+      combo.choose({ id: it.spu_id, name: it.spu_name });
+      nameEl.value = "";
+      valueGrid.innerHTML = fieldsGridHtml(fields);
+      if (!done) nameEl.focus();
+      // 写入已成功，列表刷新失败不能再显示成创建失败。
+      try {
+        await refreshSpus();
+        if (onSpuCreated) onSpuCreated(spus.find((s) => s.id === it.spu_id));
+      } catch (e) { UI.apiFail(e, "单品已创建，但刷新 SPU 列表失败，请刷新页面"); }
+      if (onCreated) onCreated(it);
     });
 
     dlg.showModal();
