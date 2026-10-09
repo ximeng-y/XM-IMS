@@ -34,23 +34,15 @@ const UI = (() => {
   const fmtVal = (v) => v === null || v === undefined || v === "" ? "—" : esc(v);
 
   // ---------- toast ----------
-  // 小窗用 showModal() 打开后进入浏览器 top layer，普通定位的 #toasts 无论 z-index
-  // 多高都会被 dialog::backdrop 盖住。有小窗打开时把 toast 挂进该 dialog，让它与小窗
-  // 同层（自然位于遮罩之上）；没有小窗时仍挂在页面右下角的 #toasts 里。
-  // 小窗关闭后其子节点不再渲染，所以关窗时要把残留在里面的提示移回 #toasts，
-  // 否则「先提示、紧接着关窗」的流程（编辑保存、删除确认等）会看不到提示。
-  const toastHosts = new WeakSet();
+  // 整体迁移 #toasts，保留固定右下角定位、间距和已有提示的消失计时。
+  // modal 按实际打开顺序入栈；关闭最上层后回到下一层，全部关闭才回到页面。
+  const toastBox = $("#toasts");
+  let toastDialogs = [];
   function toastHost() {
-    const dlg = document.querySelector("dialog[open]");
-    if (!dlg) return $("#toasts");
-    if (!toastHosts.has(dlg)) {
-      toastHosts.add(dlg);
-      dlg.addEventListener("close", () => {
-        const box = $("#toasts");
-        dlg.querySelectorAll(".toast").forEach((t) => box.appendChild(t));
-      });
-    }
-    return dlg;
+    toastDialogs = toastDialogs.filter((dlg) => dlg.isConnected && dlg.matches(":modal"));
+    const host = toastDialogs.at(-1) || document.body;
+    if (toastBox.parentNode !== host) host.appendChild(toastBox);
+    return toastBox;
   }
 
   function toast(message, { title = "", hint = "", error = false, ms = 4200 } = {}) {
@@ -105,6 +97,24 @@ const UI = (() => {
     const foot = document.createElement("div");
     foot.className = "dlg-foot";
     dlg.append(head, body, foot);
+    // 只包装本工厂创建的实例，不改全局原型或页面调用方式。
+    const showModal = dlg.showModal, close = dlg.close;
+    dlg.showModal = function (...args) {
+      const wasModal = dlg.matches(":modal");
+      const result = showModal.apply(dlg, args);
+      if (!wasModal && dlg.matches(":modal")) {
+        toastDialogs.push(dlg);
+        toastHost();
+      }
+      return result;
+    };
+    dlg.close = function (...args) {
+      const result = close.apply(dlg, args);
+      toastHost();
+      return result;
+    };
+    // Esc、原生表单关闭也会触发；先于调用方的 close 监听迁移，避免 remove() 丢提示。
+    dlg.addEventListener("close", toastHost);
     document.body.appendChild(dlg);
     return { dlg, body, foot };
   }
