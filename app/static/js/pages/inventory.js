@@ -58,6 +58,18 @@ function renderOverview() {
   const tbody = $("#spuRows");
   const rows = filterRows();
   const query = $("#fltQ").value.trim();
+  const extra = fieldsMeta.length;
+  const colCount = 6 + extra;
+  // 表头随本店自定义字段一起重建；列顺序 = 展开 / ID / 名称 / SKU 数 / 合计库存 / 自定义字段… / 更新时间
+  // 取值口径与单品页一致：计算字段取后端计算结果，普通字段取手填值
+  $("#spuHead").innerHTML =
+    `<tr><th style="width:2.5rem"></th><th class="num">ID</th><th>名称</th>` +
+    `<th class="num">SKU 数</th><th class="num">合计库存</th>` +
+    fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("") +
+    `<th>更新时间</th></tr>`;
+  const extraCells = (it) => fieldsMeta.map((f) => `<td>${
+    ItemForm.isComputed(f) ? ItemForm.calcHtml(it.calculations?.[f.name])
+                           : UI.fmtVal(it.values[f.name])}</td>`).join("");
   // 每个新搜索词仅自动展开一次，后续重渲染尊重用户的手动展开/收起
   if (query && query !== lastSearchQuery) {
     rows.forEach((r) => { if (r.hit === "sku") expandedSpus.add(r.spu.id); });
@@ -65,7 +77,7 @@ function renderOverview() {
   lastSearchQuery = query;
 
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="t-empty">` +
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="t-empty">` +
       ($("#fltQ").value.trim() ? "没有匹配的 SPU / SKU" : "该店铺还没有 SPU，可点上方「新建 SPU」或「新建单品」创建") +
       `</td></tr>`;
     return;
@@ -83,6 +95,7 @@ function renderOverview() {
       <td>${UI.esc(spu.name)}</td>
       <td class="num">${spu.sku_count}</td>
       <td class="num">${spu.sku_count > 0 ? total : "—"}</td>
+      ${fieldsMeta.map(() => `<td class="muted">—</td>`).join("")}
       <td class="muted">${UI.fmtTime(spu.updated_at)}</td>
     </tr>`;
     if (open) {
@@ -92,9 +105,10 @@ function renderOverview() {
         <td>${UI.esc(it.name)}</td>
         <td class="muted">—</td>
         <td class="num">${it.qty}</td>
+        ${extraCells(it)}
         <td class="muted">${UI.fmtTime(it.updated_at)}</td>
       </tr>`).join("")
-        : `<tr class="sku-sub-row"><td></td><td colspan="5" class="t-empty">没有可显示的 SKU 数据</td></tr>`;
+        : `<tr class="sku-sub-row"><td></td><td colspan="${colCount - 1}" class="t-empty">没有可显示的 SKU 数据</td></tr>`;
     }
     return row;
   }).join("");
