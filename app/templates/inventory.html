@@ -23,17 +23,19 @@
   </div>
 </div>
 
-<div class="panel">
-  <div class="table-scroll">
+<div class="panel" id="inventoryPanel">
+  <div class="table-scroll" id="inventoryScroll">
     <table>
       <thead id="spuHead"><tr><th style="width:2.5rem"></th><th class="num">ID</th><th>名称</th><th class="num">SKU 数</th><th class="num">合计库存</th><th>更新时间</th></tr></thead>
       <tbody id="spuRows"><tr><td colspan="6" class="t-empty">加载中…</td></tr></tbody>
     </table>
+    <!-- 定位用的临时底部留白（issue #49）：高度由脚本按需设置，不进入表格结构 -->
+    <div id="inventoryTail" aria-hidden="true" hidden></div>
   </div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script src="/static/js/components/item-form.js?v=7"></script>
-<script src="/static/js/components/ops-forms.js?v=4"></script>
-<script src="/static/js/pages/inventory.js?v=10"></script>
+<script src="/static/js/components/ops-forms.js?v=7"></script>
+<script src="/static/js/pages/inventory.js?v=12"></script>
 {% endblock %}

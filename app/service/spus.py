@@ -19,11 +19,20 @@ def create_spu(shop_id: int, name: str) -> dict:
 
 
 def list_spus(shop_id: int) -> dict:
+    """SPU 列表：每个 SPU 带 SKU 数与库存合计。
+
+    流水先按 SKU 聚合再与 SKU 关联，避免某一 SKU 有多条流水时把 SKU 计数放大。
+    仍是一次查询返回全部 SPU，不逐个 SPU 查询，也不把派生库存落库。
+    """
     d = db.shop_db(shop_id)
     with d.lock:
         rows = d.conn.execute(
-            """SELECT s.id, s.name, s.created_at, s.updated_at, COUNT(i.id) AS sku_count
-               FROM spus s LEFT JOIN items i ON i.spu_id = s.id
+            """SELECT s.id, s.name, s.created_at, s.updated_at,
+                      COUNT(i.id) AS sku_count, COALESCE(SUM(q.total), 0) AS total_qty
+               FROM spus s
+               LEFT JOIN items i ON i.spu_id = s.id
+               LEFT JOIN (SELECT item_id, SUM(qty) AS total FROM movements GROUP BY item_id) q
+                      ON q.item_id = i.id
                GROUP BY s.id ORDER BY s.id""").fetchall()
     return {"spus": [dict(r) for r in rows]}
 

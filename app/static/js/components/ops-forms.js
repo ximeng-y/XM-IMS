@@ -120,10 +120,34 @@ const OpsForm = (() => {
       const it = itemsCache.find((x) => String(x.id) === itemSel.value);
       qtyHint.textContent = it ? `当前库存：${it.qty}` : "";
     };
+    // 下拉只覆盖前 200 个单品（全店加载不在此处展开）。明确指定了目标又不在列表中时，
+    // 用单个单品接口把它补进下拉再选中，避免静默落到第一条上。
+    // 取不到（目标已被删除等）不抛出：保持下拉原样并明确告知，错误不再冒泡成一句
+    // 「加载单品列表失败」。返回 false 表示目标不可用，调用方据此清空选择。
+    async function ensureTargetOption(ref) {
+      if (!ref || itemsCache.some((x) => String(x.id) === String(ref))) return true;
+      let it;
+      try {
+        it = await XM.get(`/items/${encodeURIComponent(ref)}`);
+      } catch (e) {
+        console.info("[ops] 补齐单品下拉失败", ref, e);
+        UI.fail("没能取到指定的单品，请重新选择", { title: "单品不可用" });
+        return false;
+      }
+      itemsCache.push(it);
+      itemSel.append(new Option(`${it.id} ${it.name}（库存 ${it.qty}）`, it.id));
+      return true;
+    }
     const refreshPickers = async (selected) => {
       const cur = selected ?? itemSel.value;
       itemsCache = await UI.fillItemOptions(itemSel);
-      if (cur) itemSel.value = cur;
+      if (cur) {
+        const ok = await ensureTargetOption(cur);
+        itemSel.value = ok ? String(cur) : "";
+        // 赋值后仍不等于目标（目标不在下拉里）就清空，不让选择框停在第一条上，
+        // 否则下面的库存提示会把第一条的库存当成目标的库存显示出来
+        if (itemSel.value !== String(cur)) itemSel.value = "";
+      }
       showQtyHint();
     };
 
