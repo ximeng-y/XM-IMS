@@ -100,7 +100,8 @@ const OpsForm = (() => {
   }
 
   // 打开某类操作小窗；onDone(res) 在真实落库成功后回调（供调用方刷新列表）
-  function open(kind, { onDone } = {}) {
+  // itemRef 非空时预选该单品（右键菜单从某一 SKU 直接发起操作时使用）
+  function open(kind, { onDone, itemRef = null } = {}) {
     const cfg = KINDS[kind];
     if (!cfg) throw new Error("未知操作类型：" + kind);
 
@@ -197,7 +198,7 @@ const OpsForm = (() => {
     };
 
     dlg.showModal();
-    refreshPickers().catch((e) => UI.apiFail(e, "加载单品列表失败"));
+    refreshPickers(itemRef).catch((e) => UI.apiFail(e, "加载单品列表失败"));
     setTimeout(() => itemSel.focus(), 50);
   }
 

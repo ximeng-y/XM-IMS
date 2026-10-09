@@ -88,8 +88,8 @@ function renderOverview() {
     const tri = spu.sku_count > 0
       ? `<button type="button" class="tri-btn${open ? " open" : ""}" data-spu="${spu.id}" aria-label="展开/收起 SKU">▼</button>`
       : "";
-    // data-spu 让整行都可作为展开/收起的点击目标（有附属 SKU 时才标记）
-    let row = `<tr class="spu-row"${spu.sku_count > 0 ? ` data-spu="${spu.id}"` : ""}>
+    // data-spu 供右键菜单识别目标 SPU（菜单里可「在此 SPU 下新建单品」）
+    let row = `<tr class="spu-row" data-spu="${spu.id}">
       <td class="tri-cell">${tri}</td>
       <td class="num mono">${spu.id}</td>
       <td>${UI.esc(spu.name)}</td>
@@ -99,7 +99,8 @@ function renderOverview() {
       <td class="muted">${UI.fmtTime(spu.updated_at)}</td>
     </tr>`;
     if (open) {
-      row += shown.length ? shown.map((it) => `<tr class="sku-sub-row">
+      // data-item / data-item-name / data-spu 供右键菜单与后续操作识别目标 SKU
+      row += shown.length ? shown.map((it) => `<tr class="sku-sub-row" data-item="${UI.esc(it.id)}" data-item-name="${UI.esc(it.name)}" data-spu="${spu.id}">
         <td></td>
         <td class="num mono">${UI.esc(it.id)}</td>
         <td>${UI.esc(it.name)}</td>
@@ -155,6 +156,41 @@ function toggleSpu(id) {
   renderOverview();
 }
 
+// ---------- 右键菜单：SPU 行与 SKU 子行 ----------
+// 菜单项全部复用操作区已有的小窗实现，不新增后端接口
+function openCreateItemForSpu(spuId) {
+  ItemForm.openCreateItem({
+    fields: fieldsMeta, spus: spusList, initialSpuId: spuId,
+    onCreated: () => loadOverview(),
+    onEditExisting: (item) => ItemForm.openEditItem({
+      item, fields: fieldsMeta, spus: spusList, onSaved: () => loadOverview(),
+    }),
+  });
+}
+
+function bindContextMenu() {
+  $("#spuRows").addEventListener("contextmenu", (e) => {
+    const sku = e.target.closest("tr.sku-sub-row[data-item]");
+    if (sku) {
+      ContextMenu.open(e, [
+        { label: "入库", onClick: () => OpsForm.open("in", { itemRef: sku.dataset.item, onDone: () => loadOverview() }) },
+        { label: "出库", onClick: () => OpsForm.open("out", { itemRef: sku.dataset.item, onDone: () => loadOverview() }) },
+        { label: "盘点调整", onClick: () => OpsForm.open("adjust", { itemRef: sku.dataset.item, onDone: () => loadOverview() }) },
+        { label: "新建同 SPU 单品",
+          onClick: () => openCreateItemForSpu(Number(sku.dataset.spu)) },
+      ]);
+      return;
+    }
+    const spu = e.target.closest("tr.spu-row[data-spu]");
+    if (spu) {
+      ContextMenu.open(e, [
+        { label: "在此 SPU 下新建单品",
+          onClick: () => openCreateItemForSpu(Number(spu.dataset.spu)) },
+      ]);
+    }
+  });
+}
+
 window.PAGE_INIT = async function () {
   if (!UI.requireShop()) return;
   // 事件委托绑在 tbody 上：重渲染后无需重绑
@@ -171,6 +207,7 @@ window.PAGE_INIT = async function () {
     if (row && row.querySelector(".tri-btn")) toggleSpu(Number(row.dataset.spu));
   });
   bindOpsBar();
+  bindContextMenu();
   await loadOverview();
   // 概览页快捷入口带 ?op=xxx 跳来：进页后直接弹出对应小窗
   const op = new URLSearchParams(location.search).get("op");
