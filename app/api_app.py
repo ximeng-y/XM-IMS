@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from . import db
 from .api.v1 import router as v1_router
 from .errors import register_error_handlers
+from .version import APP_VERSION
 from .sync.runtime import lifespan, install
 
 
@@ -20,7 +21,7 @@ def create_api_app() -> FastAPI:
             "（GET /api/v1/shops 查看列表）；错误统一为 `{code, message, hint?}`；"
             "写操作普遍支持 `dry_run` 预览，库存操作支持 `idempotency_key` 幂等。"
         ),
-        version="0.1.0",
+        version=APP_VERSION,
     )
     app.include_router(v1_router, prefix="/api/v1")
     register_error_handlers(app)

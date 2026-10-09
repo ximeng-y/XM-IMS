@@ -7,7 +7,7 @@ from ..errors import ApiError
 router = APIRouter(prefix="/sync", tags=["数据同步"])
 
 
-def local_request(request):
+def local_request(request, *, scope="SYNC", header="x-xm-sync", label="同步管理"):
     host = request.client.host if request.client else ""
     try:
         local = ipaddress.ip_address(host).is_loopback
@@ -17,13 +17,13 @@ def local_request(request):
     if hostname not in ("localhost", "127.0.0.1", "::1"):
         local = False
     if not local:
-        raise ApiError("SYNC_LOCAL_ONLY", "同步管理仅允许从本机访问", status=403)
+        raise ApiError(f"{scope}_LOCAL_ONLY", f"{label}仅允许从本机访问", status=403)
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
-        if request.headers.get("x-xm-sync") != "1" or request.headers.get("sec-fetch-site") == "cross-site":
-            raise ApiError("SYNC_ORIGIN", "同步请求缺少同源校验", status=403)
+        if request.headers.get(header) != "1" or request.headers.get("sec-fetch-site") == "cross-site":
+            raise ApiError(f"{scope}_ORIGIN", f"{label}请求缺少同源校验", status=403)
         if origin and (urlsplit(origin).netloc != request.headers.get("host") or urlsplit(origin).scheme != request.url.scheme):
-            raise ApiError("SYNC_ORIGIN", "拒绝跨站同步请求", status=403)
+            raise ApiError(f"{scope}_ORIGIN", f"拒绝跨站{label}请求", status=403)
 
 
 def manager(request):
