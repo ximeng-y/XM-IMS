@@ -40,11 +40,15 @@ def install(body: InstallBody, request: Request):
             "UPDATE_NOT_READY",
             "更新检查尚未完成或未发现可用版本",
             hint="稍后重试，并确认远端存在 vX.Y.Z 格式的版本 tag",
+            user_message="暂时无法确认是否有新版本",
+            user_hint="请稍后重试",
         )
     if body.tag != st["latest_tag"]:
         raise ApiError(
             "TAG_MISMATCH",
             "指定的 tag 不是当前最新版本",
             hint=f"最近一次检查到的最新版本为 {st['latest_tag']}",
+            user_message="要安装的版本与当前最新版本不一致",
+            user_hint=f"请重新检查更新后再安装（当前最新版本为 {st['latest_tag']}）",
         )
     return update.install_update(body.tag)

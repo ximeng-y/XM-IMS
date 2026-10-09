@@ -72,7 +72,9 @@ class Merger:
     def __init__(self, base, local, remote, session, timestamp):
         self.models = [load(p) for p in (base, local, remote)]
         if len({m["manifest"]["dataset"] for m in self.models}) != 1:
-            fail("DATASET_CONFLICT", "不同数据集不能逐项合并，请先选择初始化来源")
+            fail("DATASET_CONFLICT", "不同数据集不能逐项合并，请先选择初始化来源",
+                 user_message="本地与远端不是同一套数据，无法逐项合并",
+                 user_hint="请先在同步页面明确选择以本地数据还是远端数据为准")
         self.session, self.timestamp = session, timestamp
         self.choices = {}
         self.conflicts, self.changes, self.renumber = [], [], []
@@ -89,13 +91,17 @@ class Merger:
         if choice:
             source = choice.get("source")
             if source in disabled:
-                fail("RESOLUTION_INVALID", disabled[source])
+                fail("RESOLUTION_INVALID", disabled[source],
+                     user_message="这个版本没有该对象，无法采用",
+                     user_hint="请选择已有的名称，或直接输入一个新名称")
             if source in ("base", "local", "remote"):
                 value = values[("base", "local", "remote").index(source)]
             elif source == "custom" and editable:
                 value = choice.get("value")
             else:
-                fail("RESOLUTION_INVALID", "该冲突不支持此处理方式")
+                fail("RESOLUTION_INVALID", "该冲突不支持此处理方式",
+                     user_message="这项冲突不支持该处理方式",
+                     user_hint="请改用页面上提供的其他选项")
         if kind == "field_group":
             self.detail_sets[identity] = [v["values"] for v in values]
             shown = [{"definition": self.field_display(v["definition"]), "关联值数量": sum(x is not None for x in v["values"].values())} for v in values]
@@ -153,7 +159,9 @@ class Merger:
                     # 已存在的流水和审计不可编辑；异常修改不能通过合并改变历史。
                     self.conflict(key, "$immutable", [b, l, r], "immutable")
                     if self.choices.get(key + "#$immutable", {}).get("source") not in (None, "base"):
-                        fail("IMMUTABLE_RECORD", "共同版本中的流水和审计只能保留原记录")
+                        fail("IMMUTABLE_RECORD", "共同版本中的流水和审计只能保留原记录",
+                             user_message="已有的流水记录不能改动",
+                             user_hint="请选择「保留共同版本」；库存差异可通过追加调整流水修正")
                 result[key] = copy.deepcopy(b)
                 continue
             if b is None or l is None or r is None or table in ("movements", "audit_log"):
@@ -220,7 +228,9 @@ class Merger:
     def details(self, identity, offset, limit):
         values = self.detail_sets.get(identity)
         if values is None:
-            fail("CONFLICT_STALE", "该关联组不存在")
+            fail("CONFLICT_STALE", "该关联组不存在",
+                 user_message="这条关联记录已不在本次冲突中",
+                 user_hint="请关闭窗口后重新打开同步页面")
         keys = sorted(set().union(*(set(v) for v in values)))
         def show(side, key):
             row = values[side].get(key)
@@ -279,13 +289,17 @@ class Merger:
     @staticmethod
     def encode_value(value, field):
         if field is None:
-            fail("FIELD_INVALID", "请先处理字段定义冲突")
+            fail("FIELD_INVALID", "请先处理字段定义冲突",
+                 user_message="该字段的定义还没有确定",
+                 user_hint="请先处理字段定义上的冲突，再填写字段值")
         t = field["type"]
         if t == "string":
             return {"value_int": None, "value_text": str(value)}
         if t == "bool":
             if str(value).lower() not in ("true", "false"):
-                fail("FIELD_INVALID", "布尔值请输入 true 或 false")
+                fail("FIELD_INVALID", "布尔值请输入 true 或 false",
+                     user_message="开关字段只能填 true 或 false",
+                     user_hint="请输入 true（开）或 false（关）")
             integer = int(str(value).lower() == "true")
         else:
             try:
@@ -296,9 +310,13 @@ class Merger:
                     raise ValueError()
                 integer = int(scaled)
             except (InvalidOperation, ValueError):
-                fail("FIELD_INVALID", "输入值超出字段类型或精度")
+                fail("FIELD_INVALID", "输入值超出字段类型或精度",
+                     user_message="填写的值与字段类型或小数位数不符",
+                     user_hint="请检查小数位数，或改用该字段允许的取值")
         if not -(2**63) <= integer < 2**63 or (integer < 0 and not field["allow_negative"]):
-            fail("FIELD_INVALID", "输入值超出字段允许范围")
+            fail("FIELD_INVALID", "输入值超出字段允许范围",
+                 user_message="填写的值超出该字段允许的范围",
+                 user_hint="请检查是否为负数，或数值是否过大")
         return {"value_int": integer, "value_text": None}
 
     def fix_dependencies(self, result, sides):
@@ -330,7 +348,9 @@ class Merger:
                     names = [model["rows"].get(key, {}).get("name") for model in self.models]
                     name = self.conflict(key, "$unique_name", names, "name", True)
                     if not isinstance(name, str) or not name.strip():
-                        fail("NAME_INVALID", "名称不能为空")
+                        fail("NAME_INVALID", "名称不能为空",
+                             user_message="名称不能为空",
+                             user_hint="请为这条记录填写一个与其他记录不同的名称")
                     result[key]["name"] = name.strip()
 
     def idempotency(self, result, sides):
@@ -377,9 +397,13 @@ class Merger:
             try:
                 target = int(str(target))
             except ValueError:
-                fail("STOCK_INVALID", "目标库存必须是非负整数")
+                fail("STOCK_INVALID", "目标库存必须是非负整数",
+                     user_message="目标库存需要填写 0 或正整数",
+                     user_hint="请输入不含小数、不小于 0 的数量")
             if not 0 <= target < 2**63:
-                fail("STOCK_INVALID", "目标库存必须是非负整数")
+                fail("STOCK_INVALID", "目标库存必须是非负整数",
+                     user_message="目标库存超出允许范围",
+                     user_hint="请填写一个合理的不小于 0 的整数")
             if key + "#$inventory" in self.choices and target != current[(database, item)]:
                 uid = uuid.uuid5(uuid.NAMESPACE_URL, self.session + key).hex
                 result[database + "/movements/" + uid] = {
@@ -434,7 +458,9 @@ class Merger:
         for uid, row in shops.items():
             row["db_file"] = "shops/" + str(row["id"]) + ".db"
         if set(by_database) - {"index"} - set(shops):
-            fail("SHOP_CONFLICT", "候选中存在没有店铺索引的业务库")
+            fail("SHOP_CONFLICT", "候选中存在没有店铺索引的业务库",
+                 user_message="合并结果中有店铺数据缺少对应的店铺项",
+                 user_hint="请在冲突处理中确认店铺相关记录的处理方式")
         for database in ["index", *shops]:
             tables = by_database[database]
             kind = "index" if database == "index" else "shop"
@@ -447,7 +473,9 @@ class Merger:
                     for row in rows.values():
                         for column, target in REFERENCES.get(table, {}).items():
                             if row[column] not in mappings[database].get(target, {}):
-                                fail("REFERENCE_CONFLICT", "候选结果仍有未解决的引用")
+                                fail("REFERENCE_CONFLICT", "候选结果仍有未解决的引用",
+                                     user_message="合并结果中还有关联记录没有确定",
+                                     user_hint="请回到冲突列表，逐项处理后再重新校验")
                             row[column] = mappings[database][target][row[column]]
                         # 审计 entity_id/detail 保存发生时的编号；当前对象只按 entity_uid 关联，
                         # 不能像业务外键一样重映射，否则会改写不可变历史。

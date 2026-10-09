@@ -97,8 +97,7 @@ async function deleteFlow(item) {
   try {
     const res = await XM.del(`/items/${encodeURIComponent(item.id)}?confirm=true`);
     UI.ok(`单品 ${res.item}「${res.name}」已删除` +
-          (res.deleted_values ? `，连带清除 ${res.deleted_values} 个字段值` : ""),
-          { title: "ITEM_DELETED" });
+          (res.deleted_values ? `，连带清除 ${res.deleted_values} 个字段值` : ""));
     loadItems();
   } catch (e) { UI.apiFail(e, "删除失败"); }
 }

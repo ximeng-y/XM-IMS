@@ -3,7 +3,7 @@
 {% block nav %}sync{% endblock %}
 {% block content %}
 <div class="sync-page">
-  <header><h1>数据同步</h1><p class="muted">本地 SQLite 保存业务数据，私有 Git 仓库保存版本历史。</p></header>
+  <header><h1>数据同步</h1><p class="muted">业务数据保存在本机；配置私有仓库后，版本历史会同步到该仓库。</p></header>
   <article>
     <h2 id="syncHeading">正在检查…</h2>
     <p id="syncMessage" aria-live="polite"></p>
@@ -13,25 +13,25 @@
       <a id="enterApp" href="/" role="button" class="btn-outline" hidden>进入应用</a>
     </div>
     <div id="initializeBox" hidden>
-      <p>请选择初始化来源。当前版本使用新的数据目录；旧数据库保留，不自动读取。使用远端会替换当前活动数据，替换前保留副本。有未上传提交或冲突草稿时，必须先处理同步才能重新初始化。</p>
+      <p>请选择初始化来源。当前版本使用新的数据目录；旧数据原样保留，不自动读取。使用远端会替换当前活动数据，替换前保留副本。还有未上传的修改或未处理的冲突时，必须先完成同步才能重新初始化。</p>
       <button id="useLocal" class="btn-outline">使用本地数据／新建数据集</button>
       <button id="useRemote" class="btn-outline">从远端恢复</button>
     </div>
   </article>
   <details id="settingsPanel"><summary>仓库与自动同步设置</summary>
     <form id="syncSettings">
-      <label>私有数据仓库 URL<input id="remoteUrl" placeholder="https://github.com/用户名/私有数据仓库.git" autocomplete="off"></label>
-      <p class="muted">使用独立私有仓库。HTTPS 复用系统 Git 凭证管理器，SSH 复用系统密钥。不要在地址中填写 Token；仓库可见性请在托管平台确认。</p>
+      <label>私有数据仓库地址<input id="remoteUrl" placeholder="https://github.com/用户名/私有数据仓库.git" autocomplete="off"></label>
+      <p class="muted">请使用一个独立的私有仓库。HTTPS 复用本机已保存的账号凭证，SSH 复用本机密钥。请勿在地址里填写账号、密码或访问令牌；仓库的可见性请在托管平台上确认。</p>
       <div class="grid"><label>数据分支<input id="dataBranch" value="main" required></label><label>本机名称<input id="deviceName" maxlength="80" required></label><label>间隔（分钟）<input id="syncInterval" type="number" min="1" step="1" value="10" required></label></div>
       <label><input type="checkbox" id="autoSync" role="switch" checked>自动检查、提交和推送</label>
       <div class="sync-actions"><button type="submit">保存设置</button><button type="button" id="testConnection" class="btn-outline">测试连接</button></div>
       <p id="credentialStatus" class="muted"></p>
-      <p class="muted">认证失败时，请先在本机终端完成 Git 凭证管理器登录或 SSH 密钥／主机信任配置，再测试连接。应用不会弹出登录窗口或保存访问令牌。</p>
+      <p class="muted">认证失败时，请先在本机完成仓库的账号登录或密钥配置，再测试连接。本程序不会弹出登录窗口，也不会保存你的访问令牌。</p>
     </form>
   </details>
   <article id="conflictPanel" hidden>
     <h2>处理数据冲突</h2>
-    <p>选择先保存到独立草稿。全部冲突处理并校验通过后，确认总览才会替换数据库。</p>
+    <p>选择会先保存为草稿。全部冲突处理并校验通过后，「确认总览并应用」才会替换现有数据。</p>
     <div class="sync-actions"><label><input type="checkbox" id="onlyUnresolved">只看未解决项</label><button id="cancelConflict" class="btn-outline">取消处理，返回编辑</button></div>
     <p id="conflictSummary" aria-live="polite"></p>
     <div id="conflictList"></div>
@@ -40,7 +40,7 @@
     <div class="sync-actions"><button id="validateConflict">校验候选结果</button><button id="applyConflict" disabled>确认总览并应用</button></div>
     <div id="mergePreview" aria-live="polite"></div>
   </article>
-  <details><summary>本地保留与历史</summary><p id="retentionInfo"></p><ol id="snapshotList"></ol><p class="muted">通常保留三份结构化快照。远端保留全部 Git 历史；未上传历史、共同基线和冲突数据暂不清理。换电脑前请执行“立即同步”，确认已同步远端。</p></details>
+  <details><summary>本地保留与历史</summary><p id="retentionInfo"></p><ol id="snapshotList"></ol><p class="muted">通常保留三份历史快照；远端保留全部历史。未上传的历史与冲突数据暂不清理。换电脑前请执行「立即同步」，确认已同步到远端。</p></details>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/sync.js?v=4"></script>{% endblock %}
+{% block scripts %}<script src="/static/js/pages/sync.js?v=6"></script>{% endblock %}

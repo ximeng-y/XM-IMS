@@ -4,9 +4,9 @@
 const MOV_LIMIT = 50;
 let movOffset = 0;
 
-const TYPE_BADGE = { in: `<span class="badge green">in 入库</span>`,
-                     out: `<span class="badge red">out 出库</span>`,
-                     adjust: `<span class="badge gray">adjust 盘点</span>` };
+const TYPE_BADGE = { in: `<span class="badge green">入库</span>`,
+                     out: `<span class="badge red">出库</span>`,
+                     adjust: `<span class="badge gray">盘点</span>` };
 
 async function loadMovements() {
   const tbody = $("#movRows");
@@ -25,7 +25,7 @@ async function loadMovements() {
           <td class="num mono">${m.id ?? "—"}</td>
           <td class="muted" style="white-space:nowrap">${UI.fmtTime(m.created_at)}</td>
           <td class="num mono">${UI.esc(m.item_id)}</td>
-          <td>${TYPE_BADGE[m.type] || UI.esc(m.type)}</td>
+          <td>${TYPE_BADGE[m.type] || `<span class="muted">未知类型</span>`}</td>
           <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
           <td class="num">${UI.fmtMoney(m.unit_price)}</td>
           <td>${UI.fmtVal(m.batch_no)}</td>

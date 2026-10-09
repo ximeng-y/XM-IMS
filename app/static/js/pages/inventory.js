@@ -16,7 +16,7 @@ async function loadOverview() {
       XM.get("/spus"), XM.get("/items?limit=200"), XM.get("/fields"),
     ]);
     if (itemsData.total > itemsData.items.length) {
-      UI.fail(`单品共 ${itemsData.total} 个，超过一次拉取上限（200），页面数据可能不完整`);
+      UI.fail(`单品共 ${itemsData.total} 个，本页仅显示前 ${itemsData.items.length} 个，合计库存可能不完整`);
     }
     spusList = spus.spus;
     fieldsMeta = fields.fields.filter((f) => !f.system);

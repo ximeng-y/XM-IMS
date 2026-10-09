@@ -58,15 +58,48 @@ const UI = (() => {
   }
   const ok = (m, o) => toast(m, o);
   const fail = (m, o) => toast(m, { ...o, error: true, ms: 6500 });
-  // ApiFail → toast（结构化错误 code + message + hint）
-  const apiFail = (e, prefix = "") =>
-    fail((prefix ? prefix + "：" : "") + e.message,
-         { title: e.code, hint: e.hint || ("HTTP " + e.status) });
+
+  // 错误码 → 界面标题。错误码本身（INSUFFICIENT_STOCK 之类）是在代码与日志里使用的标识，
+  // 不面向用户展示；未收录的码不显示标题，只在控制台留一条便于排查的记录。
+  const CODE_TITLES = {
+    NETWORK_ERROR: "无法连接", VALIDATION_ERROR: "填写有误",
+    SHOP_HEADER_MISSING: "未选择店铺", SHOP_NOT_FOUND: "店铺不可用",
+    ITEM_REF_INVALID: "单品编号无效", ITEM_NOT_FOUND: "找不到单品",
+    ITEM_NAME_INVALID: "单品名有误", ITEM_HAS_MOVEMENTS: "单品不能删除",
+    ITEM_SPU_REQUIRED: "未指定 SPU",
+    SPU_NOT_FOUND: "找不到 SPU", SPU_NAME_INVALID: "SPU 名有误",
+    SPU_HAS_ITEMS: "SPU 不能删除",
+    FIELD_NOT_FOUND: "找不到字段", FIELD_NAME_INVALID: "字段名有误",
+    FIELD_NAME_EXISTS: "字段名重复", FIELD_TYPE_INVALID: "字段类型有误",
+    FIELD_VALUE_INVALID: "字段值有误", FIELD_READONLY: "字段为只读",
+    FIELD_NO_CHANGE: "结构与目标相同", FIELD_REFERENCED: "字段被引用",
+    SCALE_NOT_APPLICABLE: "小数位不适用", NEGATIVE_NOT_APPLICABLE: "不能为负",
+    NEGATIVE_VALUES_EXIST: "存在负值", ROUNDING_REQUIRED: "需要选择取整方式",
+    ROUNDING_INVALID: "取整方式有误", CONVERT_REQUIRES_CLEAR: "需要确认清空",
+    CONFIRM_REQUIRED: "需要确认", UNKNOWN_FIELD: "存在未知字段",
+    INSUFFICIENT_STOCK: "库存不足", MOVEMENT_TYPE_INVALID: "流水类型有误",
+    FORMULA_INVALID: "公式有误", FORMULA_TYPE_INVALID: "公式结果类型有误",
+    FORMULA_NOT_COMPUTED: "不是计算字段", FORMULA_REF_INVALID: "公式引用有误",
+    FORMULA_CYCLE: "公式存在循环引用",
+  };
+  const codeTitle = (code) => CODE_TITLES[code] || "";
+
+  // ApiFail → toast（标题取中文说明，正文取用户版文案，末尾附可操作提示）
+  const apiFail = (e, prefix = "") => {
+    if (e && e.code) console.warn("[api]", e.code, e.message);
+    const title = codeTitle(e.code);
+    const msg = (prefix ? prefix + "：" : "") + (e.display || e.message);
+    // 没有面向用户的提示时留空，不用 HTTP 状态码之类的实现细节填充
+    const hint = e.displayHint || "";
+    fail(msg, { title, hint });
+  };
   // ApiFail → HTML 片段（用于表单内联错误框）
   function apiFailHtml(e) {
+    if (e && e.code) console.warn("[api]", e.code, e.message);
     return `<div class="result-box error-box"><div class="headline">` +
-      `<span class="badge red">${esc(e.code)}</span> ${esc(e.message)}</div>` +
-      (e.hint ? `<div class="hint">${esc(e.hint)}</div>` : "") + `</div>`;
+      `<span class="badge red">${esc(codeTitle(e.code) || "操作未完成")}</span> ` +
+      `${esc(e.display || e.message)}</div>` +
+      (e.displayHint ? `<div class="hint">${esc(e.displayHint)}</div>` : "") + `</div>`;
   }
   // 操作前警告 → HTML 片段（用于「需再次确认」类的风险提示）
   function warnHtml(title, detail = "") {
@@ -181,6 +214,12 @@ const UI = (() => {
     box.innerHTML = html;
   }
 
+  // 成功结果块（统一结构：徽标 + 正文 + 可选提示）；成功不展示任何接口代号
+  function okHtml(text, hint = "") {
+    return `<div class="headline"><span class="badge fill">已完成</span> ${esc(text)}</div>` +
+      (hint ? `<div class="hint">${esc(hint)}</div>` : "");
+  }
+
   // ---------- 分页 ----------
   function renderPager(sel, { offset, limit, total }, onGo) {
     const box = $(sel);
@@ -239,7 +278,7 @@ const UI = (() => {
     try {
       const shop = await XM.post("/shops", { name });
       localStorage.setItem(SHOP_KEY, String(shop.id));
-      ok(`店铺「${shop.name}」已创建`, { title: "SHOP_CREATED" });
+      ok(`店铺「${shop.name}」已创建`);
       setTimeout(() => window.location.reload(), 600);
     } catch (e) { apiFail(e, "创建店铺失败"); }
   }
@@ -279,7 +318,7 @@ const UI = (() => {
 
   return {
     $, $$, esc, fmtTime, fmtTimeShort, fmtDelta, fmtMoney, fmtVal,
-    toast, ok, fail, apiFail, apiFailHtml, warnHtml, withBusy,
+    toast, ok, fail, apiFail, apiFailHtml, warnHtml, okHtml, withBusy, codeTitle,
     baseDialog, promptDialog, confirmDialog, mkBtn, resultBox, renderPager, fillItemOptions,
     requireShop: () => XM.state.shopId !== null,
   };

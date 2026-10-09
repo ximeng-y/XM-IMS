@@ -24,7 +24,7 @@ async def lifespan(app):
             await asyncio.to_thread(manager.start)
         except ApiError as exc:
             manager.status_name = "blocked"
-            manager.error = {"code": exc.code, "message": exc.message}
+            manager.error = manager._error_entry(exc)
             db.set_ready(False)
         except Exception:
             manager.status_name = "blocked"
@@ -41,7 +41,7 @@ async def lifespan(app):
                     try:
                         await asyncio.to_thread(manager.run)
                     except ApiError as exc:
-                        manager.error = {"code": exc.code, "message": exc.message}
+                        manager.error = manager._error_entry(exc)
                     except Exception:
                         manager.error = {"code": "SYNC_CHECK_FAILED", "message": "后台同步未完成，请进入同步页重试"}
                 last_run = time.monotonic()

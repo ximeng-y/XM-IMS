@@ -38,7 +38,7 @@ async function renameFlow(ev) {
   if (name === null || name === oldName) return;
   try {
     await XM.patch(`/spus/${id}`, { name });
-    UI.ok(`SPU #${id} 已改名为「${name}」`, { title: "SPU_RENAMED" });
+    UI.ok(`SPU #${id} 已改名为「${name}」`);
     loadSpus();
   } catch (e) { UI.apiFail(e, "改名失败"); }
 }
@@ -51,7 +51,7 @@ async function deleteFlow(ev) {
   const count = Number(btn.dataset.count);
   if (count > 0) {
     UI.fail(`SPU「${name}」下还有 ${count} 个单品，不能删除`,
-            { title: "SPU_HAS_ITEMS", hint: "请先删除该 SPU 下的全部单品（仅从未产生过流水的单品可删除）" });
+            { title: "无法删除", hint: "请先删除该 SPU 下的全部单品（仅从未产生过流水的单品可删除）" });
     return;
   }
   const confirmed = await UI.confirmDialog({
@@ -62,7 +62,7 @@ async function deleteFlow(ev) {
   if (!confirmed) return;
   try {
     const res = await XM.del(`/spus/${id}?confirm=true`);
-    UI.ok(`SPU「${res.name}」已删除`, { title: "SPU_DELETED" });
+    UI.ok(`SPU「${res.name}」已删除`);
     loadSpus();
   } catch (e) { UI.apiFail(e, "删除失败"); }
 }
@@ -79,8 +79,7 @@ window.PAGE_INIT = async function () {
       try {
         const spu = await XM.post("/spus", { name });
         UI.resultBox("#createResult", {
-          html: `<div class="headline"><span class="badge">SPU_CREATED</span> ` +
-                `「${UI.esc(spu.name)}」已创建（#${spu.id}）</div>`,
+          html: UI.okHtml(`SPU「${spu.name}」已创建（#${spu.id}）`),
         });
         $("#spuName").value = "";
         loadSpus();

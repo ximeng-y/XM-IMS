@@ -16,6 +16,11 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 TYPES = ("string", "bool", "int", "decimal", "percent")
 NUMERIC_TYPES = ("int", "decimal", "percent")
 ROUNDINGS = ("ceil", "floor", "round")
+# 类型 → 界面上使用的中文名称（面向用户文案统一取此处，避免界面出现 string/int 等标识）
+TYPE_LABELS = {"string": "文本", "bool": "开关", "int": "整数",
+               "decimal": "小数", "percent": "百分比"}
+# 取整方式 → 中文名称
+ROUNDING_LABELS = {"ceil": "向上取整", "floor": "向下取整", "round": "四舍五入"}
 
 _ROUNDING_MAP = {"ceil": ROUND_CEILING, "floor": ROUND_FLOOR, "round": ROUND_HALF_UP}
 

@@ -157,11 +157,15 @@ def shop_db(shop_id: int) -> Database:
     row = get_shop_row(shop_id)
     if row is None:
         raise ApiError("SHOP_NOT_FOUND", f"店铺 {shop_id} 不存在",
-                       hint="GET /api/v1/shops 查看店铺列表", status=404)
+                       hint="GET /api/v1/shops 查看店铺列表", status=404,
+                       user_message=f"店铺 {shop_id} 不存在",
+                       user_hint="该店铺可能已被删除，请在顶栏的「店铺」下拉框中重新选择")
     path = config.DATA_DIR / row["db_file"]
     if not path.is_file():
         raise ApiError("SHOP_NOT_FOUND", f"店铺 {shop_id} 的数据库文件缺失：{row['db_file']}",
-                       hint="请从备份恢复或检查 data/shops/ 目录", status=404)
+                       hint="请从备份恢复或检查 data/shops/ 目录", status=404,
+                       user_message=f"店铺「{row['name']}」的数据文件缺失",
+                       user_hint="请用备份或数据同步恢复该店铺的数据后再打开")
     db = Database(path)
     try:
         upgrade_shop_db(db)
