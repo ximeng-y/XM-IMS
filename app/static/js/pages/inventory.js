@@ -145,7 +145,6 @@ function bindContextMenu() {
   $("#spuRows").addEventListener("contextmenu", (e) => {
     const sku = e.target.closest("tr.sku-sub-row[data-item]");
     if (sku) {
-      e.preventDefault();
       ContextMenu.open(e, [
         { label: "入库", onClick: () => OpsForm.open("in", { itemRef: sku.dataset.item, onDone: () => loadOverview() }) },
         { label: "出库", onClick: () => OpsForm.open("out", { itemRef: sku.dataset.item, onDone: () => loadOverview() }) },
@@ -157,7 +156,6 @@ function bindContextMenu() {
     }
     const spu = e.target.closest("tr.spu-row[data-spu]");
     if (spu) {
-      e.preventDefault();
       ContextMenu.open(e, [
         { label: "在此 SPU 下新建单品",
           onClick: () => openCreateItemForSpu(Number(spu.dataset.spu)) },

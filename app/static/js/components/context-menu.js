@@ -10,7 +10,6 @@ const ContextMenu = (() => {
   const MARGIN = 8;                  // 菜单与视口边缘的最小间距
   const EDITABLE = "input, textarea, select, [contenteditable]";
   let box = null;                    // 当前菜单容器；null 表示没有打开的菜单
-  let opening = false;               // open() 执行中：本轮的 contextmenu 不得把新菜单关掉
 
   const editable = (el) => !!(el && el.closest && el.closest(EDITABLE));
 
@@ -22,8 +21,12 @@ const ContextMenu = (() => {
 
   function open(event, items) {
     close();
+    // 编辑区域只关闭旧菜单，保留原生复制粘贴；调用方无需提前拦截事件。
+    if (editable(event.target)) return;
+    // 同步阻止本次右键继续冒泡，避免 document 的关闭逻辑误关刚打开的菜单。
+    event.preventDefault();
+    event.stopPropagation();
     if (!items || !items.length) return;
-    opening = true;
     box = document.createElement("div");
     box.className = "ctx-menu";
     for (const item of items) {
@@ -48,18 +51,17 @@ const ContextMenu = (() => {
     if (y + rect.height + MARGIN > window.innerHeight) y = Math.max(MARGIN, y - rect.height);
     box.style.left = `${x}px`;
     box.style.top = `${y}px`;
-    // 让下一次右键能正常关闭菜单；本轮事件（preventDefault 已在更早的 document
-    // 监听器里做过）结束后复位
-    queueMicrotask(() => { opening = false; });
   }
 
-  // 拦截浏览器原生右键：输入框等编辑区域保持原样
+  // 未被 open() 接管的右键：编辑区域关闭旧菜单并保留原生菜单，其余区域继续拦截。
   document.addEventListener("contextmenu", (e) => {
-    if (editable(e.target)) return;
+    if (editable(e.target)) {
+      close();
+      return;
+    }
     e.preventDefault();
-    // 正在开菜单（调用方的 contextmenu 处理器紧接着会调用 open）或右键落在菜单自身时
-    // 都不关闭；其余位置只拦截，已有菜单顺带关掉
-    if (!opening && !e.target.closest(".ctx-menu")) close();
+    // 右键落在菜单自身时不关闭，其余位置关闭已有菜单。
+    if (!e.target.closest(".ctx-menu")) close();
   });
   document.addEventListener("click", (e) => {
     if (box && !e.target.closest(".ctx-menu")) close();
