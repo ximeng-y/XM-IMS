@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from .. import db
 from ..config import BASE_DIR, DATA_ROOT
+from ..errors import error_dict
 from ..version import APP_VERSION
 
 # 远端操作超时（秒）
@@ -244,9 +245,13 @@ def require_complete_installation():
 def maintenance_error():
     """供两个后端和独立前端暂停请求；磁盘标记也能被另一个进程看到。"""
     if _installed_tag is not None or _restart_required():
-        return {"code": "UPDATE_RESTART_REQUIRED", "message": "程序已更新，请关闭程序并重新启动后继续使用"}
+        return error_dict("UPDATE_RESTART_REQUIRED", "程序已更新，请关闭程序并重新启动后继续使用",
+                          user_message="程序已经更新，需要重新启动",
+                          user_hint="请关闭全部程序窗口后重新打开")
     if _install_lock.locked() or _incomplete_updates():
-        return {"code": "UPDATE_MAINTENANCE", "message": "程序正在更新或等待恢复，暂不能使用；若安装已中断，请恢复后重新启动"}
+        return error_dict("UPDATE_MAINTENANCE", "程序正在更新或等待恢复，暂不能使用；若安装已中断，请恢复后重新启动",
+                          user_message="程序正在更新，暂时不能使用",
+                          user_hint="请等待更新结束；若长时间没有反应，请关闭后重新启动程序")
     return None
 
 

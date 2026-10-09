@@ -292,6 +292,10 @@ const ItemForm = (() => {
           <label>SKU 名称 <span class="fieldreq">*</span></label>
           <input data-f="name" maxlength="200" placeholder="如：白 / L 码" autocomplete="off">
         </div>
+        <div>
+          <label>初始库存</label>
+          <input data-f="qty" type="number" min="0" step="1" placeholder="可空，默认 0" autocomplete="off">
+        </div>
         <div style="grid-column:1/-1">
           <label>SPU 名称 <span class="fieldreq">*</span></label>
           <div data-combo></div>
@@ -304,6 +308,7 @@ const ItemForm = (() => {
     const { dlg, foot } = UI.baseDialog("新建单品", wrap);
 
     const nameEl = wrap.querySelector('[data-f="name"]');
+    const qtyEl = wrap.querySelector('[data-f="qty"]');
     const valueGrid = wrap.querySelector("[data-values]");
     const resultBox = wrap.querySelector("[data-result]");
     valueGrid.innerHTML = fieldsGridHtml(fields);
@@ -404,6 +409,13 @@ const ItemForm = (() => {
       const name = nameEl.value.trim();
       if (!name) { UI.fail("请填写 SKU 名称"); return; }
       const body = { name, values: {} };
+      // 初始库存可空：留空即 0，由后端在同一事务里记一条入库流水
+      const qtyRaw = qtyEl.value.trim();
+      if (qtyRaw !== "") {
+        const q = Number(qtyRaw);
+        if (!Number.isInteger(q) || q < 0) { UI.fail("初始库存必须是不小于 0 的整数"); return; }
+        body.qty = q;
+      }
       let bad = false;
       UI.$$("[data-fld]", valueGrid).forEach((el) => {
         const f = fields.find((x) => x.name === el.dataset.fld);
@@ -434,6 +446,7 @@ const ItemForm = (() => {
       // 使用写入响应中的真实 ID，刷新失败时连续录入仍能走已有 SPU 的查重。
       combo.choose({ id: it.spu_id, name: it.spu_name });
       nameEl.value = "";
+      qtyEl.value = "";
       valueGrid.innerHTML = fieldsGridHtml(fields);
       if (!done) nameEl.focus();
       // 写入已成功，列表刷新失败不能再显示成创建失败。

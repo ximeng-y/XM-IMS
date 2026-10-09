@@ -37,6 +37,13 @@ def error_payload(exc: ApiError) -> dict:
     return payload
 
 
+def error_dict(code: str, message: str, hint: str | None = None,
+               user_message: str | None = None, user_hint: str | None = None) -> dict:
+    """非 ApiError 场合（中间件、后台线程）构造同样双轨的响应体/状态条目"""
+    return error_payload(ApiError(code, message, hint=hint, user_message=user_message,
+                                  user_hint=user_hint))
+
+
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError):
