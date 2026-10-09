@@ -8,7 +8,6 @@ from fastapi import FastAPI
 from . import db
 from .api.v1 import router as v1_router
 from .errors import register_error_handlers
-from .service import update
 from .version import APP_VERSION
 from .sync.runtime import lifespan, install
 
@@ -27,8 +26,6 @@ def create_api_app() -> FastAPI:
     app.include_router(v1_router, prefix="/api/v1")
     register_error_handlers(app)
     install(app)
-    # 后台检查更新（不阻塞启动）
-    update.start_background_check()
     return app
 
 

@@ -6,6 +6,7 @@
 Cookie 与自定义请求头天然可用，前端 JS / 模板无需任何改动。
 """
 import os
+from contextlib import asynccontextmanager
 import urllib.error
 import urllib.request
 
@@ -15,9 +16,11 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import web
+from .api.v1.update import local_update_request
 from .sync.api import local_request
 from .version import APP_VERSION
 from .errors import register_error_handlers
+from .service import update
 
 # 后端地址：launcher.py 注入实际端口；未注入时回落默认端口
 API_BASE = os.environ.get("XM_API_BASE", "http://127.0.0.1:33111")
@@ -25,7 +28,7 @@ API_BASE = os.environ.get("XM_API_BASE", "http://127.0.0.1:33111")
 # 只转发业务相关请求头，跳过后端会自行生成的 hop-by-hop 头（Host/Content-Length/编码等）
 _FORWARD_HEADERS = (
     "content-type", "content-disposition", "accept",
-    "x-shop-id", "x-api-token", "authorization", "x-idempotency-key", "x-xm-sync",
+    "x-shop-id", "x-api-token", "authorization", "x-idempotency-key", "x-xm-sync", "x-xm-update",
 )
 
 
@@ -35,7 +38,7 @@ def _forward(method: str, path: str, query: str, body: bytes, headers: dict) -> 
         url += "?" + query
     req = urllib.request.Request(url, data=body or None, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=600 if path.startswith("sync/") else 60) as resp:
+        with urllib.request.urlopen(req, timeout=600 if path.startswith(("sync/", "update/")) else 60) as resp:
             headers = {}
             if resp.headers.get("content-type"):
                 headers["content-type"] = resp.headers["content-type"]
@@ -63,19 +66,38 @@ proxy = APIRouter()
 async def api_proxy(path: str, request: Request):
     if path.startswith("sync/"):
         local_request(request)
+    if path.startswith("update/"):
+        # 必须在转发前检查真实客户端；后端看到的来源已经是本机代理。
+        local_update_request(request)
     headers = {k: v for k, v in request.headers.items() if k.lower() in _FORWARD_HEADERS}
     body = await request.body()
     return await run_in_threadpool(
         _forward, request.method, path, request.url.query, body, headers)
 
 
+@asynccontextmanager
+async def lifespan(app):
+    update.require_complete_installation()
+    yield
+
+
 def create_web_app() -> FastAPI:
     app = FastAPI(
+        lifespan=lifespan,
         title="XM-IMS Frontend",
         version=APP_VERSION,
         docs_url=None, redoc_url=None, openapi_url=None,  # 文档属于后端进程
     )
     register_error_handlers(app)
+
+    @app.middleware("http")
+    async def update_guard(request, call_next):
+        if request.url.path not in ("/api/v1/update/status", "/api/v1/update/install"):
+            error = update.maintenance_error()
+            if error:
+                return JSONResponse(status_code=503, content=error)
+        return await call_next(request)
+
     app.include_router(web.router)
     app.include_router(proxy)
     app.mount("/static", StaticFiles(directory=web.STATIC_DIR), name="static")

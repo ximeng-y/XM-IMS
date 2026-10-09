@@ -5,12 +5,16 @@ import time
 from fastapi.responses import JSONResponse
 from .. import db
 from ..errors import ApiError
+from ..service import update
 from .manager import SyncManager
 from .api import router
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
+    update.require_complete_installation()
+    # 两个后端入口共用；仅在应用真正启动时检查，模块级锁防止重复线程。
+    update.start_background_check()
     manager = SyncManager()
     app.state.sync = manager
     stop = asyncio.Event()
@@ -33,7 +37,7 @@ async def lifespan(app):
             except asyncio.TimeoutError:
                 pass
             if time.monotonic() - last_run >= manager.settings["interval"] * 60:
-                if manager.started and manager.settings["auto"] and manager.settings["remote"] and not manager.busy and not (manager.state.get("session") and not db.business_ready):
+                if not update.maintenance_error() and manager.started and manager.settings["auto"] and manager.settings["remote"] and not manager.busy and not (manager.state.get("session") and not db.business_ready):
                     try:
                         await asyncio.to_thread(manager.run)
                     except ApiError as exc:
@@ -55,7 +59,12 @@ def install(app):
 
     @app.middleware("http")
     async def guard(request, call_next):
+        # 更新响应仍可返回；其他业务、同步操作和单端口静态请求暂停到恢复/重启。
+        if request.url.path not in ("/api/v1/update/status", "/api/v1/update/install"):
+            error = update.maintenance_error()
+            if error:
+                return JSONResponse(status_code=503, content=error)
         if request.url.path.startswith("/api/v1/") and not request.url.path.startswith("/api/v1/sync/"):
-            if not db.business_ready:
+            if not db.business_ready and not request.url.path.startswith("/api/v1/update/"):
                 return JSONResponse(status_code=503, content={"code": "SYNC_REQUIRED", "message": "请先完成初始化或数据同步"})
         return await call_next(request)

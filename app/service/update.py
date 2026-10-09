@@ -5,17 +5,20 @@
 访问 origin；镜像 git URL 作为 origin 不可用时的回退。更新内容通过
 `git fetch` + `git archive` 导出，不依赖匿名下载。
 """
+import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
 import time
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from ..config import BASE_DIR
+from .. import db
+from ..config import BASE_DIR, DATA_ROOT
 from ..version import APP_VERSION
 
 # 远端操作超时（秒）
@@ -39,6 +42,10 @@ _cache = None
 _cache_at = None
 _bg_started = False
 _bg_lock = threading.Lock()
+_install_lock = threading.Lock()
+_installed_tag = None
+_PROCESS_STARTED = time.time()
+_SKIPPED = {"data", ".git", ".venv", ".xmtemp", "backups", "exports", ".env"}
 
 
 def _git(args, timeout):
@@ -201,15 +208,152 @@ def start_background_check():
     ).start()
 
 
-def install_update(tag):
-    """安装指定 tag：fetch → archive → 解压 → 覆盖复制到项目根。
+def _target(relative):
+    """限制安装/回滚目标在项目内，拒绝符号链接和目录联接。"""
+    base = BASE_DIR.resolve()
+    target = base / relative
+    if not target.resolve().is_relative_to(base):
+        raise ValueError("更新目标超出项目目录")
+    for part in (target, *target.parents):
+        if part == base:
+            break
+        if part.is_symlink() or (hasattr(part, "is_junction") and part.is_junction()):
+            raise ValueError("更新目标包含符号链接或目录联接")
+    return target
 
-    跳过 data/、.git/、.venv/、.XMTEMP/、backups/、exports/、.env，
-    保证本地数据与配置不被更新包覆盖。任一步失败都不改动现有文件。
-    """
+
+def _incomplete_updates():
+    return list((BASE_DIR / ".XMTEMP").glob("xmims-update-*/pending.json"))
+
+
+def _restart_required():
+    # 完成标记跨进程共享，不能在后端重启时删掉，否则仍运行的旧前端会提前解禁。
+    # 已重启进程加载本模块晚于安装完成；保留旧标记不影响它继续运行。
+    return any(p.stat().st_mtime >= _PROCESS_STARTED
+               for p in (BASE_DIR / ".XMTEMP").glob("xmims-update-*/installed.json"))
+
+
+def require_complete_installation():
+    """启动前拒绝未完成的安装，不能让混合版本继续提供业务服务。"""
+    if _incomplete_updates():
+        raise RuntimeError("上次程序更新未完成；请先检查 .XMTEMP/xmims-update-*/pending.json 和 backup/ 并恢复，再启动程序")
+    if _restart_required():
+        raise RuntimeError("程序文件已更新，请退出当前进程并重新启动")
+
+
+def maintenance_error():
+    """供两个后端和独立前端暂停请求；磁盘标记也能被另一个进程看到。"""
+    if _installed_tag is not None or _restart_required():
+        return {"code": "UPDATE_RESTART_REQUIRED", "message": "程序已更新，请关闭程序并重新启动后继续使用"}
+    if _install_lock.locked() or _incomplete_updates():
+        return {"code": "UPDATE_MAINTENANCE", "message": "程序正在更新或等待恢复，暂不能使用；若安装已中断，请恢复后重新启动"}
+    return None
+
+
+def _extract_update(archive, src):
+    """校验路径后逐文件解压；本地数据和配置不进入安装计划。"""
+    seen = set()
+    with zipfile.ZipFile(archive) as zf:
+        for info in zf.infolist():
+            path = PurePosixPath(info.filename)
+            if (path.is_absolute() or not path.parts or
+                    any(p in (".", "..") or ":" in p or p.endswith((" ", ".")) for p in path.parts) or
+                    "\\" in info.filename or stat.S_ISLNK(info.external_attr >> 16)):
+                raise ValueError("更新包包含不安全路径或符号链接")
+            if path.parts[0].lower() in _SKIPPED:
+                continue
+            target = _target(path)
+            data_root = DATA_ROOT.resolve()
+            if target == data_root or target.is_relative_to(data_root):
+                continue
+            key = path.as_posix().casefold()
+            if key in seen:
+                raise ValueError("更新包包含重复路径")
+            seen.add(key)
+            dest = src / path
+            if info.is_dir():
+                dest.mkdir(parents=True, exist_ok=True)
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(info) as source, dest.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+                if info.external_attr >> 16 & 0o111:
+                    dest.chmod(dest.stat().st_mode | 0o111)
+    if not (src / "launcher.py").is_file() or not (src / "app").is_dir():
+        raise ValueError("更新包结构不完整（缺少 launcher.py 或 app/）")
+
+
+def _apply_update(src, tmp):
+    """全量备份成功后才替换；异常回滚，恢复失败/进程中断时保留恢复目录。"""
+    backup = tmp / "backup"
+    files = sorted(p.relative_to(src) for p in src.rglob("*") if p.is_file())
+    plan = []
+    for relative in files:
+        target = _target(relative)
+        if target.exists() and not target.is_file():
+            raise ValueError(f"更新目标不是普通文件：{relative.as_posix()}")
+        existed = target.exists()
+        if existed:
+            saved = backup / relative
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, saved)
+        plan.append({"path": relative.as_posix(), "existed": existed})
+    # 先落盘恢复清单，再开始改文件；下一次安装发现清单时拒绝覆盖恢复资料。
+    pending = tmp / "pending.json"
+    pending.write_text(json.dumps({"files": plan}, ensure_ascii=False, indent=2), encoding="utf-8")
+    changed = []
+    created_dirs = []
+    try:
+        for entry in plan:
+            relative = Path(entry["path"])
+            target = _target(relative)
+            missing = []
+            parent = target.parent
+            while not parent.exists():
+                missing.append(parent)
+                parent = parent.parent
+            for directory in reversed(missing):
+                directory.mkdir()
+                created_dirs.append(directory)
+            # 临时目录位于项目同一磁盘；单文件替换失败不会截断原文件。
+            os.replace(src / relative, target)
+            changed.append(entry)
+        # 所有文件写入后刷新完成时间，再原子切换标记；旧前后端均保持暂停到重启。
+        pending.touch()
+        pending.replace(tmp / "installed.json")
+    except Exception as exc:
+        failed = []
+        for entry in reversed(changed):
+            try:
+                relative = Path(entry["path"])
+                target = _target(relative)
+                if entry["existed"]:
+                    os.replace(backup / relative, target)
+                else:
+                    target.unlink()
+            except (OSError, ValueError):
+                failed.append(entry["path"])
+        for directory in reversed(created_dirs):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass  # 不删除其他进程在期间创建的文件。
+        if failed:
+            raise RuntimeError(
+                f"安装失败且部分文件未能回滚，请停止使用并从 {tmp} 恢复；"
+                f"未恢复文件：{'、'.join(failed)}") from exc
+        pending.unlink()
+        raise RuntimeError("安装失败，已回滚本次替换，请排除文件占用或磁盘问题后重试") from exc
+
+
+def _install_update(tag):
     tmp = None
     try:
-        tmp = Path(tempfile.mkdtemp(prefix="xmims-update-"))
+        temp_root = _target(".XMTEMP")
+        temp_root.mkdir(exist_ok=True)
+        if _incomplete_updates():
+            return {"ok": False, "message": "存在未完成安装的恢复资料，请先检查 .XMTEMP/xmims-update-*/pending.json 与 backup/，恢复后再更新"}
+        tmp = Path(tempfile.mkdtemp(prefix="xmims-update-", dir=temp_root))
         src = tmp / "src"
         src.mkdir()
         # 1) 从可用远端拉取该 tag（origin 优先，镜像回退）
@@ -217,7 +361,7 @@ def install_update(tag):
         url = ""
         for _source, url in _iter_sources():
             try:
-                r = _git(["fetch", "--no-tags", url, "tag", tag], FETCH_TIMEOUT)
+                r = _git(["fetch", "--no-tags", url, f"refs/tags/{tag}"], FETCH_TIMEOUT)
             except (OSError, subprocess.SubprocessError) as e:
                 last_err = str(e)
                 continue
@@ -226,33 +370,58 @@ def install_update(tag):
             last_err = (r.stderr or r.stdout or "git fetch 失败").strip()
         else:
             return {"ok": False, "message": f"无法从远端拉取 tag {tag}：{_sanitize(last_err, url)}"}
-        # 2) 用 git archive 导出该 tag 的内容为 zip
+        # 固定本次拉取的提交，避免 archive 意外使用旧本地同名 tag。
+        revision = _git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"], 10)
+        if revision.returncode != 0:
+            return {"ok": False, "message": "更新标签不是有效提交，未改动程序文件"}
+        # 2) 用 git archive 导出该提交的内容为 zip
         zip_path = tmp / "update.zip"
         try:
-            r = _git(["archive", "--format=zip", "-o", str(zip_path), tag], ARCHIVE_TIMEOUT)
+            r = _git(["archive", "--format=zip", "-o", str(zip_path), revision.stdout.strip()], ARCHIVE_TIMEOUT)
         except (OSError, subprocess.SubprocessError) as e:
             return {"ok": False, "message": f"导出更新包失败：{e}"}
         if r.returncode != 0:
             err = (r.stderr or r.stdout or "未知错误").strip()
             return {"ok": False, "message": f"导出更新包失败：{_sanitize(err, '')}"}
         # 3) 解压并校验更新包结构
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(src)
-        if not (src / "launcher.py").is_file() or not (src / "app").is_dir():
-            return {"ok": False, "message": "更新包结构不完整（缺少 launcher.py 或 app/），已中止且未改动任何文件"}
-        # 4) 覆盖复制到项目根，跳过本地数据/配置类目录
-        skipped = {"data", ".git", ".venv", ".XMTEMP", "backups", "exports", ".env"}
-        for item in src.iterdir():
-            if item.name in skipped:
-                continue
-            dst = BASE_DIR / item.name
-            if item.is_dir():
-                shutil.copytree(item, dst, dirs_exist_ok=True)
-            else:
-                shutil.copy2(item, dst)
+        _extract_update(zip_path, src)
+        # 4) 备份、替换，失败回滚；业务数据不在安装计划中。
+        # 等待既有事务结束，再关闭业务写入；等待中的旧请求也会重新检查 ready。
+        # 与同步恢复共用协调锁，避免后台同步在替换期间重新开放数据库。
+        with db._coordinator:
+            was_ready = db.business_ready
+            db.set_ready(False)
+            try:
+                _apply_update(src, tmp)
+            except BaseException:
+                if not (tmp / "pending.json").exists():
+                    db.set_ready(was_ready)
+                raise
+            # 成功或恢复不完整都保持暂停；新进程走原有启动同步流程重新开放业务。
         return {"ok": True, "tag": tag, "message": f"已更新到 {tag}，请关闭本页并重新启动程序后生效"}
     except Exception as e:
         return {"ok": False, "message": f"更新失败：{e}"}
     finally:
-        if tmp is not None:
+        if (tmp is not None and tmp.resolve().is_relative_to(BASE_DIR.resolve())
+                and tmp.resolve().parent == (BASE_DIR / ".XMTEMP").resolve()
+                and not tmp.is_symlink() and not (tmp / "pending.json").exists()
+                and not (tmp / "installed.json").exists()):
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+def install_update(tag):
+    """安装指定版本；只处理合法 tag，并拒绝并发安装或未重启的重复安装。"""
+    global _installed_tag
+    if parse_version(tag) is None:
+        return {"ok": False, "message": "更新标签必须为 vX.Y.Z 格式"}
+    if not _install_lock.acquire(blocking=False):
+        return {"ok": False, "message": "已有更新正在安装，请等待完成，不要重复操作"}
+    try:
+        if _installed_tag is not None:
+            return {"ok": True, "tag": _installed_tag, "message": f"已安装 {_installed_tag}，请先重新启动程序"}
+        result = _install_update(tag)
+        if result["ok"]:
+            _installed_tag = tag
+        return result
+    finally:
+        _install_lock.release()

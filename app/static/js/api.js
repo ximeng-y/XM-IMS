@@ -18,6 +18,7 @@ const XM = (() => {
   async function api(method, path, body) {
     const headers = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (path.startsWith("/update/")) headers["X-XM-Update"] = "1";
     // 店铺端点本身无需 X-Shop-Id；其余请求带上当前店铺
     if (state.shopId !== null && !path.startsWith("/shops")) {
       headers["X-Shop-Id"] = String(state.shopId);

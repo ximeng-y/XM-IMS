@@ -7,7 +7,7 @@
 
 const UPDATE_FIRST_DELAY = 800;   // 首查延迟，避免抢首屏
 const UPDATE_RETRY_MS = 3000;     // 后台检查未完成时的重试间隔
-const UPDATE_MAX_RETRY = 5;       // 最多重试次数
+const UPDATE_MAX_RETRY = 25;      // 覆盖 origin 与两个镜像依次检查的超时窗口
 
 window.addEventListener("load", () => {
   setTimeout(() => check(0), UPDATE_FIRST_DELAY);
@@ -57,6 +57,7 @@ window.addEventListener("load", () => {
           showResult("<div class='result-box'>更新完成，请关闭本页并重新启动程序</div>");
           later.remove();
           install.textContent = "知道了";
+          install.disabled = false;
           install.onclick = () => dlg.close();
         } else {
           showResult(
