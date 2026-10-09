@@ -8,7 +8,8 @@
 - 关闭 allow_negative 前若存在负值则阻断
 
 数学计算字段：
-- 由 formula_json 承载公式定义，type 为结果类型（decimal/percent），scale 为显示位数
+- 由 formula_json 承载公式定义，type 为结果类型（int/decimal/percent），scale 为显示位数
+- 结果类型为整数时结果按四舍五入取整，显示位数固定为 0
 - 值由后端按公式实时算出，不落 custom_values，不可手填/清除，不可与普通字段互转
 - 被公式引用的字段不能删除，也不能转成非数值类型（否则公式失去可计算性）
 """
@@ -32,8 +33,31 @@ SYSTEM_FIELDS = [
      "allow_negative": False, "scale": 0},
 ]
 RESERVED_NAMES = {f["name"] for f in SYSTEM_FIELDS}
-# 计算字段允许的结果类型：普通字段的 int 不参与（公式结果按显示位数保留小数）
+# 计算字段允许的结果类型：整数（结果四舍五入取整）／小数／百分比
 COMPUTED_TYPES = formulas.RESULT_TYPES
+
+
+def _computed_scale(t: str, scale: int | None, fallback: int) -> int:
+    """计算字段的显示位数：整数只能是 0（省略即 0）；小数与百分比省略则沿用现值（默认 2）"""
+    if t == "int":
+        if scale not in (None, 0):
+            raise ApiError("SCALE_NOT_APPLICABLE",
+                           f"结果类型为整数时不能设置小数位（当前收到 {scale}）",
+                           hint="整数计算字段的显示位数固定为 0；如需保留小数请把结果类型改为小数或百分比",
+                           status=400,
+                           user_message="整数结果不能设置小数位",
+                           user_hint="整数结果按四舍五入取整，没有小数位；"
+                                     "如需保留小数，请把「计算结果类型」改为小数或百分比")
+        return 0
+    return fallback if scale is None else scale
+
+
+def _type_hint_error(t: str) -> ApiError:
+    return ApiError("FORMULA_TYPE_INVALID",
+                    f"计算字段的结果类型只能是整数、小数或百分比（当前收到 {t}）",
+                    hint="可选结果类型：int（整数）、decimal（小数）、percent（百分比）", status=400,
+                    user_message="计算字段的结果类型只能是整数、小数或百分比",
+                    user_hint="请在「计算结果类型」中选择「整数」「小数」或「百分比」")
 
 
 def _formula_out(tokens) -> dict | None:
@@ -167,12 +191,8 @@ def _create_computed(shop_id: int, name: str, body) -> dict:
     tokens = _tokens(body.formula)
     t = body.type
     if t not in COMPUTED_TYPES:
-        raise ApiError("FORMULA_TYPE_INVALID",
-                       f"计算字段的结果类型只能是小数或百分比（当前收到 {t}）",
-                       hint="可选结果类型：decimal（小数）、percent（百分比）", status=400,
-                       user_message="计算字段的结果类型只能是小数或百分比",
-                       user_hint="请在「计算结果类型」中选择「小数」或「百分比」")
-    scale = 2 if body.scale is None else body.scale
+        raise _type_hint_error(t)
+    scale = _computed_scale(t, body.scale, 2)
     defn = {"id": None, "uid": "", "name": name, "type": t, "scale": scale,
             "allow_negative": bool(body.allow_negative), "formula": tokens}
 
@@ -215,12 +235,9 @@ def update_formula(shop_id: int, field_id: int, body) -> dict:
         tokens = _tokens(body.formula)
         t2 = body.type or row["type"]
         if t2 not in COMPUTED_TYPES:
-            raise ApiError("FORMULA_TYPE_INVALID",
-                           f"计算字段的结果类型只能是小数或百分比（当前收到 {t2}）",
-                           hint="可选结果类型：decimal（小数）、percent（百分比）", status=400,
-                           user_message="计算字段的结果类型只能是小数或百分比",
-                           user_hint="请在「计算结果类型」中选择「小数」或「百分比」")
-        s2 = row["scale"] if body.scale is None else body.scale
+            raise _type_hint_error(t2)
+        # 小数与百分比缺省沿用当前精度（含从整数切换时的 0），整数恒为 0
+        s2 = _computed_scale(t2, body.scale, row["scale"])
         neg2 = bool(row["allow_negative"]) if body.allow_negative is None else body.allow_negative
         defn = {"id": field_id, "uid": row["sync_uid"], "name": row["name"], "type": t2,
                 "scale": s2, "allow_negative": neg2, "formula": tokens}

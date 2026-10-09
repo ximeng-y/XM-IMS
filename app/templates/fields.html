@@ -34,8 +34,8 @@
       </div>
     </div>
     <div class="form-check" id="fldNegBox" style="margin-top:.8rem"><input id="fldNeg" type="checkbox"><label for="fldNeg" style="margin:0">允许负数（仅数值类）</label></div>
-    <div class="hint" id="fldComputedHint" hidden>计算字段的名称、公式、结果类型与显示位数在下一步的小窗里填写；点击「创建」会打开公式编辑器。</div>
-    <div style="margin-top:.8rem"><button type="submit" class="btn-sm">创建</button></div>
+    <div class="hint" id="fldComputedHint" hidden>计算字段的名称会带入公式编辑器；公式与结果格式也在编辑器里设置。点击「打开公式编辑器」填写。</div>
+    <div style="margin-top:.8rem"><button type="submit" class="btn-sm" id="fCreateBtn">创建</button></div>
   </form>
   <div id="createResult"></div>
 </div>
@@ -54,6 +54,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/js/components/formula-editor.js?v=2"></script>
-<script src="/static/js/pages/fields.js?v=6"></script>
+<script src="/static/js/components/formula-editor.js?v=3"></script>
+<script src="/static/js/pages/fields.js?v=7"></script>
 {% endblock %}

@@ -302,9 +302,13 @@ def _validate_formulas(conn) -> None:
         if text is None:
             continue
         if t not in formulas.RESULT_TYPES:
-            fail("FIELD_INVALID", "计算字段的结果类型必须是小数或百分比",
+            fail("FIELD_INVALID", "计算字段的结果类型必须是整数、小数或百分比",
                  user_message="计算字段的结果类型不受支持",
                  user_hint="请在另一台设备上重新设置该计算字段的结果类型")
+        if t == "int" and scale != 0:
+            fail("FIELD_INVALID", "整数计算字段的显示位数必须为 0",
+                 user_message="整数计算字段的小数位不正确",
+                 user_hint="请在另一台设备上重新保存该计算字段的结果格式")
         try:
             row["formula"] = formulas.tokens_of(text)
             parsed[uid] = formulas.parse(row["formula"])

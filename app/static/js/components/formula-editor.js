@@ -9,8 +9,10 @@ const FormulaEditor = (() => {
   const esc = UI.esc;
   const SYMBOLS = [["+", "+"], ["-", "−"], ["*", "×"], ["/", "÷"], ["(", "("], [")", ")"]];
   const SYMBOL_TEXT = { "+": "+", "-": "−", "*": "×", "/": "÷", "(": "(", ")": ")" };
-  const SYSTEM = [["qty", "库存数量"], ["spu_id", "SPU ID"]];
+  const SYSTEM = [["qty", "库存数量"]];
   const NUMBER_RE = /^-?\d+(\.\d+)?$/;
+  // 数字常量输入的默认提示：示例写在输入框下方，不用 placeholder 承载（placeholder 会随输入消失）
+  const NUMBER_HINT = "只接受普通十进制整数或小数，例如 12、-3.5。";
 
   // 可引用字段：数值型自定义字段（int/decimal/percent）与其它计算字段；
   // 编辑自身时排除自己，直接自引用由后端循环检测拦下
@@ -53,10 +55,10 @@ const FormulaEditor = (() => {
           </div>
           <div class="fx-pane-title" style="margin-top:.6rem">数字常量</div>
           <div class="fx-num">
-            <input data-fx-number placeholder="如 12 或 -3.5" autocomplete="off">
+            <input data-fx-number autocomplete="off">
             <button type="button" class="btn-outline btn-sm" data-fx-addnum>加入数字</button>
           </div>
-          <div class="hint" data-fx-numhint>只接受普通十进制整数或小数</div>
+          <div class="hint" data-fx-numhint>${NUMBER_HINT}</div>
         </div>
       </div>
       <div class="fx-actions">
@@ -91,7 +93,7 @@ const FormulaEditor = (() => {
         ` title="删除「${esc(labelOf(t))}」" aria-label="删除此项">×</button></span>`).join("");
     }
     function add(token) {
-      numHint.textContent = "只接受普通十进制整数或小数";
+      numHint.textContent = NUMBER_HINT;
       numHint.classList.remove("fx-warn");
       state.push(token);
       renderPreview();

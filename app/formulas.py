@@ -9,7 +9,9 @@
 
 数值语义：普通字段的编码值先按 fieldtypes.logical_exp 还原成数学值（百分比 25% → 0.25），
 全部运算用 Decimal、局部精度 50 位；中间结果不按显示位数取舍，只有输出当前字段时才
-按 ROUND_HALF_UP 收敛。本模块不导入 service 包，避免 services 之间产生循环导入。
+按 ROUND_HALF_UP 收敛。整数字段在输出边界量化为零位小数，该取整结果同时用于显示、
+JSON 数值与下游引用；小数/百分比字段供下游引用的仍是未按显示位数取舍的结果。
+本模块不导入 service 包，避免 services 之间产生循环导入。
 """
 import json
 import re
@@ -29,9 +31,10 @@ MAX_SCALE = 6
 NUMBER_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 
 # 可引用的系统字段白名单：库内 ID 恰为整数不代表它可参与数学运算
-SYSTEM_KEYS = {"qty": "库存数量", "spu_id": "SPU ID"}
-# 计算字段的结果类型（写入 custom_fields.type 的值）
-RESULT_TYPES = ("decimal", "percent")
+# 只列库存数量：SPU ID 是编号而非可运算的数量，不参与数学计算（外层 ID 系统字段照常保留）
+SYSTEM_KEYS = {"qty": "库存数量"}
+# 计算字段的结果类型（写入 custom_fields.type 的值）：整数按四舍五入取整，供下游引用取整后的值
+RESULT_TYPES = ("int", "decimal", "percent")
 
 SYMBOL_TEXT = {"+": "+", "-": "−", "*": "×", "/": "÷", "(": "(", ")": ")"}
 TYPE_NAMES = {"string": "文本", "bool": "开关", "int": "整数",
@@ -439,14 +442,28 @@ def _quantize(value: Decimal, scale: int) -> Decimal:
         return value.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP)
 
 
+def _normalize(field: dict, value: Decimal) -> Decimal:
+    """供下游引用与显示共用的规范值：整数字段量化为零位小数（四舍五入，-0 归一为 0），
+    小数/百分比字段保持原结果——引用精度不被本字段的显示位数影响。"""
+    if field["type"] != "int":
+        return value
+    rounded = _quantize(value, 0)
+    return Decimal(0) if rounded.is_zero() else rounded
+
+
 def display_text(field: dict, value: Decimal) -> str:
-    """当前字段的输出文本：小数按显示位数取值，百分比乘以 100 并带 % 号"""
+    """当前字段的输出文本：小数按显示位数取值，整数字段用取整结果，百分比乘以 100 并带 % 号"""
+    if field["type"] == "int":
+        return format(value, "f")
     shown = _quantize(value * 100 if field["type"] == "percent" else value, field["scale"])
     return format(shown, "f") + ("%" if field["type"] == "percent" else "")
 
 
-def display_number(field: dict, value: Decimal) -> float:
-    """values 里回给客户端的显示数值（与手填数值同一语义：百分比 25 表示 25%）"""
+def display_number(field: dict, value: Decimal) -> int | float:
+    """values 里回给客户端的显示数值（与手填数值同一语义：百分比 25 表示 25%）；
+    整数字段返回 Python int（JSON 中为整数）。"""
+    if field["type"] == "int":
+        return int(value)
     number = value * 100 if field["type"] == "percent" else value
     return float(_quantize(number, field["scale"]))
 
@@ -531,11 +548,12 @@ class Engine:
         return result
 
     def _output(self, field, result):
-        """结果 → 显示文本与显示数值。量化与浮点转换都在这层出错边界内：
-        两者都可能抛出 DecimalException（如结果位数超出上下文精度），
-        若不拦住，一个字段就能让整个 SKU 列表/详情查询失败。"""
+        """结果 → (供下游引用与显示共用的规范值, 显示文本, 显示数值)。
+        量化与浮点转换都在这层出错边界内：两者都可能抛出 DecimalException
+        （如结果位数超出上下文精度），若不拦住，一个字段就能让整个 SKU 列表/详情查询失败。"""
         try:
-            return display_text(field, result), display_number(field, result)
+            normalized = _normalize(field, result)
+            return normalized, display_text(field, normalized), display_number(field, normalized)
         except (DecimalException, ArithmeticError, OverflowError, ValueError):
             raise CellError("FORMULA_RANGE",
                             f"字段「{field['name']}」的计算结果无法按显示位数输出",
@@ -544,7 +562,7 @@ class Engine:
                             user_hint="结果数值过大或位数过多，请缩小公式的取值范围")
 
     def compute(self, context):
-        """context: {"qty": int, "spu_id": int, "stored": {字段 uid: 编码值}}
+        """context: {"qty": int, "stored": {字段 uid: 编码值}}
 
         返回 (计算字段的显示数值 {字段名: 数值或 None}, calculations {字段名: {display, error}})。
         失败只记为该单元格错误，不影响同批其它 SKU 与其它字段。
@@ -559,19 +577,20 @@ class Engine:
                     continue
                 values[field["uid"]] = Decimal(raw).scaleb(-fieldtypes.logical_exp(
                     field["type"], field["scale"]))
-            systems = {"qty": Decimal(context["qty"]), "spu_id": Decimal(context["spu_id"])}
+            systems = {"qty": Decimal(context["qty"])}
             out_values, calculations = {}, {}
             for uid in self.order:
                 field = self.by_uid[uid]
                 try:
                     result = self._evaluate(self.parsed[uid], values, errors, systems, field)
-                    shown, number = self._output(field, result)
+                    value, shown, number = self._output(field, result)
                 except CellError as exc:
                     errors[uid] = exc.payload
                     out_values[field["name"]] = None
                     calculations[field["name"]] = {"display": None, "error": exc.payload}
                     continue
-                values[uid] = result          # 下游用内部高精度结果，不按显示位数取舍
+                # 下游用规范值：整数已取整，小数/百分比保留内部高精度结果
+                values[uid] = value
                 out_values[field["name"]] = number
                 calculations[field["name"]] = {"display": shown, "error": None}
             return out_values, calculations
