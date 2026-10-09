@@ -87,7 +87,7 @@ async function loadFields() {
       if (b.dataset.act === "rename") b.addEventListener("click", () => renameFlow(f));
       if (b.dataset.act === "convert") b.addEventListener("click", () => convertFlow(f));
       if (b.dataset.act === "formula") b.addEventListener("click", () => formulaFlow(f));
-      if (b.dataset.act === "del") b.addEventListener("click", () => deleteFlow(f));
+      if (b.dataset.act === "del") b.addEventListener("click", () => { void deleteFlow(f); });
     });
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="8" class="t-empty">加载失败：${UI.esc(e.message)}</td></tr>`;
@@ -107,18 +107,14 @@ async function renameFlow(f) {
   } catch (e) { UI.apiFail(e, "改名失败"); }
 }
 
-async function deleteFlow(f) {
-  const confirmed = await UI.confirmDialog({
+function deleteFlow(f) {
+  return DeleteFlow.run({
     title: `删除字段「${f.name}」`,
     bodyHtml: `<p>将删除该字段（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">级联清空所有单品的该字段值</b>，操作不可恢复。</p>`,
-    confirmText: "确认删除", danger: true,
+    path: `/fields/${f.id}?confirm=true`,
+    okText: (res) => `字段「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个字段值`,
+    onDone: loadFields,
   });
-  if (!confirmed) return;
-  try {
-    const res = await XM.del(`/fields/${f.id}?confirm=true`);
-    UI.ok(`字段「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个字段值`);
-    loadFields();
-  } catch (e) { UI.apiFail(e, "删除失败"); }
 }
 
 // ---------- 计算字段：公式编辑器小窗（新建与编辑共用） ----------

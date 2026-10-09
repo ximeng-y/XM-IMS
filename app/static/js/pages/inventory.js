@@ -168,6 +168,44 @@ function openCreateItemForSpu(spuId) {
   });
 }
 
+// 按对外标识 n-m 找单品。搜索筛选只改变展示的 SKU，删除目标仍以完整数据为准，
+// 避免「筛选状态下删错行」；个人规模（单页 ≤200 个 SKU）线性查找足够。
+function findItem(itemRef) {
+  return overviewRows.flatMap((r) => r.items).find((it) => it.id === itemRef) || null;
+}
+
+// 删除单品：与单品页同一口径，仅从未产生过流水的 SKU 可删
+function deleteItemFlow(item) {
+  return DeleteFlow.run({
+    title: `删除单品 ${item.id}`,
+    bodyHtml: `<p>将删除单品 <b>${UI.esc(item.spu_name)}-${UI.esc(item.name)}</b>` +
+              `（当前库存 ${item.qty}）及其全部自定义字段值，<b style="color:var(--danger)">操作不可恢复</b>。</p>` +
+              `<p class="hint">已有库存流水的单品不能删除：流水是不可变账本，` +
+              `录错请用反向操作或盘点调整修正。</p>`,
+    path: `/items/${encodeURIComponent(item.id)}?confirm=true`,
+    okText: (res) => `单品 ${res.item}「${res.name}」已删除` +
+                     (res.deleted_values ? `，连带清除 ${res.deleted_values} 个字段值` : ""),
+    onDone: loadOverview,
+  });
+}
+
+// 删除 SPU：其下还有单品时后端会拒绝，这里先按已知的 sku_count 给出提示
+function deleteSpuFlow(spu) {
+  return DeleteFlow.run({
+    precheck: () => {
+      if (spu.sku_count === 0) return true;
+      UI.fail(`SPU「${spu.name}」下还有 ${spu.sku_count} 个单品，不能删除`,
+              { title: "无法删除", hint: "请先删除该 SPU 下的全部单品（仅从未产生过流水的单品可删除）" });
+      return false;
+    },
+    title: `删除 SPU「${spu.name}」`,
+    bodyHtml: `<p>该 SPU 下没有任何单品，删除后<b style="color:var(--danger)">不可恢复</b>。</p>`,
+    path: `/spus/${spu.id}?confirm=true`,
+    okText: (res) => `SPU「${res.name}」已删除`,
+    onDone: loadOverview,
+  });
+}
+
 function bindContextMenu() {
   $("#spuRows").addEventListener("contextmenu", (e) => {
     const sku = e.target.closest("tr.sku-sub-row[data-item]");
@@ -178,6 +216,12 @@ function bindContextMenu() {
         { label: "盘点调整", onClick: () => OpsForm.open("adjust", { itemRef: sku.dataset.item, onDone: () => loadOverview() }) },
         { label: "新建同 SPU 单品",
           onClick: () => openCreateItemForSpu(Number(sku.dataset.spu)) },
+        { label: "删除", danger: true,
+          onClick: () => {
+            const it = findItem(sku.dataset.item);
+            if (it) void deleteItemFlow(it);
+            else UI.fail("该单品可能已被删除，请刷新页面后重试");
+          } },
       ]);
       return;
     }
@@ -186,6 +230,12 @@ function bindContextMenu() {
       ContextMenu.open(e, [
         { label: "在此 SPU 下新建单品",
           onClick: () => openCreateItemForSpu(Number(spu.dataset.spu)) },
+        { label: "删除", danger: true,
+          onClick: () => {
+            const s = spusList.find((x) => x.id === Number(spu.dataset.spu));
+            if (s) void deleteSpuFlow(s);
+            else UI.fail("该 SPU 可能已被删除，请刷新页面后重试");
+          } },
       ]);
     }
   });
