@@ -34,8 +34,19 @@ const UI = (() => {
   const fmtVal = (v) => v === null || v === undefined || v === "" ? "—" : esc(v);
 
   // ---------- toast ----------
+  // 整体迁移 #toasts，保留固定右下角定位、间距和已有提示的消失计时。
+  // modal 按实际打开顺序入栈；关闭最上层后回到下一层，全部关闭才回到页面。
+  const toastBox = $("#toasts");
+  let toastDialogs = [];
+  function toastHost() {
+    toastDialogs = toastDialogs.filter((dlg) => dlg.isConnected && dlg.matches(":modal"));
+    const host = toastDialogs.at(-1) || document.body;
+    if (toastBox.parentNode !== host) host.appendChild(toastBox);
+    return toastBox;
+  }
+
   function toast(message, { title = "", hint = "", error = false, ms = 4200 } = {}) {
-    const box = $("#toasts");
+    const box = toastHost();
     const t = document.createElement("div");
     t.className = "toast" + (error ? " error" : "");
     t.innerHTML =
@@ -86,6 +97,24 @@ const UI = (() => {
     const foot = document.createElement("div");
     foot.className = "dlg-foot";
     dlg.append(head, body, foot);
+    // 只包装本工厂创建的实例，不改全局原型或页面调用方式。
+    const showModal = dlg.showModal, close = dlg.close;
+    dlg.showModal = function (...args) {
+      const wasModal = dlg.matches(":modal");
+      const result = showModal.apply(dlg, args);
+      if (!wasModal && dlg.matches(":modal")) {
+        toastDialogs.push(dlg);
+        toastHost();
+      }
+      return result;
+    };
+    dlg.close = function (...args) {
+      const result = close.apply(dlg, args);
+      toastHost();
+      return result;
+    };
+    // Esc、原生表单关闭也会触发；先于调用方的 close 监听迁移，避免 remove() 丢提示。
+    dlg.addEventListener("close", toastHost);
     document.body.appendChild(dlg);
     return { dlg, body, foot };
   }

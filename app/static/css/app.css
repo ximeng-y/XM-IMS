@@ -379,7 +379,9 @@ dialog::backdrop {
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
 }
-dialog[open] { animation: fadeIn .18s ease; }
+/* 弹窗不能用 transform 入场，否则固定定位的 #toasts 会改以弹窗为参照并被裁剪。 */
+dialog[open] { animation: modalIn .18s ease; }
+@keyframes modalIn { from { opacity: 0; } to { opacity: 1; } }
 dialog .dlg-body { padding: 1.25rem 1.5rem; }
 dialog .dlg-head {
   padding: .8rem 1.5rem;
