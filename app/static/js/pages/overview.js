@@ -22,6 +22,11 @@ window.PAGE_INIT = async function () {
     tbody.innerHTML = `<tr><td colspan="7" class="t-empty">还没有流水，去「库存」页记一笔</td></tr>`;
     return;
   }
+  // 文本列单元格：固定列宽下长内容被省略号截断，title 让悬停可看全文；空值不挂 title
+  const textCell = (v) => {
+    const s = v === null || v === undefined ? "" : String(v).trim();
+    return s ? `<td title="${UI.esc(s)}">${UI.esc(v)}</td>` : `<td class="muted">—</td>`;
+  };
   const typeBadge = { in: `<span class="badge green">入库</span>`,
                       out: `<span class="badge red">出库</span>`,
                       adjust: `<span class="badge gray">盘点</span>` };
@@ -32,7 +37,7 @@ window.PAGE_INIT = async function () {
       <td>${typeBadge[m.type] || `<span class="muted">未知类型</span>`}</td>
       <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
       <td class="num">${UI.fmtMoney(m.unit_price)}</td>
-      <td>${UI.fmtVal(m.supplier || m.channel)}</td>
-      <td>${UI.fmtVal(m.note)}</td>
+      <td>${textCell(m.supplier || m.channel)}</td>
+      <td>${textCell(m.note)}</td>
     </tr>`).join("");
 };

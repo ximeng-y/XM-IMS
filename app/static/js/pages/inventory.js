@@ -90,7 +90,7 @@ function renderOverview() {
   // 表头随本店自定义字段一起重建；列顺序 = 展开 / ID / 名称 / SKU 数 / 合计库存 / 自定义字段… / 更新时间
   // 取值口径与单品页一致：计算字段取后端计算结果，普通字段取手填值
   $("#spuHead").innerHTML =
-    `<tr><th style="width:2.5rem"></th><th class="num">ID</th><th>名称</th>` +
+    `<tr><th></th><th class="num">ID</th><th>名称</th>` +
     `<th class="num">SKU 数</th><th class="num">合计库存</th>` +
     fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("") +
     `<th>更新时间</th></tr>`;
@@ -112,7 +112,7 @@ function renderOverview() {
     let row = `<tr class="spu-row" data-spu="${spu.id}">
       <td class="tri-cell">${tri}</td>
       <td class="num mono">${spu.id}</td>
-      <td>${UI.esc(spu.name)}</td>
+      <td title="${UI.esc(spu.name)}">${UI.esc(spu.name)}</td>
       <td class="num">${spu.sku_count}</td>
       <td class="num">${spu.sku_count > 0 ? total : "—"}</td>
       ${fieldsMeta.map(() => `<td class="muted">—</td>`).join("")}
@@ -144,7 +144,7 @@ function skuGroupHtml(spu, shown, colCount) {
   return items.map((it) => `<tr class="sku-sub-row" data-item="${UI.esc(it.id)}" data-item-name="${UI.esc(it.name)}" data-spu="${spu.id}">
     <td></td>
     <td class="num mono">${UI.esc(it.id)}</td>
-    <td>${UI.esc(it.name)}</td>
+    <td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>
     <td class="muted">—</td>
     <td class="num">${it.qty}</td>
     ${extraCells(it)}

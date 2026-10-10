@@ -12,7 +12,7 @@ async function loadSpus() {
     tbody.innerHTML = data.spus.map((s) => `
       <tr class="spu-row" data-spu="${s.id}">
         <td class="num mono" data-cell-text>${s.id}</td>
-        <td data-cell-text>${UI.esc(s.name)}</td>
+        <td data-cell-text title="${UI.esc(s.name)}">${UI.esc(s.name)}</td>
         <td class="num" data-cell-text>${s.sku_count}</td>
         <td class="muted" data-cell-text>${UI.fmtTime(s.updated_at)}</td>
         <td class="row-actions">

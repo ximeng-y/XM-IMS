@@ -52,20 +52,23 @@ function renderTable(data) {
   const extraHead = fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("");
   $("#itemHead").innerHTML =
     `<tr><th class="num">ID</th><th>名称</th><th>SPU</th><th class="num">库存</th>` +
-    extraHead + `<th style="width:9rem">操作</th></tr>`;
+    extraHead + `<th>操作</th></tr>`;
   if (!data.items.length) {
     tbody.innerHTML = `<tr><td colspan="${5 + fieldsMeta.length}" class="t-empty">没有符合条件的单品</td></tr>`;
     return;
   }
   tbody.innerHTML = data.items.map((it, idx) => {
     // 计算字段与普通字段同列展示：普通字段取手填值，计算字段取后端算出的结果文本/错误
-    const extra = fieldsMeta.map((f) => `<td>${
-      ItemForm.isComputed(f) ? ItemForm.calcHtml(it.calculations?.[f.name])
-                             : UI.fmtVal(it.values[f.name])}</td>`).join("");
+    // 普通字段值加 title：固定列宽下长字符串被省略号截断，悬停可看全文（计算字段的结果
+    // 与错误提示由 ItemForm.calcHtml 自带，这里不重复挂 title）
+    const extra = fieldsMeta.map((f) => ItemForm.isComputed(f)
+      ? `<td>${ItemForm.calcHtml(it.calculations?.[f.name])}</td>`
+      : `<td title="${UI.esc(it.values[f.name] ?? "")}">${UI.fmtVal(it.values[f.name])}</td>`
+    ).join("");
     return `<tr>
       <td class="num mono">${UI.esc(it.id)}</td>
-      <td>${UI.esc(it.name)}</td>
-      <td>${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
+      <td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>
+      <td title="${UI.esc(it.spu_name)}">${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
       <td class="num">${it.qty}</td>
       ${extra}
       <td class="row-actions">

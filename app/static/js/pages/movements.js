@@ -8,6 +8,13 @@ const TYPE_BADGE = { in: `<span class="badge green">入库</span>`,
                      out: `<span class="badge red">出库</span>`,
                      adjust: `<span class="badge gray">盘点</span>` };
 
+// 文本列单元格：固定列宽下长内容被省略号截断，title 让悬停可看全文。
+// 空值仍按 UI.fmtVal 显示占位符，但此时不挂 title，避免空悬停框。
+function textCell(v) {
+  const s = v === null || v === undefined ? "" : String(v).trim();
+  return s ? `<td title="${UI.esc(s)}">${UI.esc(v)}</td>` : `<td class="muted">—</td>`;
+}
+
 async function loadMovements() {
   const tbody = $("#movRows");
   const params = new URLSearchParams({ offset: String(movOffset), limit: String(MOV_LIMIT) });
@@ -28,12 +35,12 @@ async function loadMovements() {
           <td>${TYPE_BADGE[m.type] || `<span class="muted">未知类型</span>`}</td>
           <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
           <td class="num">${UI.fmtMoney(m.unit_price)}</td>
-          <td>${UI.fmtVal(m.batch_no)}</td>
-          <td>${UI.fmtVal(m.supplier)}</td>
-          <td>${UI.fmtVal(m.channel)}</td>
-          <td>${UI.fmtVal(m.customer)}</td>
+          ${textCell(m.batch_no)}
+          ${textCell(m.supplier)}
+          ${textCell(m.channel)}
+          ${textCell(m.customer)}
           <td class="num">${m.target_qty ?? "—"}</td>
-          <td>${UI.fmtVal(m.note)}</td>
+          ${textCell(m.note)}
           <td class="muted mono">${UI.esc(m.actor)}</td>
         </tr>`).join("");
     }
