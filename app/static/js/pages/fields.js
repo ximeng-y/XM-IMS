@@ -129,7 +129,7 @@ function formulaDialog({ field = null, initialName = "", onSaved }) {
   const wrap = document.createElement("div");
   wrap.className = "dlg-form dlg-form-wide dlg-form-formula";
   wrap.innerHTML = `
-    <div class="form-grid" style="grid-template-columns:1fr 1fr">
+    <div class="form-grid">
       <div>
         <label>字段名称 <span class="fieldreq">*</span></label>
         <input data-fx-name maxlength="50" value="${UI.esc(field ? field.name : initialName)}"
