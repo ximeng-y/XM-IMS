@@ -56,8 +56,8 @@ async function loadFields() {
         return `<tr>
           <td><span class="badge fill">系统</span></td>
           <td class="muted mono">—</td>
-          <td>${UI.esc(f.name)}</td>
-          <td>${TYPE_LABEL[f.type] || UI.esc(f.type)}</td>
+          <td title="${UI.esc(f.name)}">${UI.esc(f.name)}</td>
+          <td title="${UI.esc(TYPE_LABEL[f.type] || f.type)}">${TYPE_LABEL[f.type] || UI.esc(f.type)}</td>
           <td class="muted">—</td>
           <td class="muted">—</td><td class="num muted">—</td>
           <td class="muted">只读</td>
@@ -74,9 +74,11 @@ async function loadFields() {
       return `<tr>
         <td><span class="badge">${f.computed ? "计算" : "自定义"}</span></td>
         <td class="num mono">${f.id}</td>
-        <td>${UI.esc(f.name)}</td>
-        <td>${typeText(f)}</td>
-        <td class="fx-cell">${f.computed ? UI.esc(formulaText(f)) : `<span class="muted">—</span>`}</td>
+        <td title="${UI.esc(f.name)}">${UI.esc(f.name)}</td>
+        <td title="${UI.esc(typeText(f))}">${typeText(f)}</td>
+        ${f.computed
+          ? `<td class="fx-cell" title="${UI.esc(formulaText(f))}">${UI.esc(formulaText(f))}</td>`
+          : `<td class="fx-cell"><span class="muted">—</span></td>`}
         <td>${f.allow_negative ? "是" : "否"}</td>
         <td class="num">${f.computed ? f.scale : (f.type === "decimal" ? f.scale : "—")}</td>
         <td>${actions}</td>

@@ -206,8 +206,34 @@ main.content.fade-in { animation: fadeIn .25s ease; }
 
 /* ---------- 表格 ---------- */
 .table-scroll { overflow-x: auto; }
-.table-scroll table { min-width: 38.75rem; }
+/* 列宽与内容宽度解耦（issue #56）：auto 布局下列宽由该列最宽的单元格决定，
+   库存页展开 SKU 后子行带出更宽的内容（数字、错误徽标），表头会随之跳位。
+   这里改为按表头给出的宽度分配，展开、搜索、翻页、数据变化都不再改变列宽。
+   单元格内容溢出由下方规则裁剪，不会反过来撑开列。
+   min-width 取表格目前在满宽窗口下的渲染宽度，直接由容器链路算出：
+   main.content 的 73.75rem 上限 − 其左右内边距 1.75rem×2 − .panel 左右内边距 1.25rem×2
+   − .panel 左右边框，再留 2px 余量避免亚像素误差带来常驻滚动条。
+   窗口够宽时表格就是现在这个宽度，列宽与现状一致；容器窄于此值才由 .table-scroll
+   横向滚动，列宽不再被压缩（issue #56 的要求）。
+   注意 rem 随根字号缩放（当前根字号 90%，1rem = 14.4px），与 .content 的上限同源，
+   故本式在缩放后依然对齐。 */
+.table-scroll table {
+  min-width: calc(73.75rem - 3.5rem - 2.5rem - 2px);
+  table-layout: fixed;
+}
 table { width: 100%; font-size: .9rem; margin: 0; }
+/* 单元格内容压缩展示：溢出裁剪 + 悬停看全文（title 由各页脚本按需给出）。
+   表格自带宽度的列（如 spus/items/fields 操作列）不受影响。
+   弹窗结果框里的 .mini-table 不在 .table-scroll 内，不会被裁剪。
+   空态行 .t-empty 的提示文案允许换行铺满整行，不参与裁剪。 */
+.table-scroll th, .table-scroll td:not(.t-empty) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 公式列本就靠 overflow-wrap:anywhere 折行（见「数学计算字段」一节），不能被上面的
+   nowrap 覆盖成单行，否则长公式会被裁掉；它自带 max-width 与任意断行，不会撑宽表格。 */
+.table-scroll td.fx-cell { white-space: normal; }
 thead th {
   background: var(--blue-pale);
   color: var(--blue-dark);
@@ -644,7 +670,18 @@ dialog:has(> .dlg-body > .dlg-form) { width: 26rem; }
 dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 
 /* ---------- 库存总览（SPU 分组 + 可展开 SKU 子行） ---------- */
-.tri-cell { width: 2.5rem; }
+/* 列宽规范（issue #56）：fixed 布局下列宽只认表头行的宽度，与是否展开、单元格内容
+   长短无关。固定列在这里定死，名称列与各自定义字段列不给宽度 —— fixed 布局会把
+   扣掉固定列后的余量在它们之间平分，因此字段列是几个都成立，无需按字段数写样式。
+   余量平分让这几列随容器等比例收缩，不会出现某一列被内容挤没的情况。
+   固定列在这里一次写完（列宽只认表头行，故不另给 .tri-cell 写宽度）。 */
+/* 展开三角：3.5rem 才容得下 .tri-btn 的左右内边距加字形，2.5rem 会裁掉它右缘 */
+#inventoryScroll th:nth-child(1) { width: 3.5rem; }
+#inventoryScroll th:nth-child(2) { width: 5rem; }     /* ID */
+#inventoryScroll th:nth-child(4) { width: 5rem; }     /* SKU 数 */
+#inventoryScroll th:nth-child(5) { width: 7rem; }     /* 合计库存 */
+#inventoryScroll th:last-child { width: 12rem; }      /* 更新时间 */
+
 .tri-btn {
   background: none;
   border: 0;
@@ -702,6 +739,42 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 
 /* 有附属 SKU 的 SPU 行整行可点击展开/收起（见 inventory.js 的点击委托） */
 tr.spu-row:has(.tri-btn) { cursor: pointer; }
+
+/* ---------- 各列表页固定列宽（issue #56） ----------
+   与库存页同一口径：只给需要稳定的列定宽，名称、备注一类文本列不给宽度，
+   由 fixed 布局平分余量。窄容器下不再压缩，改为横向滚动（阈值见 .table-scroll table）。
+   页面用 body[data-page] 区分（见 base.html 的 data-page 块），限定在 .table-scroll 内，
+   以免命中弹窗结果框里的 .mini-table。
+   数值选的是各列内容宽度加内边距后的一个区间，不求穷尽最长值：定宽列里内容短、
+   不会换行，略宽一点即够，真正长的取值走 title 悬停展示。 */
+/* SPU 管理页：ID 5 + 名称(余) + SKU 数 5 + 更新时间 12 + 操作 9 */
+body[data-page="spus"] .table-scroll th:nth-child(1) { width: 5rem; }
+body[data-page="spus"] .table-scroll th:nth-child(3) { width: 5rem; }
+body[data-page="spus"] .table-scroll th:nth-child(4) { width: 12rem; }
+body[data-page="spus"] .table-scroll th:nth-child(5) { width: 9rem; }
+/* 单品页：ID 5 + 名称(余) + SPU 14 + 库存 6 + 自定义字段(余) + 操作 9 */
+body[data-page="items"] .table-scroll th:nth-child(1) { width: 5rem; }
+body[data-page="items"] .table-scroll th:nth-child(3) { width: 14rem; }
+body[data-page="items"] .table-scroll th:nth-child(4) { width: 6rem; }
+body[data-page="items"] .table-scroll th:last-child { width: 9rem; }
+/* 流水页有 13 列，容器宽度不够让每列都宽裕。这里只给放不下等份的「时间」定宽
+   （完整时间戳约 11rem），其余 12 列平分余量，避免给一堆数值列定宽后把批次、供应商、
+   渠道、客户这几列的余量挤到只剩两三个字。 */
+body[data-page="movements"] .table-scroll th:nth-child(2) { width: 11rem; }
+/* 字段页：标记 5 + ID 4 + 名称(余) + 类型 14 + 公式(余) + 允许负数 6 + 小数位 6 + 操作 15
+   类型列要容下最长取值（如「小数（2 位），允许负数」，12 个全角字符） */
+body[data-page="fields"] .table-scroll th:nth-child(1) { width: 5rem; }
+body[data-page="fields"] .table-scroll th:nth-child(2) { width: 4rem; }
+body[data-page="fields"] .table-scroll th:nth-child(4) { width: 14rem; }
+body[data-page="fields"] .table-scroll th:nth-child(6) { width: 6rem; }
+body[data-page="fields"] .table-scroll th:nth-child(7) { width: 6rem; }
+body[data-page="fields"] .table-scroll th:nth-child(8) { width: 15rem; }
+/* 概览页最近流水：只锁数值与时间 */
+body[data-page="overview"] .table-scroll th:nth-child(1) { width: 5rem; }
+body[data-page="overview"] .table-scroll th:nth-child(2) { width: 12rem; }
+body[data-page="overview"] .table-scroll th:nth-child(3) { width: 5rem; }
+body[data-page="overview"] .table-scroll th:nth-child(4) { width: 6rem; }
+body[data-page="overview"] .table-scroll th:nth-child(5) { width: 6rem; }
 
 /* ---------- 库存页：限高滚动容器（issue #54） ----------
    #inventoryScroll 的 max-height 由 inventory.js 按视口与上方实际占位实时算出并写成内联样式：

@@ -52,20 +52,29 @@ function renderTable(data) {
   const extraHead = fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("");
   $("#itemHead").innerHTML =
     `<tr><th class="num">ID</th><th>名称</th><th>SPU</th><th class="num">库存</th>` +
-    extraHead + `<th style="width:9rem">操作</th></tr>`;
+    extraHead + `<th>操作</th></tr>`;
   if (!data.items.length) {
     tbody.innerHTML = `<tr><td colspan="${5 + fieldsMeta.length}" class="t-empty">没有符合条件的单品</td></tr>`;
     return;
   }
   tbody.innerHTML = data.items.map((it, idx) => {
     // 计算字段与普通字段同列展示：普通字段取手填值，计算字段取后端算出的结果文本/错误
-    const extra = fieldsMeta.map((f) => `<td>${
-      ItemForm.isComputed(f) ? ItemForm.calcHtml(it.calculations?.[f.name])
-                             : UI.fmtVal(it.values[f.name])}</td>`).join("");
+    // 普通字段值与计算成功的结果都挂 title：固定列宽下长字符串、长金额会被省略号截断，
+    // 悬停需能看全文。出错时的徽标自带 title（写明原因），不受这里影响，故不重复挂。
+    const extra = fieldsMeta.map((f) => {
+      if (ItemForm.isComputed(f)) {
+        const calc = it.calculations?.[f.name];
+        const full = calc && !calc.error ? calc.display : "";
+        return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${ItemForm.calcHtml(calc)}</td>`;
+      }
+      const v = it.values[f.name];
+      const s = v === null || v === undefined || v === "" ? "" : String(v);
+      return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
+    }).join("");
     return `<tr>
       <td class="num mono">${UI.esc(it.id)}</td>
-      <td>${UI.esc(it.name)}</td>
-      <td>${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
+      <td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>
+      <td title="${UI.esc(it.spu_name)} #${it.spu_id}">${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
       <td class="num">${it.qty}</td>
       ${extra}
       <td class="row-actions">

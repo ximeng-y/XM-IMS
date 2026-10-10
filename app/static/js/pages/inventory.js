@@ -90,7 +90,7 @@ function renderOverview() {
   // 表头随本店自定义字段一起重建；列顺序 = 展开 / ID / 名称 / SKU 数 / 合计库存 / 自定义字段… / 更新时间
   // 取值口径与单品页一致：计算字段取后端计算结果，普通字段取手填值
   $("#spuHead").innerHTML =
-    `<tr><th style="width:2.5rem"></th><th class="num">ID</th><th>名称</th>` +
+    `<tr><th></th><th class="num">ID</th><th>名称</th>` +
     `<th class="num">SKU 数</th><th class="num">合计库存</th>` +
     fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("") +
     `<th>更新时间</th></tr>`;
@@ -112,7 +112,7 @@ function renderOverview() {
     let row = `<tr class="spu-row" data-spu="${spu.id}">
       <td class="tri-cell">${tri}</td>
       <td class="num mono">${spu.id}</td>
-      <td>${UI.esc(spu.name)}</td>
+      <td title="${UI.esc(spu.name)}">${UI.esc(spu.name)}</td>
       <td class="num">${spu.sku_count}</td>
       <td class="num">${spu.sku_count > 0 ? total : "—"}</td>
       ${fieldsMeta.map(() => `<td class="muted">—</td>`).join("")}
@@ -137,14 +137,23 @@ function skuGroupHtml(spu, shown, colCount) {
   if (!items.length) {
     return emptyRow($("#fltQ").value.trim() ? "该 SPU 下没有匹配的 SKU" : "该 SPU 下还没有 SKU");
   }
-  const extraCells = (it) => fieldsMeta.map((f) => `<td>${
-    ItemForm.isComputed(f) ? ItemForm.calcHtml(it.calculations?.[f.name])
-                           : UI.fmtVal(it.values[f.name])}</td>`).join("");
+  // 普通字段与计算字段都挂 title：固定列宽下长值与长金额会被省略号截断，悬停需能看全文。
+  // 出错时的徽标自带 title（写明原因），悬停徽标显示的是它，不受这里的 title 影响。
+  const extraCells = (it) => fieldsMeta.map((f) => {
+    if (ItemForm.isComputed(f)) {
+      const calc = it.calculations?.[f.name];
+      const full = calc && !calc.error ? calc.display : "";
+      return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${ItemForm.calcHtml(calc)}</td>`;
+    }
+    const v = it.values[f.name];
+    const s = v === null || v === undefined || v === "" ? "" : String(v);
+    return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
+  }).join("");
   // data-item / data-item-name / data-spu 供右键菜单与后续操作识别目标 SKU
   return items.map((it) => `<tr class="sku-sub-row" data-item="${UI.esc(it.id)}" data-item-name="${UI.esc(it.name)}" data-spu="${spu.id}">
     <td></td>
     <td class="num mono">${UI.esc(it.id)}</td>
-    <td>${UI.esc(it.name)}</td>
+    <td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>
     <td class="muted">—</td>
     <td class="num">${it.qty}</td>
     ${extraCells(it)}
