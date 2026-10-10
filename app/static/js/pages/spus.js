@@ -11,10 +11,10 @@ async function loadSpus() {
     }
     tbody.innerHTML = data.spus.map((s) => `
       <tr class="spu-row" data-spu="${s.id}">
-        <td class="num mono" data-cell-text>${s.id}</td>
-        <td data-cell-text title="${UI.esc(s.name)}">${UI.esc(s.name)}</td>
-        <td class="num" data-cell-text>${s.sku_count}</td>
-        <td class="muted" data-cell-text>${UI.fmtTime(s.updated_at)}</td>
+        <td class="num mono">${s.id}</td>
+        <td title="${UI.esc(s.name)}">${UI.esc(s.name)}</td>
+        <td class="num">${s.sku_count}</td>
+        <td class="muted">${UI.fmtTime(s.updated_at)}</td>
         <td class="row-actions">
           <button type="button" class="btn-outline btn-sm" data-rename="${s.id}" data-name="${UI.esc(s.name)}">改名</button>
           <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${s.id}" data-name="${UI.esc(s.name)}" data-count="${s.sku_count}">删除</button>
@@ -67,12 +67,15 @@ function deleteFlow(ev) {
 window.PAGE_INIT = async function () {
   if (!UI.requireShop()) return;
 
-  // 双击行内空白（非文字、非按钮链接）跳到库存页并展开该 SPU：用文字区域上的
-  // data-cell-text 把「空白」与「有内容」分开，不改动单击行为，也不清用户已有选区
+  // 双击行内任意非控件区域（含单元格内文字与文字旁的空白）跳到库存页并展开该 SPU。
+  // 判据与库存页行点击一致：只排除控件，不排除文字——文字由双击选中的选区自行处理，
+  // 拖选文字后松手不跳转，也不清用户已有选区
   $("#spuRows").addEventListener("dblclick", (e) => {
     const row = e.target.closest("tr.spu-row[data-spu]");
     if (!row) return;
-    if (e.target.closest("[data-cell-text], button, a, input, select, textarea, label")) return;
+    if (e.target.closest("button, a, input, select, textarea, label")) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
     location.href = `/inventory?spu_id=${row.dataset.spu}`;
   });
 

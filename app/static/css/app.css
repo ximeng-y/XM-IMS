@@ -399,9 +399,14 @@ input:focus, select:focus, textarea:focus {
 /* ---------- 模态 ---------- */
 /* Pico 默认把 dialog 自身当成全屏遮罩（border:0 + 整屏毛玻璃），内容须包在
    <article> 里；本项目弹窗由 ui.js 直接生成 .dlg-* 结构，dialog 自身即卡片。
-   故还原为常规居中卡片：1px 边框 + 白底，遮罩与轻微背景模糊交给 ::backdrop */
+   故还原为常规居中卡片：1px 边框 + 白底，遮罩与轻微背景模糊交给 ::backdrop。
+   同时复位 Pico 给 dialog 设的对齐属性：display:block 时它们不生效，但个别弹窗
+   会改回 display:flex 做纵向三段布局，届时残留的 align-items:center 会让
+   .dlg-head/.dlg-body/.dlg-foot 各自缩成内容宽并居中，标题条与底栏都不再横跨整卡 */
 dialog {
   display: block;
+  align-items: stretch;
+  justify-content: normal;
   position: fixed;
   inset: 0;
   margin: auto;
@@ -487,25 +492,55 @@ dialog .dlg-foot {
 
 /* 公式编辑器（字段页新建／编辑公式小窗）：预览行在上，字段与运算符面板并排在下，
    窄窗口时自动堆叠。样式只作用于本组件，不改动全局 dialog 宽度 */
-/* 公式编辑器专用弹窗：正方形（宽高同尺寸），受视口约束，中间正文区滚动，
-   标题与底部操作区始终可见。样式只作用于本弹窗，其他弹窗宽度不变。
+/* 公式编辑器专用弹窗：横向矩形——结果格式三列与两栏公式面板都吃宽度，高度只需容下
+   面板与操作行，故比高度更应向宽度放宽。受视口约束，标题与底部操作区始终可见，
+   中间正文区滚动。样式只作用于本弹窗，其他弹窗宽度不变。
    选择器带上 :has(.dlg-form-wide)：其特异性高于下方通用宽表单弹窗的定宽规则，
    否则会被那条规则改写成 32rem */
 dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) {
-  width: min(60rem, calc(100vw - 2rem));
-  height: min(60rem, calc(100vh - 2rem));
+  width: min(64rem, calc(100vw - 2rem));
+  height: min(42rem, calc(100vh - 2rem));
   /* 纵向三段布局：头部与底部固定，正文吃剩余高度并自行滚动 */
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-head,
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-head { flex: 0 0 auto; }
+/* 底栏贴住右下角（按钮右对齐由全局 .dlg-foot 规则给出） */
 dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-foot { flex: 0 0 auto; }
 dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* 正文纵向排列，好让公式编辑区吃掉剩余高度 */
+  display: flex;
+  flex-direction: column;
 }
+/* 表单按内容高度撑开：窗口变矮时由 .dlg-body 滚动兜底，不压缩内部控件 */
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body > .dlg-form {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+/* 编辑区之外的各项保持自身高度，只有编辑区参与伸缩 */
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body > .dlg-form > *:not([data-fx-editor]) {
+  flex: 0 0 auto;
+}
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) [data-fx-editor] {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+/* 编辑区吃掉让出的高度：预览在上、面板占中段并随高度铺开、清空按钮留在底部。
+   各级都不设 min-height:0，让 flex 的 min-content 下限兜住内容，
+   窄窗口下面板堆叠成单列时不会把按钮挤出去 */
+.dlg-formula .fx-editor { flex: 1 1 auto; display: flex; flex-direction: column; }
+/* 预览行与操作行按内容高度固定，只有面板吃掉多出来的高度 */
+.dlg-formula .fx-editor > .fx-preview,
+.dlg-formula .fx-editor > .fx-actions { flex: 0 0 auto; }
+.dlg-formula .fx-palette { flex: 1 1 auto; }
+/* 结果格式区铺满宽弹窗：三格等宽（小数位格在整数类型下收起，其余两格留在原位） */
+.dlg-form-formula .form-grid { grid-template-columns: repeat(3, 1fr); }
 
 .fx-editor { border: 1px solid var(--line-light); background: #fff; padding: .8rem .9rem; }
 .fx-pane-title { font-size: .78rem; color: var(--ink-soft); margin-bottom: .35rem; }
