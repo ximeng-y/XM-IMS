@@ -76,7 +76,9 @@ async function loadFields() {
         <td class="num mono">${f.id}</td>
         <td title="${UI.esc(f.name)}">${UI.esc(f.name)}</td>
         <td title="${UI.esc(typeText(f))}">${typeText(f)}</td>
-        <td class="fx-cell" title="${f.computed ? UI.esc(formulaText(f)) : ""}">${f.computed ? UI.esc(formulaText(f)) : `<span class="muted">—</span>`}</td>
+        ${f.computed
+          ? `<td class="fx-cell" title="${UI.esc(formulaText(f))}">${UI.esc(formulaText(f))}</td>`
+          : `<td class="fx-cell"><span class="muted">—</span></td>`}
         <td>${f.allow_negative ? "是" : "否"}</td>
         <td class="num">${f.computed ? f.scale : (f.type === "decimal" ? f.scale : "—")}</td>
         <td>${actions}</td>

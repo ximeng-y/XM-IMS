@@ -41,7 +41,7 @@ async function loadMovements() {
           ${textCell(m.customer)}
           <td class="num">${m.target_qty ?? "—"}</td>
           ${textCell(m.note)}
-          <td class="muted mono">${UI.esc(m.actor)}</td>
+          <td class="muted mono" title="${UI.esc(m.actor)}">${UI.esc(m.actor)}</td>
         </tr>`).join("");
     }
     UI.renderPager("#movPager", { offset: movOffset, limit: MOV_LIMIT, total: data.total },

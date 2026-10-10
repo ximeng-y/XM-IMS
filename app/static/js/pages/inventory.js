@@ -137,9 +137,18 @@ function skuGroupHtml(spu, shown, colCount) {
   if (!items.length) {
     return emptyRow($("#fltQ").value.trim() ? "该 SPU 下没有匹配的 SKU" : "该 SPU 下还没有 SKU");
   }
-  const extraCells = (it) => fieldsMeta.map((f) => `<td>${
-    ItemForm.isComputed(f) ? ItemForm.calcHtml(it.calculations?.[f.name])
-                           : UI.fmtVal(it.values[f.name])}</td>`).join("");
+  // 普通字段与计算字段都挂 title：固定列宽下长值与长金额会被省略号截断，悬停需能看全文。
+  // 出错时的徽标自带 title（写明原因），悬停徽标显示的是它，不受这里的 title 影响。
+  const extraCells = (it) => fieldsMeta.map((f) => {
+    if (ItemForm.isComputed(f)) {
+      const calc = it.calculations?.[f.name];
+      const full = calc && !calc.error ? calc.display : "";
+      return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${ItemForm.calcHtml(calc)}</td>`;
+    }
+    const v = it.values[f.name];
+    const s = v === null || v === undefined || v === "" ? "" : String(v);
+    return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
+  }).join("");
   // data-item / data-item-name / data-spu 供右键菜单与后续操作识别目标 SKU
   return items.map((it) => `<tr class="sku-sub-row" data-item="${UI.esc(it.id)}" data-item-name="${UI.esc(it.name)}" data-spu="${spu.id}">
     <td></td>

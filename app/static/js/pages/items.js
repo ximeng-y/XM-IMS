@@ -59,16 +59,22 @@ function renderTable(data) {
   }
   tbody.innerHTML = data.items.map((it, idx) => {
     // 计算字段与普通字段同列展示：普通字段取手填值，计算字段取后端算出的结果文本/错误
-    // 普通字段值加 title：固定列宽下长字符串被省略号截断，悬停可看全文（计算字段的结果
-    // 与错误提示由 ItemForm.calcHtml 自带，这里不重复挂 title）
-    const extra = fieldsMeta.map((f) => ItemForm.isComputed(f)
-      ? `<td>${ItemForm.calcHtml(it.calculations?.[f.name])}</td>`
-      : `<td title="${UI.esc(it.values[f.name] ?? "")}">${UI.fmtVal(it.values[f.name])}</td>`
-    ).join("");
+    // 普通字段值与计算成功的结果都挂 title：固定列宽下长字符串、长金额会被省略号截断，
+    // 悬停需能看全文。出错时的徽标自带 title（写明原因），不受这里影响，故不重复挂。
+    const extra = fieldsMeta.map((f) => {
+      if (ItemForm.isComputed(f)) {
+        const calc = it.calculations?.[f.name];
+        const full = calc && !calc.error ? calc.display : "";
+        return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${ItemForm.calcHtml(calc)}</td>`;
+      }
+      const v = it.values[f.name];
+      const s = v === null || v === undefined || v === "" ? "" : String(v);
+      return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
+    }).join("");
     return `<tr>
       <td class="num mono">${UI.esc(it.id)}</td>
       <td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>
-      <td title="${UI.esc(it.spu_name)}">${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
+      <td title="${UI.esc(it.spu_name)} #${it.spu_id}">${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
       <td class="num">${it.qty}</td>
       ${extra}
       <td class="row-actions">

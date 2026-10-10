@@ -37,7 +37,7 @@ window.PAGE_INIT = async function () {
       <td>${typeBadge[m.type] || `<span class="muted">未知类型</span>`}</td>
       <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
       <td class="num">${UI.fmtMoney(m.unit_price)}</td>
-      <td>${textCell(m.supplier || m.channel)}</td>
-      <td>${textCell(m.note)}</td>
+      ${textCell(m.supplier || m.channel)}
+      ${textCell(m.note)}
     </tr>`).join("");
 };
