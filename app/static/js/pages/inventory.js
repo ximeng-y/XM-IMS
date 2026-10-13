@@ -606,11 +606,11 @@ function installTailWatch() {
   });
 }
 
-// 目标行位于最大可视区域上半区时不滚动；下半区则即时定位到中线
-function centerSpuRow(spuId) {
+// 任意库存行（SPU 行或 SKU 子行）位于最大可视区域上半区时不滚动；下半区则即时定位到中线
+// 返回目标行是否存在并完成了定位判定（已在半区上半时也算完成，只是不滚动）
+function centerRow(row) {
   const scroller = $("#inventoryScroll");
-  const row = scroller && scroller.querySelector(`tr.spu-row[data-spu="${spuId}"]`);
-  if (!row) return;
+  if (!scroller || !row || !scroller.contains(row)) return false;
   // 基准取容器实际可视内容高度（clientHeight 已扣掉横向滚动条厚度），
   // 不用短表当前自然高度的一半，也不用「限高 − 滚动条」反推
   const viewH = Math.max(MIN_SCROLL_H, scroller.clientHeight);
@@ -618,7 +618,7 @@ function centerSpuRow(spuId) {
   const rRect = row.getBoundingClientRect();
   const rowCenter = rRect.top - scRect.top + scroller.scrollTop + rRect.height / 2;
   const targetCenter = viewH / 2;
-  if (rowCenter <= targetCenter) return;          // 已在上半区，不滚动
+  if (rowCenter <= targetCenter) return true;     // 已在上半区，不滚动
   const desired = rowCenter - targetCenter;
   const naturalMax = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
   // 自然内容不够长时临时补足尾部高度，保证目标能严格到达中线
@@ -626,9 +626,26 @@ function centerSpuRow(spuId) {
   scroller.scrollTop = desired;                   // 只动容器，不联动页面与横向滚动
   tailAnchor = scroller.scrollTop;
   lastScrollTop = scroller.scrollTop;
+  return true;
 }
 
-// ---------- 页面跳转定位（?spu_id=） ----------
+function centerSpuRow(spuId) {
+  const scroller = $("#inventoryScroll");
+  const row = scroller && scroller.querySelector(`tr.spu-row[data-spu="${spuId}"]`);
+  return row ? centerRow(row) : false;
+}
+
+// SKU 子行按公开编号（形如 n-m）精确比对行上的 data-item，不做选择器拼接也不按名称模糊匹配；
+// 找不到即返回 false，由调用方提示，绝不退而定位到别的行
+function centerSkuRow(itemId) {
+  const scroller = $("#inventoryScroll");
+  if (!scroller || !itemId) return false;
+  const row = [...scroller.querySelectorAll("tr.sku-sub-row[data-item]")]
+    .find((tr) => tr.dataset.item === itemId);
+  return row ? centerRow(row) : false;
+}
+
+// ---------- 页面跳转定位（?spu_id= / ?item_id=） ----------
 // 消费掉该参数，保留其他参数与 hash，避免随后切店刷新时错误复用目标
 function consumeSpuJumpParam() {
   const url = new URL(location.href);
@@ -649,6 +666,43 @@ async function initSpuJump(spuId) {
     if (loadErrors.has(spuId)) return;            // 失败就留在该组的错误状态，不伪装成完成
   }
   centerSpuRow(spuId);
+}
+
+// 单品页双击 SKU 行跳来：参数同样一次性消费，保留其他参数与 hash
+function consumeItemJumpParam() {
+  const url = new URL(location.href);
+  const raw = url.searchParams.get("item_id");
+  if (raw === null) return null;
+  url.searchParams.delete("item_id");
+  history.replaceState(null, "", url.pathname + url.search + url.hash);
+  return raw.trim() || null;
+}
+
+// 编号与 SPU 归属以详情接口为准（行上的 data-item 可能与用户手填的参数写法不同），
+// 不按名称匹配，也绝不定位到别的 SKU
+async function initItemJump(itemId) {
+  let item;
+  try {
+    item = await XM.get(`/items/${encodeURIComponent(itemId)}`);
+  } catch (e) {
+    UI.apiFail(e, "定位单品失败");
+    return;
+  }
+  const skuId = item && item.id ? String(item.id) : "";
+  const spuId = item ? Number(item.spu_id) : NaN;
+  if (!skuId || !(spuId > 0)) {
+    UI.fail(`找不到单品 ${itemId}，可能已被删除`);
+    return;
+  }
+  if (!spusList.some((s) => s.id === spuId)) {
+    UI.fail(`单品 ${skuId} 所属的 SPU 不存在，可能已被删除`);
+    return;
+  }
+  setExpanded(spuId, true);
+  renderOverview();
+  await ensureSkus([spuId]);                      // 等该 SPU 的全部 SKU 明细取回
+  if (loadErrors.has(spuId)) return;              // 沿用组内加载失败与重试状态，不伪装成空结果
+  if (!centerSkuRow(skuId)) UI.fail(`单品 ${skuId} 在库存列表中找不到，可能已被删除`);
 }
 
 // ---------- 页面初始化 ----------
@@ -674,9 +728,11 @@ window.PAGE_INIT = async function () {
   bindOpsBar();
   bindContextMenu();
   setInterval(sweepExpired, 60 * 1000);           // 到期实际清理，不等下次点击
-  const jumpId = consumeSpuJumpParam();
+  const jumpSpuId = consumeSpuJumpParam();
+  const jumpItemId = consumeItemJumpParam();      // 两个参数同时出现时以 item_id 为准
   await loadOverview();
-  if (jumpId) await initSpuJump(jumpId);
+  if (jumpItemId) await initItemJump(jumpItemId);
+  else if (jumpSpuId) await initSpuJump(jumpSpuId);
   // 概览页快捷入口带 ?op=xxx 跳来：进页后直接弹出对应小窗（定位在先，操作在后）
   const op = new URLSearchParams(location.search).get("op");
   if (op && OP_ACTIONS[op]) OP_ACTIONS[op]();
