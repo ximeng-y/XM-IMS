@@ -71,7 +71,8 @@ function renderTable(data) {
       const s = v === null || v === undefined || v === "" ? "" : String(v);
       return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
     }).join("");
-    return `<tr>
+    // item-row + data-item：供双击跳转库存页定位目标单品（issue #62）
+    return `<tr class="item-row" data-item="${UI.esc(it.id)}">
       <td class="num mono">${UI.esc(it.id)}</td>
       <td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>
       <td title="${UI.esc(it.spu_name)} #${it.spu_id}">${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
@@ -143,5 +144,18 @@ window.PAGE_INIT = async function () {
     if (e.key === "Enter") { offset = 0; loadItems(); }
   });
   $("#fltSpu").addEventListener("change", () => { offset = 0; loadItems(); });
+
+  // 双击行内任意非控件区域（含单元格内文字与文字旁的空白）跳到库存页并定位该单品（issue #62）。
+  // 判据与 SPU 页、库存页行点击一致：只排除控件，不排除文字——文字由双击选中的选区自行处理，
+  // 拖选文字后松手不跳转，也不清用户已有选区；委托绑在 tbody 上，分页重渲染后无需重绑
+  $("#itemRows").addEventListener("dblclick", (e) => {
+    const row = e.target.closest("tr.item-row[data-item]");
+    if (!row) return;
+    if (e.target.closest("button, a, input, select, textarea, label")) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    location.href = `/inventory?item_id=${encodeURIComponent(row.dataset.item)}`;
+  });
+
   loadItems();
 };
