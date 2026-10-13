@@ -284,12 +284,18 @@ const UI = (() => {
   }
 
   // ---------- 单品下拉选项（库存操作 / 流水筛选共用） ----------
-  // 单品标识形如 1-2（SPU 号-组内序号），直接作为选项值与展示文本
+  // 展示用「SPU 名-SKU 名（库存 n）」，便于一眼看出单品归属哪个 SPU；
+  // 选项值仍是外部标识（形如 1-2，SPU 号-组内序号），提交给接口的编号不受影响。
+  // 补选项等其余拼装路径一律调这里，避免同一份下拉出现两种文案。
+  function itemOptionLabel(i) {
+    return `${i.spu_name}-${i.name}（库存 ${i.qty}）`;
+  }
+
   async function fillItemOptions(select, { allLabel = null } = {}) {
     const data = await XM.get("/items?limit=200");
     let html = allLabel ? `<option value="">${esc(allLabel)}</option>` : "";
     html += data.items.map((i) =>
-      `<option value="${esc(i.id)}">${esc(i.id)} ${esc(i.name)}（库存 ${i.qty}）</option>`).join("");
+      `<option value="${esc(i.id)}">${esc(itemOptionLabel(i))}</option>`).join("");
     select.innerHTML = html || `<option value="">（该店铺还没有单品）</option>`;
     return data.items;
   }
@@ -458,6 +464,7 @@ const UI = (() => {
     $, $$, esc, fmtTime, fmtTimeShort, fmtDelta, fmtMoney, fmtVal,
     toast, ok, fail, apiFail, apiFailHtml, warnHtml, okHtml, withBusy, codeTitle,
     baseDialog, promptDialog, confirmDialog, mkBtn, resultBox, renderPager, fillItemOptions,
+    itemOptionLabel,
     requireShop: () => XM.state.shopId !== null,
   };
 })();
