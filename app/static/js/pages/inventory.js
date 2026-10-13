@@ -519,6 +519,18 @@ function docTop(el) {
 }
 
 // 容器最大可视高度 = 视口高度 − 容器上沿文档位置 − 外层面板下内边距与下边框 − 页面下方既有留白
+//   − 表格下方横向滑动提示的占位（窄屏显示时才有，隐藏时为 0）
+// 提示节点由 ui.js 插在滚动容器之后，高度只在窄屏且表格横向溢出时非零
+function hintHeight() {
+  const scroller = $("#inventoryScroll");
+  const hint = scroller && scroller.nextElementSibling;
+  if (!hint || !hint.classList.contains("table-scroll-hint")) return 0;
+  const h = hint.getBoundingClientRect().height;   // display:none 时为 0
+  if (!h) return 0;
+  const cs = getComputedStyle(hint);
+  return h + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+}
+
 function computeScrollMax() {
   const scroller = $("#inventoryScroll"), panel = $("#inventoryPanel");
   if (!scroller || !panel) return 0;
@@ -527,7 +539,7 @@ function computeScrollMax() {
   const main = $("main.content");
   const bottomGap = (main ? (parseFloat(getComputedStyle(main).paddingBottom) || 0) : 0) +
                     (parseFloat(getComputedStyle(document.body).marginBottom) || 0);
-  const avail = window.innerHeight - docTop(scroller) - panelBottom - bottomGap;
+  const avail = window.innerHeight - docTop(scroller) - panelBottom - bottomGap - hintHeight();
   return Math.max(MIN_SCROLL_H, Math.floor(avail));
 }
 
@@ -538,10 +550,14 @@ function applyScrollMax() {
 }
 
 // 观察上方各块的实际占位变化（操作区换行、侧栏与标题高度变化）
+// 以及表格下方提示的出现/消失（窄屏断点切换会改变其占位）
 function installScrollSizing() {
   applyScrollMax();
   const ro = new ResizeObserver(() => applyScrollMax());
   $$(".topbar, .sidenav, .page-head, .ops-bar").forEach((el) => ro.observe(el));
+  const scroll = $("#inventoryScroll");
+  const hint = scroll && scroll.nextElementSibling;
+  if (hint && hint.classList.contains("table-scroll-hint")) ro.observe(hint);
   window.addEventListener("resize", () => { clearTail(); applyScrollMax(); });
 }
 
