@@ -5,10 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}概览{% endblock %} · XM-IMS</title>
   <link rel="stylesheet" href="/static/vendor/pico.min.css?v=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=31">
+  <link rel="stylesheet" href="/static/css/app.css?v=33">
 </head>
 <body data-page="{% block nav %}{% endblock %}">
 <header class="topbar">
+  <button type="button" id="navToggle" class="nav-toggle"
+          aria-controls="primaryNav" aria-expanded="false" aria-label="打开导航菜单">
+    <span class="nav-toggle-bars" aria-hidden="true"></span>
+  </button>
   <a class="brand" href="/"><span class="logo">X</span>XM-IMS</a>
   <div class="spacer"></div>
   <a id="syncStatus" class="sync-status" href="/sync">检查同步状态</a>
@@ -18,8 +22,9 @@
     <button id="btnNewShop" type="button" class="btn-outline btn-sm">＋ 新建店铺</button>
   </div>
 </header>
+<div id="navBackdrop" hidden></div>
 <div class="layout">
-  <nav class="sidenav">
+  <nav class="sidenav" id="primaryNav">
     <a href="/" data-nav="overview">概览</a>
     <a href="/inventory" data-nav="inventory">库存</a>
     <a href="/items" data-nav="items">单品</a>
@@ -38,7 +43,7 @@
 <div id="toasts"></div>
 <script src="/static/js/api.js?v=3"></script>
 <script src="/static/js/sync-common.js?v=4"></script>
-<script src="/static/js/ui.js?v=11"></script>
+<script src="/static/js/ui.js?v=13"></script>
 <script src="/static/js/components/context-menu.js?v=2"></script>
 <script src="/static/js/components/delete-flow.js?v=1"></script>
 <script src="/static/js/update.js?v=3"></script>

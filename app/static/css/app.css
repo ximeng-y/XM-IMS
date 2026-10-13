@@ -129,6 +129,56 @@ body {
 .topbar button { white-space: nowrap; }
 .topbar .shop-box label { white-space: nowrap; margin: 0; }
 
+/* 窄屏菜单按钮：三道杠用 CSS 绘制（::before/::after 各一杠），打开时交叉成 ×。
+   桌面端不显示，只作为窄屏导航浮层的开关 */
+.nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.6rem;
+  height: 2.6rem;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--blue);
+  cursor: pointer;
+}
+.nav-toggle:hover { background: var(--blue-pale); }
+.nav-toggle-bars {
+  display: block;
+  position: relative;
+  width: 1.1rem;
+  height: 2px;
+  background: currentColor;
+  transition: background-color .15s ease;
+}
+.nav-toggle-bars::before, .nav-toggle-bars::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: currentColor;
+  transition: transform .15s ease;
+}
+.nav-toggle-bars::before { top: -5px; }
+.nav-toggle-bars::after { top: 5px; }
+body.nav-open .nav-toggle-bars { background: transparent; }
+body.nav-open .nav-toggle-bars::before { transform: translateY(5px) rotate(45deg); }
+body.nav-open .nav-toggle-bars::after { transform: translateY(-5px) rotate(-45deg); }
+
+/* 菜单浮层的遮罩：跟随顶栏高度定位，仅窄屏且菜单打开时显示 */
+#navBackdrop {
+  display: none;
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  top: var(--mobile-topbar-height, 3.5rem);
+  background: rgba(28, 39, 51, .18);
+  z-index: 18;
+}
+
 .layout {
   display: flex;
   align-items: flex-start;
@@ -483,6 +533,9 @@ dialog .dlg-foot {
 .stat-card .v { font-size: 1.6rem; font-weight: 700; color: var(--blue-dark);
   font-variant-numeric: tabular-nums; margin-top: .15rem; }
 
+/* 概览快捷入口：桌面端换行排列，窄屏改两列/单列（见下方媒体查询） */
+.quick-actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+
 /* 转换报告里的样例表 */
 .mini-table { font-size: .82rem; }
 .mini-table td, .mini-table th { padding: .3rem .55rem; }
@@ -712,14 +765,139 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 #spuRows .sku-sub-row:last-child > td { border-bottom-color: var(--line-deep) !important; }
 
 @media (max-width: 860px) {
-  /* 纵向堆叠时恢复拉伸，让横向导航条与内容区撑满宽度 */
-  .layout { flex-direction: column; align-items: stretch; }
-  /* 窄屏改横向导航，撤销桌面端的固定侧栏设定 */
-  .sidenav { width: auto; flex-direction: row; flex-wrap: wrap; border-right: none;
-             border-bottom: 1px solid var(--line);
-             position: static; top: auto; height: auto; overflow-y: visible; }
-  .sidenav a { border-left: none; border-bottom: 3px solid transparent; }
-  .sidenav a.active { border-bottom-color: var(--blue); }
+  /* 纵向堆叠：导航改为顶栏浮层，正文撑满宽度 */
+  .layout {
+    flex-direction: column;
+    align-items: stretch;
+    /* 顶栏在两行布局下比桌面端高，基准随之改成实测顶栏高度 */
+    min-height: calc(100vh - var(--mobile-topbar-height, 3.5rem));
+  }
+  /* 顶栏改两行：第一行菜单按钮 + 品牌 + 同步状态，第二行店铺操作。
+     高度由内容决定，实际值写入 --mobile-topbar-height 供浮层与遮罩定位 */
+  .topbar {
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: .4rem;
+    height: auto;
+    min-height: 3.5rem;
+    padding: .5rem 1rem;
+    column-gap: .6rem;
+  }
+  /* 菜单按钮在品牌之前，且不被压缩；保证点按高度 */
+  .nav-toggle { display: inline-flex; order: -1; min-width: 44px; min-height: 44px; }
+  /* 品牌完整显示不换行，且不被挤压 */
+  .topbar .brand { order: 0; flex: 0 0 auto; }
+  .topbar .spacer { display: none; }
+  /* 同步状态允许换行，完整文案不截断 */
+  .topbar .sync-status {
+    order: 1; margin-left: auto;
+    flex: 0 1 auto; min-width: 0;
+    white-space: normal; text-align: right;
+  }
+  /* 店铺操作独占第二行；选择框吃掉该行剩余宽度 */
+  .topbar .shop-box { order: 2; flex: 1 1 100%; min-width: 0; gap: .4rem; }
+  .topbar .shop-box select { flex: 1 1 auto; min-width: 0; max-width: none; }
+
+  /* 导航改为顶栏下方的浮层，打开时覆盖正文，不参与正文占位 */
+  .sidenav {
+    display: none;
+    position: fixed;
+    left: 0; right: 0;
+    top: var(--mobile-topbar-height, 3.5rem);
+    z-index: 19;
+    width: auto;
+    height: auto;
+    max-height: calc(100vh - var(--mobile-topbar-height, 3.5rem));
+    overflow-y: auto;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    padding: .5rem .75rem;
+    background: #fff;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .08);
+  }
+  /* 普通情形用 body.nav-open 控制 */
+  body.nav-open .sidenav { display: flex; }
+  .sidenav a { border-left: 3px solid transparent; border-bottom: none; }
+  .sidenav a.active { border-left-color: var(--blue); }
+
+  /* 主内容铺满可用宽度：解除上限与自动边距（交叉轴自动边距会阻止拉伸），
+     并撤销纵向伸展，改用自然内容高度 */
+  main.content {
+    flex: none;
+    align-self: stretch;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 1rem 1rem 2rem;
+  }
+  /* 遮罩仅在菜单打开时显示；正文与顶栏的隔离由 JS 用 inert 完成，
+     指针与键盘一并挡住，故这里不再重复设 pointer-events */
+  body.nav-open #navBackdrop { display: block; }
+  body.nav-open { overflow: hidden; }
+
+  /* 分页允许换行，统计文字与翻页按钮完整显示 */
+  .pager { flex-wrap: wrap; justify-content: flex-start; }
+  /* 页面级操作按钮保证点按高度 */
+  .page-head button, .pager button, .ops-bar button { min-height: 44px; }
+
+  /* 表格：横向与纵向都在组件内滚动，最大高度取视口的一部分，短表自然收缩。
+     库存页除外——#inventoryScroll 的限高由脚本按视口与上方实际占位算出 */
+  .table-scroll:not(#inventoryScroll) { overflow: auto; max-height: max(160px, 60dvh); }
+  /* 表头在自身滚动区域内吸顶 */
+  .table-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+}
+
+/* 横向滑动提示：窄屏且表格确实溢出时才显示（显示与否由 ui.js 控制） */
+.table-scroll-hint {
+  display: none;
+  font-size: .78rem;
+  color: var(--ink-soft);
+  margin-top: .4rem;
+}
+.table-scroll-hint.show { display: block; }
+
+@media (max-width: 600px) {
+  .panel { padding: .9rem; }
+
+  /* 概览统计卡片：两列等宽，轨道允许收缩，长数值不撑大卡片 */
+  .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-card { min-width: 0; padding: .75rem .85rem; }
+  .stat-card .v { font-size: 1.35rem; overflow-wrap: anywhere; }
+  /* 概览快捷入口：两列等宽按钮 */
+  .quick-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-actions > * { width: 100%; }
+
+  /* 所有表单网格改单列：!important 用于压过组件内的行内双列定义
+     （如编辑单品小窗的 grid-template-columns:1fr 1fr） */
+  .form-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .form-grid > * { min-width: 0; }
+  /* 页面说明文与普通长文本允许换行 */
+  .page-head .sub, .hint { overflow-wrap: anywhere; }
+
+  /* 库存页操作区：按钮继续换行，搜索独占一行并撤销桌面端的自适应留白 */
+  .ops-search { flex: 1 1 100%; min-width: 0; max-width: none; margin-left: 0; }
+
+  /* 弹窗底栏按钮允许换行，弹窗滚动方式不变 */
+  dialog .dlg-foot { flex-wrap: wrap; }
+  /* 提示框不超过视口宽度 */
+  #toasts { max-width: calc(100vw - 2rem); }
+  #toasts .toast { overflow-wrap: anywhere; }
+
+  /* 同步冲突对照改单列，顺序不变。选择器带上 .sync-page 是为了压过
+     其后定义的 @media(max-width:75rem) 两列规则 */
+  .sync-page .conflict-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 359px) {
+  /* 极窄屏：概览卡片与快捷入口都改单列 */
+  .stat-cards { grid-template-columns: minmax(0, 1fr); }
+  .quick-actions { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* 数据同步与三方冲突处理 */
