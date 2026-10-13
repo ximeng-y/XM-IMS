@@ -317,7 +317,9 @@ input:focus, select:focus, textarea:focus {
   font-size: .88rem; color: var(--ink);
   padding-bottom: .55rem;
 }
-.form-check input[type="checkbox"] { width: auto; margin: 0; }
+/* Pico 原生 checkbox 是 1.25em 正方形；width:auto 会让 checkbox 退回浏览器默认
+   小尺寸（约 13px 宽）导致显窄，这里固定为与 Pico 一致的方形，并防止行内被压 */
+.form-check input[type="checkbox"] { width: 1.25em; height: 1.25em; margin: 0; flex-shrink: 0; }
 .hint { font-size: .78rem; color: var(--ink-soft); margin-top: .25rem; }
 .fieldreq { color: var(--danger); }
 
