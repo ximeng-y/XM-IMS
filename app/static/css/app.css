@@ -832,11 +832,10 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
     margin: 0;
     padding: 1rem 1rem 2rem;
   }
-  /* 遮罩仅在菜单打开时显示；打开期间正文与顶栏（除菜单按钮外）不可交互 */
+  /* 遮罩仅在菜单打开时显示；正文与顶栏的隔离由 JS 用 inert 完成，
+     指针与键盘一并挡住，故这里不再重复设 pointer-events */
   body.nav-open #navBackdrop { display: block; }
   body.nav-open { overflow: hidden; }
-  body.nav-open main.content,
-  body.nav-open .topbar > *:not(#navToggle) { pointer-events: none; }
 
   /* 分页允许换行，统计文字与翻页按钮完整显示 */
   .pager { flex-wrap: wrap; justify-content: flex-start; }

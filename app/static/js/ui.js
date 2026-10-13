@@ -315,10 +315,20 @@ const UI = (() => {
 
   const navOpen = () => document.body.classList.contains("nav-open");
 
+  // 浮层期间的背景隔离：CSS 的 pointer-events 只挡指针命中，Tab / Shift+Tab
+  // 仍会走进被遮罩盖住的正文与顶栏控件（Enter 照常触发），故这里再给它们加 inert
+  function setNavInert(on) {
+    $$("main.content, .topbar > *:not(#navToggle)").forEach((el) => {
+      el.toggleAttribute("inert", on);
+    });
+  }
+
   // 关闭浮层：清标记、撤遮罩与滚动锁，焦点可选地回到菜单按钮
   function setNavClosed({ focusBtn = false } = {}) {
     const wasOpen = navOpen();
     document.body.classList.remove("nav-open");
+    // 先恢复交互再还原焦点：焦点不能落在 inert 元素内
+    setNavInert(false);
     const backdrop = $("#navBackdrop");
     if (backdrop) backdrop.hidden = true;
     const btn = $("#navToggle");
@@ -332,6 +342,7 @@ const UI = (() => {
     const nav = $("#primaryNav");
     if (!nav) return;
     document.body.classList.add("nav-open");
+    setNavInert(true);
     const backdrop = $("#navBackdrop");
     if (backdrop) backdrop.hidden = false;
     const btn = $("#navToggle");
