@@ -135,7 +135,7 @@ const OpsForm = (() => {
         return false;
       }
       itemsCache.push(it);
-      itemSel.append(new Option(`${it.id} ${it.name}（库存 ${it.qty}）`, it.id));
+      itemSel.append(new Option(UI.itemOptionLabel(it), it.id));
       return true;
     }
     const refreshPickers = async (selected) => {
