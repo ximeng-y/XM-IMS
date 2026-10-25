@@ -112,7 +112,7 @@ async function renameFlow(f) {
 function deleteFlow(f) {
   return DeleteFlow.run({
     title: `删除字段「${f.name}」`,
-    bodyHtml: `<p>将删除该字段（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">级联清空所有单品的该字段值</b>，操作不可恢复。</p>`,
+    bodyHtml: `<p>将删除该字段（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">一并清空所有单品的该字段值</b>，操作不可恢复。</p>`,
     path: `/fields/${f.id}?confirm=true`,
     okText: (res) => `字段「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个字段值`,
     onDone: loadFields,
