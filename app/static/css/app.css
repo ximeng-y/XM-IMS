@@ -972,3 +972,33 @@ body[data-page="overview"] .table-scroll th:nth-child(5) { width: 6rem; }
   top: 0;
   z-index: 2;
 }
+
+/* ---------- 备份配置向导（数据同步页，sync-onboarding.js） ----------
+   只作用域化到向导弹窗；复用既有 dialog 三段结构与按钮样式，长内容由弹窗内部滚动，
+   不改全站弹窗尺寸与响应式规则。底栏按钮可换行（窄屏规则已给出 flex-wrap）。 */
+dialog.sync-onboarding { width: 36rem; max-width: calc(100vw - 2rem); }
+.sync-onboarding .sync-onboarding-counter { font-size: .8rem; color: var(--ink-soft); }
+.sync-onboarding .sync-onboarding-steps { display: flex; flex-direction: column; gap: .6rem; }
+.sync-onboarding .sync-onboarding-note { font-size: .85rem; color: var(--ink-soft); margin: 0; }
+.sync-onboarding .sync-onboarding-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; align-items: end; }
+.sync-onboarding .sync-onboarding-options { display: flex; flex-direction: column; gap: .4rem; }
+.sync-onboarding .sync-onboarding-option {
+  display: flex; gap: .6rem; align-items: flex-start;
+  border: 1px solid var(--line-light); border-radius: .5rem; padding: .6rem .8rem; cursor: pointer;
+}
+.sync-onboarding .sync-onboarding-option:hover { border-color: var(--blue); }
+.sync-onboarding .sync-onboarding-option small { color: var(--ink-soft); display: block; overflow-wrap: anywhere; }
+.sync-onboarding .sync-onboarding-option input { width: auto; margin-top: .2rem; }
+.sync-onboarding .sync-onboarding-check { display: flex; gap: .5rem; align-items: center; }
+.sync-onboarding .sync-onboarding-check input { width: auto; }
+.sync-onboarding .sync-onboarding-ok {
+  border: 1px solid var(--line-light); border-radius: .5rem;
+  background: var(--blue-pale); color: var(--blue-dark); padding: .7rem .9rem;
+}
+.sync-onboarding .sync-onboarding-error {
+  border: 1px solid var(--danger); border-radius: .5rem;
+  background: #fdf0ef; padding: .7rem .9rem;
+}
+.sync-onboarding .sync-onboarding-error p { margin: .3rem 0 0; }
+.sync-onboarding .sync-onboarding-change { overflow-wrap: anywhere; font-size: .85rem; }
+.sync-onboarding .dlg-body { max-height: 60vh; overflow: auto; }

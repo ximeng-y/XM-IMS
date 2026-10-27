@@ -113,3 +113,44 @@ def details(request: Request, identity: str, conflict_id: str, offset: int = Que
 @router.get("/conflicts/{identity}/changes")
 def changes(request: Request, identity: str, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
     return manager(request).changes_page(identity, offset, limit)
+
+
+# ---------- 备份配置引导 ----------
+# 环境检测与候选检查只读、不占用同步任务锁；安装、显式登录与最终应用在后端互斥执行。
+
+@router.get("/onboarding/environment")
+def onboarding_environment(request: Request):
+    return manager(request).onboarding.environment()
+
+
+@router.post("/onboarding/install")
+def onboarding_install(request: Request, body: dict = Body(...)):
+    if body.get("confirm") is not True:
+        raise ApiError("CONFIRM_REQUIRED", "请确认要安装的组件", status=409,
+                       user_message="请先确认安装操作",
+                       user_hint="安装会从官方来源下载并运行安装包，需要明确确认")
+    return manager(request).onboarding.install(body.get("component"))
+
+
+@router.get("/onboarding/github")
+def onboarding_github(request: Request, account: str | None = Query(default=None)):
+    return manager(request).onboarding.github_status(account)
+
+
+@router.post("/onboarding/github/login")
+def onboarding_github_login(request: Request, body: dict = Body(...)):
+    if body.get("confirm") is not True:
+        raise ApiError("CONFIRM_REQUIRED", "请确认要进行的浏览器授权", status=409,
+                       user_message="请先确认登录操作",
+                       user_hint="登录会打开系统浏览器完成 GitHub 授权，需要明确确认")
+    return manager(request).onboarding.github_login(body.get("account"), body.get("force") is True)
+
+
+@router.post("/onboarding/check")
+def onboarding_check(request: Request, body: dict = Body(...)):
+    return manager(request).onboarding.check(body)
+
+
+@router.post("/onboarding/complete")
+def onboarding_complete(request: Request, body: dict = Body(...)):
+    return manager(request).onboarding.complete(body)
