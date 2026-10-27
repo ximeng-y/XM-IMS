@@ -5,15 +5,117 @@ import re
 import shutil
 import subprocess
 import tarfile
+import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 from .common import fail, remove_tree, replace_path
 
 
+# ---------- Git / GCM 定位 ----------
+# 进程继承的 PATH 可能不含新装组件；以实际执行 --version 成功为准定位，只补充子进程环境。
+
+# RLock：locate_gcm / gcm_path_dir 会在持锁状态下再进 locate_git，必须可重入。
+_locate_lock = threading.RLock()
+_git_exe = None        # 已验证可执行的 Git："git" 或绝对路径；None 表示尚未检出或不可用
+_gcm_prefix = None     # 已验证可用的 GCM 命令前缀（list）
+_gcm_path_dir = None   # 独立安装的 GCM 所在目录（需要补充进子进程 PATH 时使用）
+
+
+def _exe_works(argv, timeout=15):
+    try:
+        result = subprocess.run(argv, capture_output=True, timeout=timeout,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _git_in_dir(base):
+    for sub in ("cmd", "bin"):
+        exe = Path(base) / sub / ("git.exe" if os.name == "nt" else "git")
+        if exe.is_file():
+            yield str(exe)
+
+
+def _git_candidates():
+    yield "git"
+    if os.name != "nt":
+        return
+    import winreg
+    # Git for Windows 安装时写入的注册表信息（HKCU / HKLM，兼顾 32/64 位视图）
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (getattr(winreg, "KEY_WOW64_32KEY", 0), getattr(winreg, "KEY_WOW64_64KEY", 0)):
+            try:
+                with winreg.OpenKey(hive, r"Software\GitForWindows", 0, winreg.KEY_READ | view) as key:
+                    install, _ = winreg.QueryValueEx(key, "InstallPath")
+            except OSError:
+                continue
+            yield from _git_in_dir(install)
+    # 标准用户级 / 系统级安装位置；不遍历磁盘
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        yield from _git_in_dir(Path(local) / "Programs" / "Git")
+    yield from _git_in_dir(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git")
+
+
+def locate_git(refresh=False):
+    """定位可实际执行的 Git；组件安装后用 refresh=True 重新检测。"""
+    global _git_exe
+    with _locate_lock:
+        if refresh or _git_exe is None:
+            _git_exe = next((c for c in _git_candidates() if _exe_works([c, "--version"])), None)
+        return _git_exe
+
+
+def locate_gcm(refresh=False):
+    """GCM 命令前缀：优先 Git 自带（git credential-manager），其次用户级独立安装。"""
+    global _gcm_prefix, _gcm_path_dir
+    with _locate_lock:
+        if refresh or _gcm_prefix is None:
+            _gcm_prefix, _gcm_path_dir = None, None
+            git_exe = locate_git()
+            if git_exe and _exe_works([git_exe, "credential-manager", "--version"]):
+                _gcm_prefix = [git_exe, "credential-manager"]
+            elif os.name == "nt":
+                local = os.environ.get("LOCALAPPDATA")
+                if local:
+                    exe = Path(local) / "Programs" / "Git Credential Manager" / "git-credential-manager.exe"
+                    if exe.is_file() and _exe_works([str(exe), "--version"]):
+                        _gcm_prefix, _gcm_path_dir = [str(exe)], str(exe.parent)
+        return _gcm_prefix
+
+
+def gcm_path_dir():
+    """独立安装的 GCM 目录；git 调用凭据助手时需要它能出现在 PATH 中。"""
+    locate_gcm()
+    return _gcm_path_dir
+
+
+def git_env():
+    """子进程环境：补充定位到的 Git / GCM 目录到 PATH，并强制后台非交互。"""
+    env = os.environ.copy()
+    prepends = []
+    git_exe = locate_git()
+    if git_exe and git_exe != "git":
+        prepends.append(str(Path(git_exe).parent))
+    extra = gcm_path_dir()
+    if extra:
+        prepends.append(extra)
+    if prepends:
+        env["PATH"] = os.pathsep.join(prepends) + os.pathsep + env.get("PATH", "")
+    env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="Never",
+               GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes")
+    return env, git_exe
+
+
 class GitStore:
-    def __init__(self, root, remote, branch="main", device="本机", allow_file=False):
+    def __init__(self, root, remote, branch="main", device="本机", allow_file=False, github_account=""):
         self.root, self.remote, self.branch, self.device = Path(root), remote, branch, device
         self.allow_file = allow_file
+        self.validate_remote(remote, allow_file)
+        # 只对 GitHub HTTPS 远端附加账号提示；其他平台与 SSH 沿用系统凭证 / 密钥。
+        parts = urlsplit(remote)
+        self.github_user = str(github_account or "") if parts.scheme == "https" and parts.hostname == "github.com" else ""
         self.validate_remote(remote, allow_file)
         self.root.mkdir(parents=True, exist_ok=True)
         if not (self.root / ".git").exists():
@@ -50,12 +152,27 @@ class GitStore:
                  user_message="仓库地址不能包含空格",
                  user_hint="请检查地址中是否误输入了空格")
 
+    def config_args(self):
+        args = ["-c", "core.autocrlf=false", "-c", "core.hooksPath=" + str(self.root / "disabled-hooks")]
+        if self.github_user:
+            # 命令级指定 GitHub 账号，让探测、首次推送、后续拉取与收缩使用同一账号的已存凭据；
+            # 只影响本进程子进程，不改系统级 Git 配置。同时清空继承的 helper 链后固定走
+            # GCM（manager），保证与引导登录、凭据验证使用同一凭据来源；helper 名 manager
+            # 与 locate_gcm 依赖同一套解析机制（exec-path / PATH 中的 git-credential-manager）。
+            args += ["-c", "credential.helper=",
+                     "-c", "credential.https://github.com.helper=manager",
+                     "-c", "credential.https://github.com.username=" + self.github_user]
+        return args
+
     def run(self, *args, check=True, data=None, cwd=None):
-        env = os.environ.copy()
-        env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="Never", GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes")
+        env, git_exe = git_env()
+        if not git_exe:
+            fail("GIT_UNAVAILABLE", "Git 不可用或未安装，请检查安装、网络和系统凭证",
+                 user_message="无法使用本机的版本管理工具",
+                 user_hint="请确认已安装 Git、网络可用，且本机已保存仓库的登录凭证")
         # 不使用 shell，不把远端响应直接展示给用户，以免泄漏凭证。
         try:
-            result = subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "core.hooksPath=" + str(self.root / "disabled-hooks"), *args],
+            result = subprocess.run([git_exe, *self.config_args(), *args],
                                     cwd=cwd or self.root, input=data, capture_output=True, env=env, timeout=60,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, subprocess.TimeoutExpired):

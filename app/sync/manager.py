@@ -12,8 +12,10 @@ from . import snapshot
 from .common import atomic_json, read_json, remove_tree, replace_path, fail, ProcessLock
 from .gitstore import GitStore
 from .merge import Merger
+from .onboarding import Onboarding
 
-DEFAULTS = {"remote": "", "branch": "main", "auto": True, "interval": 10, "device": "本机"}
+DEFAULTS = {"remote": "", "branch": "main", "auto": True, "interval": 10, "device": "本机",
+            "github_account": ""}
 
 
 class SyncManager:
@@ -35,6 +37,7 @@ class SyncManager:
         self.started = False
         self._merger = None
         self._space = (0.0, 0)
+        self.onboarding = Onboarding(self)
 
     @staticmethod
     def _error_entry(exc):
@@ -120,7 +123,8 @@ class SyncManager:
             fail("SYNC_NOT_CONFIGURED", "请先配置数据仓库",
                  user_message="尚未配置同步仓库", user_hint="请先在下方填写仓库地址、分支和设备名并保存")
         return GitStore(self.directory / "repo", self.settings["remote"], self.settings["branch"],
-                        self.settings["device"], self.allow_file)
+                        self.settings["device"], self.allow_file,
+                        github_account=self.settings.get("github_account", ""))
 
     def temporary(self, label):
         return self.directory / "work" / (label + "-" + uuid.uuid4().hex)
@@ -276,11 +280,15 @@ class SyncManager:
         try:
             return self._initialize(source)
         except ApiError as exc:
-            if exc.code not in ("SYNC_PENDING", "SYNC_BUSY"):
-                self.error = self._error_entry(exc)
-                self.status_name = "offline" if exc.code in ("GIT_FAILED", "GIT_UNAVAILABLE") else "blocked"
-                db.set_ready(previously_ready)
+            self._record_initialize_failure(exc, previously_ready)
             raise
+
+    def _record_initialize_failure(self, exc, previously_ready):
+        """初始化失败后的状态与业务门禁恢复；向导最终应用复用同一处理。"""
+        if exc.code not in ("SYNC_PENDING", "SYNC_BUSY"):
+            self.error = self._error_entry(exc)
+            self.status_name = "offline" if exc.code in ("GIT_FAILED", "GIT_UNAVAILABLE") else "blocked"
+            db.set_ready(previously_ready)
 
     def _initialize(self, source):
         if source not in ("local", "remote"):
@@ -288,90 +296,102 @@ class SyncManager:
              user_message="请先选择使用本地数据还是远端数据",
              user_hint="点击页面上对应的按钮即可")
         with self.operation():
-            if any(self.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
-                self.error = None
-                fail("SYNC_PENDING", "请先同步未上传提交或处理冲突，再重新初始化；现有历史和草稿已保留",
-                 user_message="还有没有上传的改动或待处理的冲突",
-                 user_hint="请先完成同步或处理完冲突，再重新选择数据来源")
+            return self._initialize_body(source)
+
+    def _initialize_body(self, source):
+        # 已持有 operation 锁时（向导最终应用）可直接调用本方法，不再嵌套进入 operation()。
+        if any(self.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
             self.error = None
-            db.set_ready(False)
-            if not self.settings["remote"]:
-                if source != "local":
-                    fail("SYNC_NOT_CONFIGURED", "请先配置远端",
-                     user_message="尚未配置同步仓库",
-                     user_hint="请先在下方填写仓库地址、分支和设备名并保存")
-                self.new_local()
-                self.capture(force=True)
-                self.status_name = "local"
-                db.set_ready(True)
-                return self.status()
-            git = self.git()
-            tip = git.fetch()
-            remote = self.remote_snapshot(git, tip) if tip else None
-            if source == "remote":
-                if not remote:
-                    fail("REMOTE_EMPTY", "远端尚无可恢复快照",
-                     user_message="远端仓库里还没有可恢复的数据",
-                     user_hint="请先在已有数据的设备上同步一次")
-                self.capture(force=True)
-                db.set_ready(False)
-                self.apply_snapshot(remote)
-                self.mark_synced(remote, tip)
-            else:
-                self.new_local()
-                local = self.capture(force=True)
-                db.set_ready(False)
-                commit = self.local_commit(git, local)
-                if tip and not git.is_ancestor(tip, commit):
-                    commit = git.commit(self.object(local), "确认以本地数据初始化绑定", [tip, commit])
-                self.publish(git, local, commit, apply=False)
+            fail("SYNC_PENDING", "请先同步未上传提交或处理冲突，再重新初始化；现有历史和草稿已保留",
+             user_message="还有没有上传的改动或待处理的冲突",
+             user_hint="请先完成同步或处理完冲突，再重新选择数据来源")
+        self.error = None
+        db.set_ready(False)
+        if not self.settings["remote"]:
+            if source != "local":
+                fail("SYNC_NOT_CONFIGURED", "请先配置远端",
+                 user_message="尚未配置同步仓库",
+                 user_hint="请先在下方填写仓库地址、分支和设备名并保存")
+            self.new_local()
+            self.capture(force=True)
+            self.status_name = "local"
             db.set_ready(True)
-            self.state.pop("requires_resolution", None)
-            self.save()
             return self.status()
+        git = self.git()
+        tip = git.fetch()
+        remote = self.remote_snapshot(git, tip) if tip else None
+        if source == "remote":
+            if not remote:
+                fail("REMOTE_EMPTY", "远端尚无可恢复快照",
+                 user_message="远端仓库里还没有可恢复的数据",
+                 user_hint="请先在已有数据的设备上同步一次")
+            self.capture(force=True)
+            db.set_ready(False)
+            self.apply_snapshot(remote)
+            self.mark_synced(remote, tip)
+        else:
+            self.new_local()
+            local = self.capture(force=True)
+            db.set_ready(False)
+            commit = self.local_commit(git, local)
+            if tip and not git.is_ancestor(tip, commit):
+                commit = git.commit(self.object(local), "确认以本地数据初始化绑定", [tip, commit])
+            self.publish(git, local, commit, apply=False)
+        db.set_ready(True)
+        self.state.pop("requires_resolution", None)
+        self.save()
+        return self.status()
 
     def settings_update(self, values):
         with self.operation():
-            unknown = set(values) - set(DEFAULTS)
-            if unknown:
-                fail("SETTINGS_INVALID", "设置包含未知字段",
-                 user_message="提交的设置中包含无法识别的项",
-                 user_hint="请刷新页面后重新填写")
-            updated = {**self.settings, **values}
-            if type(updated["interval"]) is not int or updated["interval"] < 1 or type(updated["auto"]) is not bool:
-                fail("SETTINGS_INVALID", "自动同步间隔必须是至少 1 分钟的整数",
-                 user_message="自动同步间隔至少为 1 分钟",
-                 user_hint="请填写一个不小于 1 的整数")
-            if not isinstance(updated["device"], str) or not 1 <= len(updated["device"].strip()) <= 80:
-                fail("SETTINGS_INVALID", "设备名称长度应为 1–80 个字符",
-                 user_message="设备名称需为 1–80 个字符",
-                 user_hint="请缩短或补全设备名称")
-            if not isinstance(updated["branch"], str) or not updated["branch"] or updated["branch"].startswith("-"):
-                fail("SETTINGS_INVALID", "分支名无效",
-                 user_message="分支名无效", user_hint="请填写一个合法的分支名，例如 main")
-            if not isinstance(updated["remote"], str):
-                fail("SETTINGS_INVALID", "仓库地址必须是文本",
-                 user_message="仓库地址填写不正确",
-                 user_hint="请填写以 https:// 或 git@ 开头的仓库地址")
-            if updated["remote"]:
-                GitStore.validate_remote(updated["remote"], self.allow_file)
-            rebound = (updated["remote"], updated["branch"]) != (self.settings["remote"], self.settings["branch"])
-            if rebound and any(self.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
-                fail("SYNC_PENDING", "请先处理未上传提交或冲突，再更换远端",
-                 user_message="还有没有上传的改动或待处理的冲突",
-                 user_hint="请先完成同步或处理完冲突，再更换仓库地址")
-            if rebound:
-                repo = self.directory / "repo"
-                if repo.exists():
-                    if (repo / "manifest.json").exists():
-                        self.cache(repo)
-                    remove_tree(repo, self.directory)
-                for key in ("baseline", "base_commit", "write_verified", "read_verified", "requires_resolution"):
-                    self.state.pop(key, None)
-            self.settings = updated
-            atomic_json(self.directory / "settings.json", self.settings)
-            self.save()
-            return self.settings
+            return self._settings_update_locked(values)
+
+    def _settings_update_locked(self, values):
+        # 已持有 operation 锁时（向导最终应用）可直接调用；行为与原 settings_update 完全一致。
+        unknown = set(values) - set(DEFAULTS)
+        if unknown:
+            fail("SETTINGS_INVALID", "设置包含未知字段",
+             user_message="提交的设置中包含无法识别的项",
+             user_hint="请刷新页面后重新填写")
+        updated = {**self.settings, **values}
+        if type(updated["interval"]) is not int or updated["interval"] < 1 or type(updated["auto"]) is not bool:
+            fail("SETTINGS_INVALID", "自动同步间隔必须是至少 1 分钟的整数",
+             user_message="自动同步间隔至少为 1 分钟",
+             user_hint="请填写一个不小于 1 的整数")
+        if not isinstance(updated["device"], str) or not 1 <= len(updated["device"].strip()) <= 80:
+            fail("SETTINGS_INVALID", "设备名称长度应为 1–80 个字符",
+             user_message="设备名称需为 1–80 个字符",
+             user_hint="请缩短或补全设备名称")
+        if not isinstance(updated["github_account"], str) or len(updated["github_account"]) > 100:
+            fail("SETTINGS_INVALID", "GitHub 账号必须是不超过 100 字符的文本",
+             user_message="GitHub 账号填写有误",
+             user_hint="请在配置引导中重新选择账号")
+        if not isinstance(updated["branch"], str) or not updated["branch"] or updated["branch"].startswith("-"):
+            fail("SETTINGS_INVALID", "分支名无效",
+             user_message="分支名无效", user_hint="请填写一个合法的分支名，例如 main")
+        if not isinstance(updated["remote"], str):
+            fail("SETTINGS_INVALID", "仓库地址必须是文本",
+             user_message="仓库地址填写不正确",
+             user_hint="请填写以 https:// 或 git@ 开头的仓库地址")
+        if updated["remote"]:
+            GitStore.validate_remote(updated["remote"], self.allow_file)
+        rebound = (updated["remote"], updated["branch"]) != (self.settings["remote"], self.settings["branch"])
+        if rebound and any(self.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
+            fail("SYNC_PENDING", "请先处理未上传提交或冲突，再更换远端",
+             user_message="还有没有上传的改动或待处理的冲突",
+             user_hint="请先完成同步或处理完冲突，再更换仓库地址")
+        if rebound:
+            repo = self.directory / "repo"
+            if repo.exists():
+                if (repo / "manifest.json").exists():
+                    self.cache(repo)
+                remove_tree(repo, self.directory)
+            for key in ("baseline", "base_commit", "write_verified", "read_verified", "requires_resolution"):
+                self.state.pop(key, None)
+        self.settings = updated
+        atomic_json(self.directory / "settings.json", self.settings)
+        self.save()
+        return self.settings
 
     def test_connection(self):
         with self.operation():

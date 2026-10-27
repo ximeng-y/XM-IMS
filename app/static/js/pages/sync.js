@@ -46,6 +46,8 @@ async function refresh(){
   text($s('credentialStatus'),'读取：'+(syncState.read_verified?'已验证':'未验证')+'；写入：'+(syncState.write_verified?'已通过实际推送验证':'待首次实际推送验证'));
   text($s('retentionInfo'),'本地同步数据占用约 '+((syncState.storage_bytes||0)/1048576).toFixed(1)+' MB；待上传的修改：'+syncState.pending_commits+' 项。'+(syncState.retention_exception?'正在保留必要的未上传历史或冲突基线，暂时可能超过三份。':'当前保留三份历史快照。')+(syncState.cleanup_pending?'历史整理将在下次同步时重试。':''));
   $s('snapshotList').replaceChildren(...syncState.snapshots.slice().reverse().map(h=>{const li=document.createElement('li');li.textContent=h.slice(0,16);return li;}));
+  const onboardingLabel=syncState.configured?'重新引导':'开始配置备份';
+  for(const id of ['startOnboarding','restartOnboarding']){const b=$s(id);if(b){text(b,onboardingLabel);b.disabled=syncState.busy;}}
   const active=syncState.session&&!syncState.business_ready;
   $s('conflictPanel').hidden=!active;
   if(active&&conflictSession!==syncState.session){conflictSession=syncState.session;offset=0;try{await loadConflicts();}catch(error){conflictSession=null;throw error;}}
@@ -84,6 +86,8 @@ window.PAGE_INIT=async()=>{
   $s('testConnection').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/test-connection');UI.ok('读取连接通过；写权限以实际推送为准');});
   $s('syncNow').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/run',{synchronize:true});conflictSession=null;});
   $s('checkNow').onclick=e=>action(e.currentTarget,()=>Sync.api('POST','/run',{synchronize:false}));
+  $s('startOnboarding').onclick=openOnboarding;
+  $s('restartOnboarding').onclick=openOnboarding;
   $s('offlineEnter').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/offline');location.href='/';});
   for(const [id,source] of [['useLocal','local'],['useRemote','remote']])$s(id).onclick=e=>action(e.currentTarget,async()=>{if(await UI.confirmDialog({title:'确认初始化来源',bodyHtml:source==='local'?'将使用本地数据（没有数据时新建）。如远端已有数据，其当前内容将被本地版本替换，旧版本保留在历史中。':'将从远端恢复整套数据，当前本地数据会先保留副本。',confirmText:'确认使用',danger:true}))await Sync.api('POST','/initialize',{source,confirm:true});});
   $s('previousChanges').onclick=e=>action(e.currentTarget,async()=>{changesOffset=Math.max(0,changesOffset-limit);await loadChanges();});
@@ -111,3 +115,13 @@ async function loadChanges(){
   $s('automaticChanges').replaceChildren(...p.rows.map(c=>{const el=document.createElement('pre');el.textContent=c.label+'\n共同版本：'+printable(c.base)+'\n候选结果：'+(c.note||printable(c.result));return el;}));
   $s('previousChanges').disabled=changesOffset===0;$s('nextChanges').disabled=changesOffset+limit>=p.total;
 }
+
+// 打开备份配置向导：草稿以已保存设置为准，不用未保存的表单内容隐式应用。
+async function openOnboarding(){
+  let settings;
+  try{settings=await Sync.api('GET','/settings');}
+  catch(e){UI.fail(e.user_message||e.message||'读取同步设置未成功');return;}
+  SyncOnboarding.open({settings,onDone:reloadSettings});
+}
+// 向导结束后明确重读设置表单：重置 settingsLoaded，随后刷新同步状态。
+async function reloadSettings(){settingsLoaded=false;await refresh().catch(showRefreshError);}

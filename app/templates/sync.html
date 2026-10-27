@@ -9,6 +9,7 @@
     <p id="syncMessage" aria-live="polite"></p>
     <div class="sync-actions">
       <button id="syncNow">立即同步</button><button id="checkNow" class="btn-outline">检查远端</button>
+      <button id="startOnboarding" type="button" class="btn-outline">开始配置备份</button>
       <button id="offlineEnter" class="btn-outline" hidden>离线进入</button>
       <a id="enterApp" href="/" role="button" class="btn-outline" hidden>进入应用</a>
     </div>
@@ -24,9 +25,9 @@
       <p class="muted">请使用一个独立的私有仓库。HTTPS 复用本机已保存的账号凭证，SSH 复用本机密钥。请勿在地址里填写账号、密码或访问令牌；仓库的可见性请在托管平台上确认。</p>
       <div class="grid"><label>数据分支<input id="dataBranch" value="main" required></label><label>本机名称<input id="deviceName" maxlength="80" required></label><label>间隔（分钟）<input id="syncInterval" type="number" min="1" step="1" value="10" required></label></div>
       <label><input type="checkbox" id="autoSync" role="switch" checked>自动检查、提交和推送</label>
-      <div class="sync-actions"><button type="submit">保存设置</button><button type="button" id="testConnection" class="btn-outline">测试连接</button></div>
+      <div class="sync-actions"><button type="submit">保存设置</button><button type="button" id="testConnection" class="btn-outline">测试连接</button><button type="button" id="restartOnboarding" class="btn-outline">开始配置备份</button></div>
       <p id="credentialStatus" class="muted"></p>
-      <p class="muted">认证失败时，请先在本机完成仓库的账号登录或密钥配置，再测试连接。本程序不会弹出登录窗口，也不会保存你的访问令牌。</p>
+      <p class="muted">认证失败时，请先在本机完成仓库的账号登录或密钥配置，再测试连接。自动同步不会弹出登录窗口，也不会保存你的访问令牌；如需登录 GitHub，请在配置引导中主动操作。</p>
     </form>
   </details>
   <article id="conflictPanel" hidden>
@@ -43,4 +44,4 @@
   <details><summary>本地保留与历史</summary><p id="retentionInfo"></p><ol id="snapshotList"></ol><p class="muted">通常保留三份历史快照；远端保留全部历史。未上传的历史与冲突数据暂不清理。换电脑前请执行「立即同步」，确认已同步到远端。</p></details>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/sync.js?v=7"></script>{% endblock %}
+{% block scripts %}<script src="/static/js/pages/sync-onboarding.js?v=1"></script><script src="/static/js/pages/sync.js?v=8"></script>{% endblock %}
