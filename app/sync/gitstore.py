@@ -156,8 +156,12 @@ class GitStore:
         args = ["-c", "core.autocrlf=false", "-c", "core.hooksPath=" + str(self.root / "disabled-hooks")]
         if self.github_user:
             # 命令级指定 GitHub 账号，让探测、首次推送、后续拉取与收缩使用同一账号的已存凭据；
-            # 只影响本进程子进程，不改系统级 Git 配置。
-            args += ["-c", "credential.https://github.com.username=" + self.github_user]
+            # 只影响本进程子进程，不改系统级 Git 配置。同时清空继承的 helper 链后固定走
+            # GCM（manager），保证与引导登录、凭据验证使用同一凭据来源；helper 名 manager
+            # 与 locate_gcm 依赖同一套解析机制（exec-path / PATH 中的 git-credential-manager）。
+            args += ["-c", "credential.helper=",
+                     "-c", "credential.https://github.com.helper=manager",
+                     "-c", "credential.https://github.com.username=" + self.github_user]
         return args
 
     def run(self, *args, check=True, data=None, cwd=None):

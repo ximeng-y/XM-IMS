@@ -260,10 +260,15 @@ class Onboarding:
         if not prefix:
             return []
         try:
-            result = self._spawn(prefix + ["list"], timeout=30)
+            result = self._spawn(prefix + ["github", "list"], timeout=30)
         except (OSError, subprocess.TimeoutExpired):
-            return []
-        text = result.stdout.decode("utf-8", "replace") if result.returncode == 0 else ""
+            result = None
+        # 命令失败与真正的空账号列表是两回事：失败必须报错，否则已登录也会显示为空。
+        if result is None or result.returncode:
+            fail("ONBOARDING_GCM_FAILED", "读取本机已登录的 GitHub 账号失败",
+                 user_message="暂时读不到已登录的 GitHub 账号",
+                 user_hint="请重新安装登录组件，或重新点击「登录 GitHub」")
+        text = result.stdout.decode("utf-8", "replace")
         # 输出除账号行外还有说明文字；只取整行形如 GitHub 登录名的条目。
         return sorted({line.strip() for line in text.splitlines()
                        if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", line.strip())})
@@ -316,8 +321,12 @@ class Onboarding:
                  user_message="无法使用本机的版本管理工具",
                  user_hint="请先完成 Git 的安装或检测")
         query = f"protocol=https\nhost=github.com\nusername={account}\n\n".encode("utf-8")
+        # 与 GitStore 的 GitHub HTTPS 命令固定同一 GCM helper：清空继承链后只走 manager，
+        # 避免系统 helper 配置与 GCM 不一致时，登录成功却读取不到凭据或推送失败。
         try:
-            result = self._spawn([git_exe, "credential", "fill"], env=env, timeout=30, data=query)
+            result = self._spawn([git_exe, "-c", "credential.helper=",
+                                  "-c", "credential.https://github.com.helper=manager",
+                                  "credential", "fill"], env=env, timeout=30, data=query)
         except (OSError, subprocess.TimeoutExpired):
             fail("ONBOARDING_GITHUB_CREDENTIAL", "读取本机 GitHub 凭据失败",
                  user_message="暂时读不到 GitHub 登录信息",
@@ -470,9 +479,18 @@ class Onboarding:
                 fail("ONBOARDING_STALE", "向导打开后同步配置已发生变化，请关闭向导重新打开",
                      user_message="同步配置在向导打开后发生了变化",
                      user_hint="请关闭本向导，刷新页面后重新打开")
-            # 只有连接已有仓库且地址分支都未变时才算「不换库」；创建新仓库始终是重新绑定。
-            same_target = draft["mode"] == "existing" and (draft["remote"], draft["branch"]) == current
-            if not same_target:
+            # 只有连接已有仓库、地址分支都未变且已完成过首次备份时才走「仅改设置」；
+            # 首次备份从未完成时，即使地址未变也必须完整走一遍绑定流程，不能报告完成。
+            same_target = draft["mode"] == "existing" and (draft["remote"], draft["branch"]) == current \
+                and manager.state.get("baseline")
+            if same_target:
+                self._apply_settings_only(draft)
+                return {"completed": True, "settings_applied": True, "created_repository_url": None,
+                        "error": None, "status": manager.status()}
+            # 实际绑定阶段：先关闭业务写入，再做守卫检查与联网探测，避免检查窗口内的新写入
+            # 被随后的恢复或初始化覆盖；中途失败时恢复原门禁。同步任务锁不能代替业务门禁。
+            db.set_ready(False)
+            try:
                 self._guard_rebind(manager)
                 if draft["mode"] == "github-new":
                     self._github_verify(draft["github_account"])
@@ -480,16 +498,16 @@ class Onboarding:
                 else:
                     tip = self._probe_tip(draft, payload)
                     self._require_source(draft, payload, tip)
-            if same_target:
-                self._apply_settings_only(draft)
-                return {"completed": True, "settings_applied": True, "created_repository_url": None,
-                        "error": None, "status": manager.status()}
+            except ApiError:
+                db.set_ready(previously_ready)
+                raise
             created_url = None
             if draft["mode"] == "github-new":
                 # 副作用从这里开始：之后不再以异常形式报错，改用阶段性结果返回。
                 try:
                     created_url, clone_url = self._create_repository(draft["github_account"], draft["repository"])
                 except ApiError as exc:
+                    db.set_ready(previously_ready)
                     return {"completed": False, "settings_applied": False, "created_repository_url": None,
                             "error": error_payload(exc), "status": manager.status()}
                 # 使用 API 返回的标准 HTTPS clone 地址，不自行拼接。
@@ -500,6 +518,7 @@ class Onboarding:
             try:
                 manager._settings_update_locked(values)
             except ApiError as exc:
+                db.set_ready(previously_ready)
                 return {"completed": False, "settings_applied": False, "created_repository_url": created_url,
                         "error": error_payload(exc), "status": manager.status()}
             try:
@@ -519,10 +538,12 @@ class Onboarding:
                  user_message="还有没有上传的改动或待处理的冲突",
                  user_hint="请先完成同步或处理完冲突，再更换仓库")
         # 不能只看 pending 数量：新编辑可能尚未生成 Git 提交，用快照内容对比。
+        # 与最近一次已确认上传/恢复的基线比较；committed_hash 只在本机提交时更新，
+        # 从远端恢复后的干净数据用它判断会误报未上传。
         if manager.state.get("baseline") and manager.active:
             digest = manager.capture()
-            if digest and digest != manager.state.get("committed_hash"):
-                fail("SYNC_UNPUSHED", "本地快照与最近一次已提交内容不一致，请先完成同步再更换数据仓库",
+            if digest and digest != manager.state.get("baseline"):
+                fail("SYNC_UNPUSHED", "本地快照与最近一次同步的基线不一致，请先完成同步再更换数据仓库",
                      user_message="本机还有没有上传的修改",
                      user_hint="请先点击「立即同步」上传本地修改，再更换仓库")
 
