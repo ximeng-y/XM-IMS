@@ -5,16 +5,16 @@ window.PAGE_INIT = async function () {
   if (!UI.requireShop()) return;
   const safe = (label, p) => p.catch((e) => { UI.apiFail(e, label); return null; });
 
-  const [items, movs, spus, fields] = await Promise.all([
+  const [items, movs, spus, over] = await Promise.all([
     safe("查询单品总数", XM.get("/items?limit=1")),
     safe("查询流水", XM.get("/movements?limit=5")),
     safe("查询 SPU", XM.get("/spus")),
-    safe("查询字段", XM.get("/fields")),
+    safe("查询概览统计", XM.get("/overview")),
   ]);
   $("#stItems").textContent = items ? items.total : "—";
   $("#stSpus").textContent = spus ? spus.spus.length : "—";
-  $("#stFields").textContent = fields ? fields.fields.filter((f) => !f.system).length : "—";
-  $("#stMovs").textContent = movs ? movs.total : "—";
+  $("#stQty").textContent = over ? over.total_qty : "—";
+  $("#stAnomalies").textContent = over ? over.anomaly_items : "—";
 
   if (!movs) return;
   const tbody = $("#recentMovs");
