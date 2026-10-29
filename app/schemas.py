@@ -261,3 +261,16 @@ class MovementResult(BaseModel):
     new_qty: Optional[int] = Field(default=None, description="仅 dry_run 预览时给出")
     dry_run: bool = False
     idempotent_replay: bool = Field(default=False, description="幂等键命中，返回的是首次提交的结果")
+
+
+class AnomalyRuleOut(BaseModel):
+    code: str = Field(description="规则稳定标识，如 computed_field_error、negative_qty")
+    label: str = Field(description="规则展示名，可直接用于界面")
+    count: int = Field(description="命中该规则的条目数；同一条目对同一条规则最多计一次")
+
+
+class OverviewOut(BaseModel):
+    total_qty: int = Field(description="全店全部 SKU 当前库存的算术合计，负库存按负数计入")
+    anomaly_items: int = Field(description="命中任一异常规则的 SKU 数量，条目级去重")
+    anomalies: list[AnomalyRuleOut] = Field(
+        description="按规则细分的异常条目计数；各规则条目取并集后等于 anomaly_items")
