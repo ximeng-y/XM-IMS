@@ -901,7 +901,8 @@ class BackupOnboarding:
                     "remote", "branch", "device", "interval", "auto", "github_account")}
                 manager._settings_update_locked(values)
                 applied = True
-                manager._initialize_body(draft["source"])
+                manager._initialize_body(
+                    draft["source"], checked_remote=(draft["remote"], draft["branch"], payload["remote_tip"]))
                 return self._flow_result(draft, completed=True, applied=True, created=created)
             except (ApiError, OSError) as exc:
                 error = exc if isinstance(exc, ApiError) else self._storage_error()
@@ -914,7 +915,8 @@ class BackupOnboarding:
                     pass
                 manager._record_initialize_failure(error, previously_ready)
                 db.set_ready(previously_ready)
-                action = "retry_upload" if applied and manager.state.get("journal") else \
+                action = "retry_check" if error.code == "ONBOARDING_REMOTE_CHANGED" else \
+                    "retry_upload" if applied and manager.state.get("journal") else \
                     "retry_initialize" if applied else "reuse_created" if created else "retry_check"
                 return self._flow_result(draft, applied=applied, created=created, error=error, action=action)
 
@@ -1007,6 +1009,9 @@ class BackupOnboarding:
                              user_hint="请进入数据同步页面重新核对")
                     if payload.get("dry_run") is True:
                         return self._flow_result(draft, applied=True, action="retry_upload", dry_run=True)
+                    # 同目标只更新辅助设置；实际续传使用本次选中的账号，原提交与 journal 保留。
+                    self._apply_flow_settings_only(draft)
+                    store = manager.git()
                     # 只续传已确认的初始提交；失败期间新增业务数据留在本机，后续正常同步。
                     current_digest = manager.capture(force=True)
                     if tip is None:
@@ -1040,8 +1045,10 @@ class BackupOnboarding:
                     return self._flow_result(draft, applied=True, created=created, action="retry_check", check=check)
                 if payload.get("dry_run") is True:
                     return self._flow_result(draft, applied=True, check=check, dry_run=True)
-                # 设置已保存但没有 journal：跳过再次保存，只复核目标与来源，再执行原 body。
-                manager._initialize_body(draft["source"])
+                # 同目标保留绑定与工作仓，只应用本次账号等辅助设置，再核对实际获取的提交。
+                self._apply_flow_settings_only(draft)
+                manager._initialize_body(
+                    draft["source"], checked_remote=(draft["remote"], draft["branch"], payload["remote_tip"]))
                 return self._flow_result(draft, completed=True, applied=True, created=created)
             except (ApiError, OSError) as exc:
                 error = exc if isinstance(exc, ApiError) else self._storage_error()

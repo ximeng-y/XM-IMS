@@ -24,6 +24,15 @@ class FirstUse:
     def __init__(self, manager):
         self.manager = manager
 
+    def _local_prepare_pending(self):
+        manager = self.manager
+        # 只续接纯本机初始化的存储失败；结构、远端和待处理同步状态仍走原门禁。
+        return bool(manager.started and manager.active and not db.business_ready
+                    and not manager.settings["remote"] and config.INDEX_DB.is_file()
+                    and manager.status_name == "blocked"
+                    and (manager.error or {}).get("code") == "SYNC_STORAGE_FAILED"
+                    and not any(manager.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")))
+
     def status(self):
         manager = self.manager
         sync = manager.status()
@@ -43,6 +52,8 @@ class FirstUse:
                 if manager.active and db.business_ready and config.INDEX_DB.is_file():
                     result["shops"] = shops.list_shops()["shops"]
                     result["phase"] = "ready" if result["shops"] else "create_shop"
+                elif self._local_prepare_pending():
+                    result["phase"] = "create_shop"
                 elif any(manager.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
                     result["phase"] = "sync_required"
                 elif not manager.active and manager.settings["remote"] and (
@@ -67,10 +78,19 @@ class FirstUse:
                 and manager.status_name == "setup" and not manager.error \
                 and not any(manager.state.get(k) for k in ("pending", "session", "journal", "requires_resolution"))
             usable = bool(manager.active and db.business_ready and config.INDEX_DB.is_file())
-            if not (clean_setup or usable):
+            prepare_pending = self._local_prepare_pending()
+            if not (clean_setup or usable or prepare_pending):
                 raise ApiError("FIRST_USE_SYNC_REQUIRED", "首店创建需要可用数据或无远端的全新 setup", status=409,
                                user_message="请先完成数据准备",
                                user_hint="进入数据同步页面继续处理")
+            if (clean_setup or prepare_pending) and not payload.dry_run:
+                # 初始化和首店写入分属不同文件；失败保留已建立的数据，重试读取实际店铺。
+                try:
+                    manager._initialize_body("local")
+                except ApiError as exc:
+                    manager._record_initialize_failure(exc, False)
+                    raise
+                usable = True
             existing = shops.list_shops()["shops"] if usable else []
             if existing:
                 if len(existing) == 1 and existing[0]["name"] == payload.name:
@@ -79,8 +99,5 @@ class FirstUse:
                                user_message="已有可用店铺，请进入应用")
             if payload.dry_run:
                 return {"created": False, "shop": None, "phase": "create_shop", "sync": manager.status()}
-            if clean_setup:
-                # 初始化和首店写入分属不同文件；失败保留已建立的数据，重试读取实际店铺。
-                manager._initialize_body("local")
             shop = shops.create_shop(payload.name)
             return {"created": True, "shop": shop, "phase": "ready", "sync": manager.status()}
