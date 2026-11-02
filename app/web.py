@@ -30,3 +30,4 @@ router.get("/fields", response_class=HTMLResponse)(_page("fields.html"))
 router.get("/movements", response_class=HTMLResponse)(_page("movements.html"))
 
 router.get("/sync", response_class=HTMLResponse)(_page("sync.html"))
+router.get("/onboarding", response_class=HTMLResponse)(_page("onboarding/first-use.html"))

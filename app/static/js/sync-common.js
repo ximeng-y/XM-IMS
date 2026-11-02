@@ -17,7 +17,10 @@ window.Sync = (() => {
     if (!response.ok) {if (data.code === 'SYNC_LOCAL_ONLY') localOnly(); const error = new Error(data.user_message || data.message || '同步请求失败'); error.code = data.code; error.user_message = data.user_message; error.user_hint = data.user_hint; throw error;}
     return data;
   }
-  function label(s) {return s.dirty && s.business_ready ? (s.state === 'behind' || s.state === 'conflict' ? names[s.state] + ' · 本地有修改' : '已保存本地 · 待同步') : names[s.state] || s.state;}
+  function label(s) {
+    if (s.business_ready && !s.configured) return '已保存在本机';
+    return s.dirty && s.business_ready ? (s.state === 'behind' || s.state === 'conflict' ? names[s.state] + ' · 本地有修改' : '已保存本地 · 待同步') : names[s.state] || '同步需要处理';
+  }
   function render(s) {
     if (!local) {localOnly(); return;}
     const box = document.getElementById('syncStatus');
@@ -30,7 +33,13 @@ window.Sync = (() => {
     let s;
     try {s=await api('GET','/status');} catch (error) {if (!local) return true; throw error;}
     render(s);
-    if(!s.business_ready){location.replace('/sync');return false;}
+    if(!s.business_ready){
+      const first=await api('GET','/onboarding/first-use/status');
+      if (!local) return true;
+      const onboarding=['choose_source','create_shop','restore_pending'].includes(first.phase) ||
+        (first.phase==='waiting'&&!first.has_local_data);
+      location.replace(onboarding?'/onboarding':'/sync');return false;
+    }
     setInterval(poll, 5000);return true;
   }
   return {api, label, render, ensureReady, get local() {return local;}};

@@ -1,33 +1,37 @@
 {% extends "base.html" %}
 {% block title %}数据同步{% endblock %}
 {% block nav %}sync{% endblock %}
+{% block styles %}<link rel="stylesheet" href="/static/onboarding/onboarding.css?v=1">{% endblock %}
 {% block content %}
 <div class="sync-page">
-  <header><h1>数据同步</h1><p class="muted">业务数据保存在本机；配置私有仓库后，版本历史会同步到该仓库。</p></header>
+  <header><h1>数据同步</h1><p class="muted">数据保存在本机，配置备份后可在其他电脑继续使用。</p></header>
   <article>
     <h2 id="syncHeading">正在检查…</h2>
     <p id="syncMessage" aria-live="polite"></p>
     <div class="sync-actions">
       <button id="syncNow">立即同步</button><button id="checkNow" class="btn-outline">检查远端</button>
-      <button id="startOnboarding" type="button" class="btn-outline">开始配置备份</button>
+      <button id="startOnboarding" type="button" class="btn-outline">配置备份</button>
+      <a id="continueFirstUse" href="/onboarding" role="button" hidden>继续首次设置</a>
       <button id="offlineEnter" class="btn-outline" hidden>离线进入</button>
-      <a id="enterApp" href="/" role="button" class="btn-outline" hidden>进入应用</a>
-    </div>
-    <div id="initializeBox" hidden>
-      <p>请选择初始化来源。当前版本使用新的数据目录；旧数据原样保留，不自动读取。使用远端会替换当前活动数据，替换前保留副本。还有未上传的修改或未处理的冲突时，必须先完成同步才能重新初始化。</p>
-      <button id="useLocal" class="btn-outline">使用本地数据／新建数据集</button>
-      <button id="useRemote" class="btn-outline">从远端恢复</button>
+      <a id="enterApp" href="/inventory" role="button" class="btn-outline" hidden>进入应用</a>
     </div>
   </article>
-  <details id="settingsPanel"><summary>仓库与自动同步设置</summary>
+  <details id="settingsPanel"><summary>高级维护</summary>
     <form id="syncSettings">
       <label>私有数据仓库地址<input id="remoteUrl" placeholder="https://github.com/用户名/私有数据仓库.git" autocomplete="off"></label>
-      <p class="muted">请使用一个独立的私有仓库。HTTPS 复用本机已保存的账号凭证，SSH 复用本机密钥。请勿在地址里填写账号、密码或访问令牌；仓库的可见性请在托管平台上确认。</p>
+      <p class="muted">请填写独立的私有仓库地址。HTTPS 使用本机已保存的登录信息，SSH 使用本机密钥。</p>
       <div class="grid"><label>数据分支<input id="dataBranch" value="main" required></label><label>本机名称<input id="deviceName" maxlength="80" required></label><label>间隔（分钟）<input id="syncInterval" type="number" min="1" step="1" value="10" required></label></div>
       <label><input type="checkbox" id="autoSync" role="switch" checked>自动检查、提交和推送</label>
-      <div class="sync-actions"><button type="submit">保存设置</button><button type="button" id="testConnection" class="btn-outline">测试连接</button><button type="button" id="restartOnboarding" class="btn-outline">开始配置备份</button></div>
-      <p class="muted">认证失败时，请先在本机完成仓库的账号登录或密钥配置，再测试连接。自动同步不会弹出登录窗口，也不会保存你的访问令牌；如需登录 GitHub，请在配置引导中主动操作。</p>
+      <div class="sync-actions"><button type="submit">保存设置</button><button type="button" id="testConnection" class="btn-outline">测试已保存连接</button><button type="button" id="restartOnboarding" class="btn-outline">重新绑定／替换数据</button></div>
+      <p id="connectionSaveHint" class="muted" aria-live="polite"></p>
+      <p class="muted">需要登录 GitHub 时，可在重新绑定向导中登录。其他仓库使用本机已有的登录信息或密钥。</p>
     </form>
+    <div id="initializeBox" hidden>
+      <h3>选择使用的数据</h3>
+      <p>使用本机数据会将本机版本上传到仓库；使用远端备份会替换本机数据，并保留当前副本。现有改动和冲突处理完成后即可执行。</p>
+      <button id="useLocal" class="btn-outline">使用本机数据／新建数据集</button>
+      <button id="useRemote" class="btn-outline">从远端恢复</button>
+    </div>
   </details>
   <article id="conflictPanel" hidden>
     <h2>处理数据冲突</h2>
@@ -42,4 +46,8 @@
   </article>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/sync-onboarding.js?v=2"></script><script src="/static/js/pages/sync.js?v=10"></script>{% endblock %}
+{% block scripts %}
+<script src="/static/onboarding/wizard.js?v=1"></script>
+<script src="/static/onboarding/backup.js?v=1"></script>
+<script src="/static/js/pages/sync.js?v=11"></script>
+{% endblock %}

@@ -12,7 +12,6 @@ from . import snapshot
 from .common import atomic_json, read_json, remove_tree, replace_path, fail, ProcessLock
 from .gitstore import GitStore
 from .merge import Merger
-from .onboarding import Onboarding
 
 DEFAULTS = {"remote": "", "branch": "main", "auto": True, "interval": 10, "device": "本机",
             "github_account": ""}
@@ -37,7 +36,6 @@ class SyncManager:
         self.started = False
         self._merger = None
         self._space = (0.0, 0)
-        self.onboarding = Onboarding(self)
 
     @staticmethod
     def _error_entry(exc):

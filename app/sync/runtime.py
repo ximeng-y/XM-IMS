@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 from .. import db
 from ..errors import ApiError, error_dict
 from ..service import update
+from ..onboarding.backup import BackupOnboarding
+from ..onboarding.first_use import FirstUse
 from .manager import SyncManager
 from .api import router
 
@@ -17,6 +19,8 @@ async def lifespan(app):
     update.start_background_check()
     manager = SyncManager()
     app.state.sync = manager
+    app.state.onboarding_backup = BackupOnboarding(manager)
+    app.state.onboarding_first_use = FirstUse(manager)
     stop = asyncio.Event()
 
     async def loop():

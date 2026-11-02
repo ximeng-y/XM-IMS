@@ -17,9 +17,9 @@ from urllib.parse import urlsplit
 
 from .. import config, db
 from ..errors import ApiError, error_dict, error_payload
-from . import gitstore, snapshot
-from .common import fail, remove_tree
-from .gitstore import GitStore
+from ..sync import gitstore, snapshot
+from ..sync.common import fail, read_json, remove_tree
+from ..sync.gitstore import GitStore
 
 GITHUB_API = "https://api.github.com"
 _USER_AGENT = "XM-IMS-Onboarding"
@@ -106,7 +106,7 @@ def _http_download(url, target):
          user_hint="请检查网络后重试；也可以从官网手动安装后点击「重新检测」")
 
 
-class Onboarding:
+class BackupOnboarding:
     """备份配置引导服务；安装、显式登录与最终应用复用 manager.operation() 互斥。"""
 
     def __init__(self, manager):
@@ -615,3 +615,441 @@ class Onboarding:
                  user_message="创建 GitHub 仓库的结果异常",
                  user_hint="请到 GitHub 确认仓库是否已创建，再回到向导继续")
         return created.get("html_url") or clone_url, clone_url
+
+    # ---------- 目标驱动的新手流程；旧 check/complete 保持原契约 ----------
+
+    def _flow_draft(self, payload):
+        intent = payload.get("intent")
+        if intent not in ("backup", "restore"):
+            fail("ONBOARDING_INTENT", "intent 必须为 backup 或 restore",
+                 user_message="请选择配置备份或使用已有备份")
+        draft = self._draft(payload)
+        source = "local" if intent == "backup" else "remote"
+        if payload.get("source", source) != source or (intent == "restore" and draft["mode"] != "existing"):
+            fail("ONBOARDING_SOURCE_INVALID", "新手流程的 source/mode 与 intent 不一致",
+                 user_message="请重新选择要使用的备份仓库")
+        return {**draft, "intent": intent, "source": source}
+
+    @staticmethod
+    def _write_identity(payload):
+        if type(payload.get("dry_run", False)) is not bool:
+            fail("ONBOARDING_INVALID", "dry_run 必须为布尔值",
+                 user_message="请刷新页面后重试")
+        if payload.get("confirm") is not True and payload.get("dry_run") is not True:
+            fail("CONFIRM_REQUIRED", "缺少最终确认",
+                 user_message="请确认后继续")
+        key = payload.get("idempotency_key")
+        if not isinstance(key, str) or not 1 <= len(key) <= 100:
+            fail("ONBOARDING_INVALID", "idempotency_key 需为 1–100 字符",
+                 user_message="请刷新页面后重新确认")
+        if not isinstance(payload.get("expected_remote"), str) or not isinstance(payload.get("expected_branch"), str):
+            fail("ONBOARDING_INVALID", "缺少 expected_remote/expected_branch",
+                 user_message="请刷新页面后重新打开配置")
+        if "remote_tip" not in payload:
+            fail("ONBOARDING_INVALID", "缺少 remote_tip",
+                 user_message="请先检查备份仓库")
+
+    def _require_first_shop(self):
+        from ..service import shops
+        with db._coordinator:
+            if not self.manager.active or not config.INDEX_DB.is_file():
+                fail("FIRST_USE_SHOP_REQUIRED", "备份前需建立活动数据与首店",
+                     user_message="请先创建第一间店铺")
+            with db.internal_access():
+                if not shops.list_shops()["shops"]:
+                    fail("FIRST_USE_SHOP_REQUIRED", "备份前需创建首店",
+                         user_message="请先创建第一间店铺")
+
+    def _require_restore(self):
+        from ..service import shops
+        manager = self.manager
+        if any(manager.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
+            fail("ONBOARDING_MAINTENANCE_REQUIRED", "新手恢复拒绝未上传提交或冲突状态",
+                 user_message="请先处理现有改动",
+                 user_hint="进入数据同步页面完成同步或处理冲突")
+        with db._coordinator:
+            if manager.active and config.INDEX_DB.is_file():
+                with db.internal_access():
+                    if shops.list_shops()["shops"]:
+                        fail("ONBOARDING_MAINTENANCE_REQUIRED", "新手恢复不能替换已有店铺",
+                             user_message="本机已有可用店铺",
+                             user_hint="如需替换，请进入数据同步页面的「高级维护」")
+
+    def _repository_info(self, account, repository):
+        """结果不确定时用选中账号的凭据读取私有仓库，不用匿名 404 判断创建结果。"""
+        owner = self._github_verify(account)
+        token = self._github_token(account)
+        try:
+            info = _http_json(f"{GITHUB_API}/repos/{owner}/{repository}", token=token, timeout=20)
+        except _GitHubHttpError as exc:
+            if exc.status == 404:
+                return None
+            fail("ONBOARDING_REPO_CHECK", f"读取创建结果失败（HTTP {exc.status}）",
+                 user_message="暂时无法确认仓库创建结果",
+                 user_hint="请稍后点击「检查此仓库」")
+        actual_owner = info.get("owner", {}).get("login", "")
+        if str(actual_owner).lower() != owner.lower() or str(info.get("name", "")).lower() != repository.lower() \
+                or not info.get("private") or not info.get("clone_url"):
+            fail("ONBOARDING_REPO_CHECK", "仓库所有者、名称或私有性与本次目标不符",
+                 user_message="这个仓库与本次创建目标不一致",
+                 user_hint="请确认所选账号和私有仓库名称")
+        GitStore.validate_remote(info["clone_url"], self.manager.allow_file)
+        return {"remote": info["clone_url"], "url": info.get("html_url") or info["clone_url"]}
+
+    def _snapshot_summary(self, root, manifest, store, tip):
+        shop_keys = {item["key"] for item in manifest["databases"] if item["kind"] == "shop"}
+        summary = []
+        for row in snapshot.iter_rows(root, "index", "shops"):
+            key = row["sync_uid"]
+            if key not in shop_keys:
+                fail("SNAPSHOT_INVALID", "店铺登记与数据库清单不一致",
+                     user_message="备份中的店铺信息需要重新核对",
+                     user_hint="请在已有数据的电脑上重新同步一次")
+            tables = read_json(root / key / "schema.json")["tables"]
+            summary.append({"name": row["name"], "sku_count": tables["items"]["rows"],
+                            "movement_count": tables["movements"]["rows"]})
+        return {"dataset": manifest["dataset"], "shop_count": len(summary), "shops": summary,
+                "sku_count": sum(row["sku_count"] for row in summary),
+                "movement_count": sum(row["movement_count"] for row in summary),
+                "commit_time": store.text("show", "-s", "--format=%cI", tip)}
+
+    def _inspect_flow(self, draft):
+        work = self._work_dir("flow-check")
+        try:
+            store = GitStore(work / "repo", draft["remote"], draft["branch"],
+                             allow_file=self.manager.allow_file, github_account=draft["github_account"])
+            tip = store.fetch()
+            info = None
+            if tip:
+                target = work / "snapshot"
+                store.checkout_snapshot(tip, target)
+                manifest = snapshot.validate_files(target)
+                info = self._snapshot_summary(target, manifest, store, tip)
+            return tip, info
+        except (OSError, ValueError, KeyError, TypeError):
+            fail("SNAPSHOT_INVALID", "候选快照摘要无法读取",
+                 user_message="这份备份暂时无法读取",
+                 user_hint="请确认仓库地址，或在已有数据的电脑上重新同步一次")
+        finally:
+            remove_tree(work, self._root())
+
+    def _initial_upload(self, draft, store):
+        """仅识别可关联到同一个初始提交的 journal；未知状态全部留给高级维护。"""
+        manager, state = self.manager, self.manager.state
+        if (draft["remote"], draft["branch"]) != (manager.settings["remote"], manager.settings["branch"]) \
+                or state.get("baseline") or state.get("session") or state.get("requires_resolution"):
+            return None
+        journal = state.get("journal")
+        if not journal:
+            return None
+        commit, digest = journal.get("commit"), journal.get("hash")
+        if journal.get("apply") is not False or type(journal.get("confirmed")) is not bool \
+                or not commit or not digest or state.get("committed_head") != commit \
+                or state.get("committed_hash") != digest or state.get("pending") != [commit] \
+                or store.head() != commit:
+            return None
+        if store.run("cat-file", "-e", commit + "^{commit}", check=False).returncode:
+            return None
+        # 首次空库上传只有一个根提交，拒绝把别的历史或额外 pending 当成它。
+        if len(store.text("rev-list", "--parents", "-n", "1", commit).split()) != 1:
+            return None
+        work = self._work_dir("resume-verify")
+        try:
+            store.checkout_snapshot(commit, work / "snapshot")
+            snapshot.validate_files(work / "snapshot")
+            if snapshot.sha(work / "snapshot" / "manifest.json") != digest:
+                return None
+            manager._snapshot_source(digest)
+            return dict(journal)
+        finally:
+            remove_tree(work, self._root())
+
+    def _check_flow_draft(self, draft):
+        manager = self.manager
+        if draft["intent"] == "restore":
+            self._require_restore()
+        else:
+            self._require_first_shop()
+            same_target = draft["mode"] == "existing" and (draft["remote"], draft["branch"]) == (
+                manager.settings["remote"], manager.settings["branch"])
+            if not manager.state.get("journal") and any(manager.state.get(k) for k in (
+                    "pending", "session", "requires_resolution")) and not (same_target and manager.state.get("baseline")):
+                fail("ONBOARDING_MAINTENANCE_REQUIRED", "存在非首次上传的待处理状态",
+                     user_message="请先处理现有同步任务",
+                     user_hint="进入数据同步页面继续处理，现有改动已保留")
+        if draft["mode"] == "github-new":
+            owner = self._github_verify(draft["github_account"])
+            draft = {**draft, "remote": f"https://github.com/{owner}/{draft['repository']}.git", "owner": owner}
+            # 已绑定这个新目标且存在 journal 时先识别续接，不能误报为陌生数据仓库。
+            current = (manager.settings["remote"], manager.settings["branch"])
+            if (draft["remote"], draft["branch"]) != current or not manager.state.get("journal"):
+                if self._repository_info(draft["github_account"], draft["repository"]):
+                    fail("ONBOARDING_REPO_EXISTS", "创建目标已存在，请明确采用已有仓库",
+                         user_message="这个仓库名已经被使用",
+                         user_hint="请换一个名称，或选择「连接已有仓库」")
+                return {**draft, "decision": "ready", "remote_tip": None, "snapshot": None}
+        if draft["intent"] == "backup" and manager.state.get("journal"):
+            store = manager.git()
+            journal = self._initial_upload(draft, store)
+            if journal:
+                tip, info = self._inspect_flow(draft)
+                if tip not in (None, journal["commit"]):
+                    fail("ONBOARDING_REMOTE_CHANGED", "首次上传后远端已改为其他提交",
+                         user_message="仓库里出现了新的变化",
+                         user_hint="请进入数据同步页面重新核对，现有改动已保留")
+                return {**draft, "decision": "resume_required", "remote_tip": tip, "snapshot": info}
+            fail("ONBOARDING_MAINTENANCE_REQUIRED", "journal 不属于可续接的首次上传",
+                 user_message="请先处理现有同步任务",
+                 user_hint="进入数据同步页面继续处理")
+        tip, info = self._inspect_flow(draft)
+        same = (draft["remote"], draft["branch"]) == (manager.settings["remote"], manager.settings["branch"])
+        if draft["intent"] == "restore":
+            decision = "ready" if info else "remote_empty"
+        elif same and manager.state.get("baseline"):
+            decision = "settings_only"
+        else:
+            decision = "remote_has_data" if info else "ready"
+        return {**draft, "decision": decision, "remote_tip": tip, "snapshot": info}
+
+    def check_flow(self, payload):
+        return self._check_flow_draft(self._flow_draft(payload))
+
+    def _flow_result(self, draft, *, completed=False, applied=False, created=None, error=None,
+                     action="none", **extra):
+        return {"completed": completed, "settings_applied": applied,
+                "created_repository_url": created, "error": error_payload(error) if error else None,
+                "status": self.manager.status(), "resume_action": action,
+                "target_remote": draft.get("remote") or "", "target_branch": draft["branch"], **extra}
+
+    def _apply_flow_settings_only(self, draft):
+        self._apply_settings_only(draft)
+        # 前次写设置失败时内存可能已更新；再次确认后仍需保证辅助设置确实落盘。
+        saved = read_json(self.manager.directory / "settings.json", {})
+        keys = ("device", "interval", "auto", "github_account")
+        if any(saved.get(key) != draft[key] for key in keys):
+            self.manager._settings_update_locked({key: draft[key] for key in keys})
+
+    @staticmethod
+    def _storage_error():
+        return ApiError("SYNC_STORAGE_FAILED", "引导保存或初始化数据失败", status=409,
+                        user_message="数据保存暂未完成",
+                        user_hint="请确认磁盘空间和目录访问正常后重试")
+
+    @staticmethod
+    def _require_decision(check):
+        if check["decision"] == "remote_has_data":
+            fail("ONBOARDING_REMOTE_HAS_DATA", "新手备份拒绝覆盖有效远端数据",
+                 user_message="这个仓库已有一份备份",
+                 user_hint="请选择其他仓库；如需采用这份备份，请明确选择恢复")
+        if check["decision"] == "remote_empty":
+            fail("REMOTE_EMPTY", "恢复来源没有有效快照",
+                 user_message="这个仓库尚无可恢复备份",
+                 user_hint="请确认仓库地址，或先在已有数据的电脑上完成备份")
+
+    def complete_flow(self, payload):
+        self._write_identity(payload)
+        draft = self._flow_draft(payload)
+        manager = self.manager
+        if payload.get("dry_run") is True:
+            if (manager.settings["remote"], manager.settings["branch"]) != (
+                    payload["expected_remote"], payload["expected_branch"]):
+                fail("ONBOARDING_STALE", "dry_run 时已保存目标发生变化",
+                     user_message="备份设置已更新，请刷新页面")
+            check = self.check_flow(payload)
+            self._require_decision(check)
+            if check["remote_tip"] != payload["remote_tip"]:
+                fail("ONBOARDING_REMOTE_CHANGED", "dry_run 候选提交发生变化",
+                     user_message="备份内容有新的变化，请重新检查")
+            if check["decision"] not in ("settings_only", "resume_required"):
+                if any(manager.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")) \
+                        or (manager.state.get("baseline") and manager.status()["dirty"]):
+                    fail("SYNC_PENDING", "dry_run 时存在待处理的本机改动",
+                         user_message="请先完成现有数据的同步")
+            return self._flow_result(check, check=check, dry_run=True)
+        previously_ready = db.business_ready
+        with manager.operation():
+            db.set_ready(False)
+            created, applied = None, False
+            try:
+                if (manager.settings["remote"], manager.settings["branch"]) != (
+                        payload["expected_remote"], payload["expected_branch"]):
+                    fail("ONBOARDING_STALE", "当前配置与打开流程时不一致",
+                         user_message="备份设置已更新",
+                         user_hint="请刷新页面后继续配置")
+                check = self._check_flow_draft(draft)
+                draft = check
+                self._require_decision(check)
+                if check["remote_tip"] != payload["remote_tip"]:
+                    fail("ONBOARDING_REMOTE_CHANGED", "远端提交与检查结果不一致",
+                         user_message="备份内容有新的变化",
+                         user_hint="请重新检查后确认")
+                if check["decision"] == "resume_required":
+                    db.set_ready(previously_ready)
+                    return self._flow_result(draft, applied=True, action="retry_upload")
+                if check["decision"] == "settings_only":
+                    self._apply_flow_settings_only(draft)
+                    db.set_ready(previously_ready)
+                    return self._flow_result(draft, completed=True, applied=True)
+                self._guard_rebind(manager)
+                if draft["mode"] == "github-new":
+                    try:
+                        created, draft["remote"] = self._create_repository(draft["github_account"], draft["repository"])
+                    except ApiError as exc:
+                        db.set_ready(previously_ready)
+                        return self._flow_result(draft, error=exc, action="recheck_remote")
+                values = {key: draft[key] for key in (
+                    "remote", "branch", "device", "interval", "auto", "github_account")}
+                manager._settings_update_locked(values)
+                applied = True
+                manager._initialize_body(draft["source"])
+                return self._flow_result(draft, completed=True, applied=True, created=created)
+            except (ApiError, OSError) as exc:
+                error = exc if isinstance(exc, ApiError) else self._storage_error()
+                # 设置文件可能已写成功、后续状态保存才失败；以磁盘读回而非返回码判断。
+                try:
+                    saved = read_json(manager.directory / "settings.json", {})
+                    applied = applied or all(saved.get(key) == draft[key] for key in (
+                        "remote", "branch", "device", "interval", "auto", "github_account"))
+                except (OSError, ValueError):
+                    pass
+                manager._record_initialize_failure(error, previously_ready)
+                db.set_ready(previously_ready)
+                action = "retry_upload" if applied and manager.state.get("journal") else \
+                    "retry_initialize" if applied else "reuse_created" if created else "retry_check"
+                return self._flow_result(draft, applied=applied, created=created, error=error, action=action)
+
+    def resume_flow(self, payload):
+        self._write_identity(payload)
+        draft = self._flow_draft(payload)
+        manager = self.manager
+        target = payload.get("target_remote")
+        if not isinstance(target, str) or not target:
+            fail("ONBOARDING_INVALID", "续接缺少 target_remote",
+                 user_message="请重新检查要使用的仓库")
+        GitStore.validate_remote(target, manager.allow_file)
+        # 不确定的创建结果只读核实，返回摘要后由用户再次确认采用，绝不自动再次 POST。
+        if draft["mode"] == "github-new":
+            info = self._repository_info(draft["github_account"], draft["repository"])
+            owner = self._github_verify(draft["github_account"])
+            expected = f"https://github.com/{owner}/{draft['repository']}.git"
+            if target.lower() != expected.lower():
+                fail("ONBOARDING_STALE", "创建续接目标与所选账号、仓库名不一致",
+                     user_message="请核对本次选择的账号和仓库")
+            if not info:
+                return self._flow_result({**draft, "remote": expected}, action="retry_check",
+                                         repository_exists=False)
+            if info["remote"].lower() != target.lower():
+                fail("ONBOARDING_STALE", "创建结果的 clone_url 与续接目标不一致",
+                     user_message="请重新检查仓库地址")
+            draft = {**draft, "mode": "existing", "remote": info["remote"]}
+            created = info["url"]
+        else:
+            created = None
+            if target != draft["remote"]:
+                fail("ONBOARDING_STALE", "续接目标与草稿地址不一致",
+                     user_message="仓库地址已更改，请重新检查")
+        current = (manager.settings["remote"], manager.settings["branch"])
+        identity = (draft["remote"], draft["branch"])
+        opened = (payload["expected_remote"], payload["expected_branch"])
+        if current != identity:
+            if current != opened:
+                fail("ONBOARDING_STALE", "续接期间配置已更换",
+                     user_message="备份设置已更新，请刷新页面")
+            check = self._check_flow_draft(draft)
+            return self._flow_result(draft, created=created, action="reuse_created" if created else "retry_check",
+                                     check=check, dry_run=payload.get("dry_run") is True)
+        previously_ready = db.business_ready
+        with manager.operation():
+            if (manager.settings["remote"], manager.settings["branch"]) != current:
+                fail("ONBOARDING_STALE", "取得锁后目标发生变化",
+                     user_message="备份设置已更新，请刷新页面")
+            if payload.get("dry_run") is not True:
+                db.set_ready(False)
+            try:
+                tip, summary = self._inspect_flow(draft)
+                if manager.state.get("baseline"):
+                    # 恢复/上传已成功但界面没有收到回执：读回同一结果，不再次切代次。
+                    if tip == manager.state.get("base_commit") and summary \
+                            and manager.active and summary["dataset"] == manager.active["dataset"] \
+                            and not any(manager.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
+                        if (manager.error or {}).get("code") not in (None, "SYNC_STORAGE_FAILED", "GIT_FAILED", "GIT_UNAVAILABLE") \
+                                or not config.INDEX_DB.is_file():
+                            fail("ONBOARDING_MAINTENANCE_REQUIRED", "已有同步结果的数据可用性仍需处理",
+                                 user_message="请继续处理本机数据",
+                                 user_hint="进入数据同步页面查看当前状态")
+                        if payload.get("dry_run") is not True:
+                            self._apply_flow_settings_only(draft)
+                            current_digest = manager.capture(force=True)
+                            changed = current_digest != manager.state["baseline"]
+                            manager.mark_synced(manager.state["baseline"], tip, compact=False)
+                            if changed:
+                                manager.invalidate_capture_cache()
+                            manager.error = None
+                            db.set_ready(True)
+                        else:
+                            changed = manager.status()["dirty"]
+                        return self._flow_result(draft, completed=True, applied=True, created=created,
+                                                 dry_run=payload.get("dry_run") is True,
+                                                 local_changes_pending=changed)
+                    fail("ONBOARDING_MAINTENANCE_REQUIRED", "已有基线或待处理状态与续接目标不一致",
+                         user_message="备份已有新的变化",
+                         user_hint="请进入数据同步页面继续处理")
+                if draft["intent"] == "backup" and manager.state.get("journal"):
+                    store = manager.git()
+                    journal = self._initial_upload(draft, store)
+                    if not journal:
+                        fail("ONBOARDING_MAINTENANCE_REQUIRED", "首次上传 journal 关联校验失败",
+                             user_message="请先处理现有同步任务",
+                             user_hint="进入数据同步页面继续处理，现有改动已保留")
+                    if tip not in (None, journal["commit"]):
+                        fail("ONBOARDING_REMOTE_CHANGED", "远端不是空库或本次初始提交",
+                             user_message="仓库里出现了新的变化",
+                             user_hint="请进入数据同步页面重新核对")
+                    if payload.get("dry_run") is True:
+                        return self._flow_result(draft, applied=True, action="retry_upload", dry_run=True)
+                    # 只续传已确认的初始提交；失败期间新增业务数据留在本机，后续正常同步。
+                    current_digest = manager.capture(force=True)
+                    if tip is None:
+                        store.push(journal["commit"])
+                    manager.state["write_verified"] = True
+                    manager.state["journal"]["confirmed"] = True
+                    manager.save()
+                    manager.mark_synced(journal["hash"], journal["commit"])
+                    changed = current_digest != journal["hash"]
+                    if changed:
+                        manager.invalidate_capture_cache()
+                    manager.error = None
+                    db.set_ready(True)
+                    return self._flow_result(draft, completed=True, applied=True, created=created,
+                                             local_changes_pending=changed)
+                if draft["intent"] == "restore":
+                    self._require_restore()
+                else:
+                    self._require_first_shop()
+                if any(manager.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
+                    fail("ONBOARDING_MAINTENANCE_REQUIRED", "存在非首次上传的 pending/journal",
+                         user_message="请先处理现有同步任务",
+                         user_hint="进入数据同步页面继续处理")
+                check = {**draft, "remote_tip": tip, "snapshot": summary,
+                         "decision": ("ready" if summary else "remote_empty") if draft["intent"] == "restore"
+                         else ("remote_has_data" if summary else "ready")}
+                self._require_decision(check)
+                if tip != payload["remote_tip"]:
+                    if payload.get("dry_run") is not True:
+                        db.set_ready(previously_ready)
+                    return self._flow_result(draft, applied=True, created=created, action="retry_check", check=check)
+                if payload.get("dry_run") is True:
+                    return self._flow_result(draft, applied=True, check=check, dry_run=True)
+                # 设置已保存但没有 journal：跳过再次保存，只复核目标与来源，再执行原 body。
+                manager._initialize_body(draft["source"])
+                return self._flow_result(draft, completed=True, applied=True, created=created)
+            except (ApiError, OSError) as exc:
+                error = exc if isinstance(exc, ApiError) else self._storage_error()
+                if payload.get("dry_run") is not True:
+                    manager._record_initialize_failure(error, previously_ready)
+                    db.set_ready(previously_ready)
+                action = "recheck_remote" if error.code in (
+                    "ONBOARDING_REMOTE_CHANGED", "ONBOARDING_MAINTENANCE_REQUIRED",
+                    "SNAPSHOT_INVALID", "SCHEMA_UNSUPPORTED", "GIT_BRANCH_MISSING", "BASE_MISSING") else \
+                    "retry_upload" if manager.state.get("journal") else "retry_initialize"
+                return self._flow_result(draft, applied=True, created=created, error=error, action=action)
