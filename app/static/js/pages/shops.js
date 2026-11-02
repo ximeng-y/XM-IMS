@@ -109,7 +109,9 @@ const ShopsPage = (() => {
   function persistOrder() {
     const ids = $$(".shop-card", list()).map((c) => Number(c.dataset.shop));
     const ordered = ids.map((id) => shops.find((s) => s.id === id)).filter(Boolean);
-    UI.applyShopOrder(ordered);
+    // 落盘的是本次拖动产生的新顺序；不能再经 applyShopOrder 套用旧的本地偏好，
+    // 否则页面暂时显示新顺序、刷新后回退
+    UI.saveShopOrder(ids);
     shops = ordered;
     XM.state.shops = ordered;
     // 顶栏下拉与卡片顺序保持一致；当前选择不变
@@ -163,7 +165,9 @@ const ShopsPage = (() => {
       shops = shops.filter((s) => s.id !== id);
       // 本地记录同步清理；删的是当前店铺时，本地顺序中的第一个剩余店铺成为当前店铺
       UI.forgetShop(id, shops);
-      XM.state.shopId = Number(localStorage.getItem(UI.SHOP_KEY)) || null;
+      // 只有删的是当前店铺才切换选择；删除其他店铺不能从本地键重建当前值，
+      // 新客户端的默认选择只存在内存中，重读本地键会把当前店铺清空
+      if (isCurrent) XM.state.shopId = shops.length ? shops[0].id : null;
       XM.state.shops = shops;
       UI.renderShopOptions();
       // 删到零店铺时，顶栏原选择框位置改为「新建店铺」

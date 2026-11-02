@@ -533,7 +533,7 @@ const UI = (() => {
     $, $$, esc, fmtTime, fmtTimeShort, fmtDelta, fmtMoney, fmtVal,
     toast, ok, fail, apiFail, apiFailHtml, warnHtml, okHtml, withBusy, codeTitle,
     baseDialog, promptDialog, confirmDialog, mkBtn, resultBox, renderPager, fillItemOptions,
-    itemOptionLabel, SHOP_KEY, readOrder, orderShops, applyShopOrder, forgetShop,
+    itemOptionLabel, SHOP_KEY, readOrder, orderShops, applyShopOrder, saveShopOrder, forgetShop,
     renderShopOptions, applyNoShop, createShopFlow,
     requireShop: () => XM.state.shopId !== null,
   };

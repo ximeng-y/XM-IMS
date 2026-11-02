@@ -241,28 +241,52 @@ class Merger:
             if local_has and remote_has:
                 continue
             grouped.update(rows)
+            removal = {"key": index_key, "base": display(sides[0].get(index_key)),
+                       "note": "整间店铺已删除，所属记录一并移除"}
             if not local_has and not remote_has:
-                continue  # 双方都删除：整店一并移除
+                # 双方都删除：整店一并移除
+                self.changes.append(removal)
+                continue
             kept = sides[1] if local_has else sides[2]
             content = lambda side: {k: logical(side.get(k)) for k in rows}
             if content(kept) == content(sides[0]):
-                continue  # 保留侧未改动共同版本内容：删除成立
+                # 保留侧未改动共同版本内容：删除成立
+                self.changes.append(removal)
+                continue
             values = [sides[i].get(index_key) for i in range(3)]
             identity = index_key + "#$references"
             self.detail_sets[identity] = [{k: side.get(k) for k in rows} for side in sides]
             chosen = self.conflict(index_key, "$references", values, "dependencies",
                                    extra={"affected": len(rows) - 1})
+            choice = self.choices.get(identity)
+            if choice is None:
+                # 去留尚未选择：候选内容不结算，也不提前登记逐条不可变冲突
+                continue
             if chosen is None:
                 # 选择了「没有该店铺」的版本：整店及其所属记录一并从候选结果移除
-                if self.choices.get(identity):
-                    self.changes.append({"key": index_key, "base": display(sides[0].get(index_key)),
-                                         "note": "整间店铺已删除，所属记录一并移除"})
+                self.changes.append(removal)
                 continue
-            source = (self.choices.get(identity) or {}).get("source", "local")
+            source = choice.get("source", "local")
             side = sides[("base", "local", "remote").index(source)]
             for key in rows:
-                if side.get(key) is not None:
-                    result[key] = copy.deepcopy(side[key])
+                base_row, row = sides[0].get(key), side.get(key)
+                table = key.split("/")[1]
+                if table in ("movements", "audit_log") and base_row is not None:
+                    # 整店来源选择只豁免「整店删除导致的整体缺失」，不豁免已有流水
+                    # 与审计的不可变约束：所选版本仍须与共同版本逐条一致
+                    if row != base_row:
+                        self.conflict(key, "$immutable", [base_row, sides[1].get(key), sides[2].get(key)], "immutable")
+                        if self.choices.get(key + "#$immutable", {}).get("source") not in (None, "base"):
+                            fail("IMMUTABLE_RECORD", "共同版本中的流水和审计只能保留原记录",
+                                 user_message="已有的流水记录不能改动",
+                                 user_hint="请选择「保留共同版本」；库存差异可通过追加调整流水修正")
+                    result[key] = copy.deepcopy(base_row)
+                elif row is not None:
+                    result[key] = copy.deepcopy(row)
+            if content(side) != content(sides[0]):
+                # 逐行变更记录对整店单元被跳过，这里补一条整店摘要供候选总览
+                self.changes.append({"key": index_key, "base": display(sides[0].get(index_key)),
+                                     "result": display(side.get(index_key))})
 
     def describe(self, key):
         database, table, uid = key.split("/", 2)
