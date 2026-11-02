@@ -44,8 +44,6 @@ async function refresh(){
   $s('syncNow').disabled=syncState.busy;
   $s('checkNow').disabled=syncState.busy;
   text($s('credentialStatus'),'读取：'+(syncState.read_verified?'已验证':'未验证')+'；写入：'+(syncState.write_verified?'已通过实际推送验证':'待首次实际推送验证'));
-  text($s('retentionInfo'),'本地同步数据占用约 '+((syncState.storage_bytes||0)/1048576).toFixed(1)+' MB；待上传的修改：'+syncState.pending_commits+' 项。'+(syncState.retention_exception?'正在保留必要的未上传历史或冲突基线，暂时可能超过三份。':'当前保留三份历史快照。')+(syncState.cleanup_pending?'历史整理将在下次同步时重试。':''));
-  $s('snapshotList').replaceChildren(...syncState.snapshots.slice().reverse().map(h=>{const li=document.createElement('li');li.textContent=h.slice(0,16);return li;}));
   const onboardingLabel=syncState.configured?'重新引导':'开始配置备份';
   for(const id of ['startOnboarding','restartOnboarding']){const b=$s(id);if(b){text(b,onboardingLabel);b.disabled=syncState.busy;}}
   const active=syncState.session&&!syncState.business_ready;
