@@ -769,10 +769,10 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
   .layout {
     flex-direction: column;
     align-items: stretch;
-    /* 顶栏在两行布局下比桌面端高，基准随之改成实测顶栏高度 */
+    /* 顶栏在窄屏下高度随内容变化（换行时更高），基准随之改成实测顶栏高度 */
     min-height: calc(100vh - var(--mobile-topbar-height, 3.5rem));
   }
-  /* 顶栏改两行：第一行菜单按钮 + 品牌 + 同步状态，第二行店铺操作。
+  /* 顶栏单行排列：菜单按钮 + 品牌 + 店铺操作（右对齐），放不下时换行兜底。
      高度由内容决定，实际值写入 --mobile-topbar-height 供浮层与遮罩定位 */
   .topbar {
     flex-wrap: wrap;
@@ -788,15 +788,11 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
   /* 品牌完整显示不换行，且不被挤压 */
   .topbar .brand { order: 0; flex: 0 0 auto; }
   .topbar .spacer { display: none; }
-  /* 同步状态允许换行，完整文案不截断 */
-  .topbar .sync-status {
-    order: 1; margin-left: auto;
-    flex: 0 1 auto; min-width: 0;
-    white-space: normal; text-align: right;
-  }
-  /* 店铺操作独占第二行；选择框吃掉该行剩余宽度 */
-  .topbar .shop-box { order: 2; flex: 1 1 100%; min-width: 0; gap: .4rem; }
-  .topbar .shop-box select { flex: 1 1 auto; min-width: 0; max-width: none; }
+  /* 同步状态在窄屏隐藏，同步入口保留在导航菜单里 */
+  .topbar .sync-status { display: none; }
+  /* 店铺操作移到第一行右侧；宽度随内容，选择框限宽并允许收缩 */
+  .topbar .shop-box { order: 1; margin-left: auto; flex: 0 1 auto; min-width: 0; gap: .4rem; }
+  .topbar .shop-box select { flex: 0 1 auto; min-width: 4rem; max-width: min(13.75rem, 45vw); }
 
   /* 导航改为顶栏下方的浮层，打开时覆盖正文，不参与正文占位 */
   .sidenav {
@@ -872,6 +868,9 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
   /* 概览快捷入口：两列等宽按钮 */
   .quick-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .quick-actions > * { width: 100%; }
+
+  /* 窄屏顶栏余量紧张：隐藏「店铺」标签，给选择框让出宽度（选择框本身已表明用途） */
+  .topbar .shop-box label { display: none; }
 
   /* 所有表单网格改单列：!important 用于压过组件内的行内双列定义
      （如编辑单品小窗的 grid-template-columns:1fr 1fr） */

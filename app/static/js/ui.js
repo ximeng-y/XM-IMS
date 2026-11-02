@@ -305,7 +305,7 @@ const UI = (() => {
   const NARROW = window.matchMedia("(max-width: 860px)");
   const isNarrow = () => NARROW.matches;
 
-  // 窄屏顶栏改两行、高度随内容变化；浮层与遮罩都贴在其下沿，
+  // 窄屏顶栏高度随内容变化（换行或店铺区显示与否）；浮层与遮罩都贴在其下沿，
   // 故把实测高度写进 --mobile-topbar-height 供两者定位
   function watchTopbar() {
     const bar = $(".topbar");
