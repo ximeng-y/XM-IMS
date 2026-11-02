@@ -81,6 +81,9 @@ const UI = (() => {
     FORMULA_INVALID: "公式有误", FORMULA_TYPE_INVALID: "公式结果类型有误",
     FORMULA_NOT_COMPUTED: "不是计算字段", FORMULA_REF_INVALID: "公式引用有误",
     FORMULA_CYCLE: "公式存在循环引用",
+    SHOP_NAME_INVALID: "店铺名有误", SHOP_NAME_EXISTS: "店铺名重复",
+    SHOP_DELETE_FAILED: "店铺未能删除",
+    IDEMPOTENCY_CONFLICT: "重复提交",
   };
   const codeTitle = (code) => CODE_TITLES[code] || "";
 
@@ -237,35 +240,93 @@ const UI = (() => {
 
   // ---------- 店铺上下文 ----------
   const SHOP_KEY = "xmims.shopId";
+  // 排列顺序纯属本机偏好：只存在 localStorage，不写入数据库、配置、备份或同步快照
+  const ORDER_KEY = "xmims.shopOrder";
 
+  function readOrder() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(ORDER_KEY) || "[]");
+      return Array.isArray(raw) ? raw.map(Number).filter(Number.isInteger) : [];
+    } catch (_) { return []; }
+  }
+
+  function saveShopOrder(ids) {
+    localStorage.setItem(ORDER_KEY, JSON.stringify([...new Set(ids.map(Number))]));
+  }
+
+  // 按本地顺序排列：已记录的店铺按记录顺序在前，未记录的按服务器顺序追加到末尾。
+  // 已保存顺序中不再存在的店铺自然被丢弃。
+  function orderShops(list) {
+    const order = readOrder();
+    const left = new Map(list.map((s) => [s.id, s]));
+    const ordered = [];
+    order.forEach((id) => {
+      const shop = left.get(id);
+      if (shop) { ordered.push(shop); left.delete(id); }
+    });
+    list.forEach((s) => { if (left.has(s.id)) ordered.push(s); });
+    return ordered;
+  }
+
+  // 排列结果落盘：同时记录当前完整顺序，供后续拖动与删除后重选使用
+  function applyShopOrder(list) {
+    const ordered = orderShops(list);
+    saveShopOrder(ordered.map((s) => s.id));
+    return ordered;
+  }
+
+  // 删除店铺后清理本地记录；删的是当前店铺时切到本地顺序中的第一个剩余店铺。
+  // remaining 为删除后的完整店铺列表（已按本地顺序），避免从残留顺序里选出已删店铺。
+  function forgetShop(id, remaining = []) {
+    saveShopOrder(readOrder().filter((x) => x !== id));
+    if (Number(localStorage.getItem(SHOP_KEY)) !== Number(id)) return;
+    if (remaining.length) localStorage.setItem(SHOP_KEY, String(remaining[0].id));
+    else localStorage.removeItem(SHOP_KEY);
+  }
+
+  function renderShopOptions() {
+    const sel = $("#shopSelect");
+    if (!sel) return;
+    sel.innerHTML = XM.state.shops
+      .map((s) => `<option value="${s.id}">${esc(s.name)}（#${s.id}）</option>`).join("");
+    if (XM.state.shopId !== null) sel.value = String(XM.state.shopId);
+  }
+
+  // 零店铺时：不保留空的选择框，原位置换成「新建店铺」。店铺管理页本身不参与
+  // 零店铺的整页禁用，否则空状态无法创建第一间店铺。
+  // hasShop 为 null 表示列表读取失败、店铺数未知：此时隐藏选择框与空状态提示，
+  // 避免把读取失败当成「当前还没有店铺」。
   function applyNoShop(hasShop) {
+    const known = hasShop !== null;
     const box = $("#noShopBox");
-    if (box) box.hidden = hasShop;
-    // 无店铺时禁用页面内全部操作按钮，避免无效请求
+    if (box) box.hidden = !known ? true : (hasShop || document.body.dataset.page === "shops");
+    const sel = $("#shopSelect");
+    if (sel) sel.hidden = !hasShop;
+    const label = $(".shop-box label");
+    if (label) label.hidden = !hasShop;
+    const btn = $("#btnNewShop");
+    if (btn) btn.hidden = hasShop !== false;
+    if (document.body.dataset.page === "shops") return;
     $$("main.content button").forEach((b) => { b.disabled = !hasShop; });
   }
 
   async function initShop() {
-    const sel = $("#shopSelect");
     try {
       const data = await XM.get("/shops");
-      XM.state.shops = data.shops;
+      XM.state.shops = applyShopOrder(data.shops);
     } catch (e) {
       apiFail(e, "无法获取店铺列表");
       XM.state.shops = [];
-      applyNoShop(false);
+      XM.state.shopId = null;
+      applyNoShop(null);
       return false;
     }
-    if (!XM.state.shops.length && Sync.local) {
-      location.replace("/onboarding");
-      return false;
-    }
-    sel.innerHTML = XM.state.shops
-      .map((s) => `<option value="${s.id}">${esc(s.name)}（#${s.id}）</option>`).join("");
+    renderShopOptions();
     const saved = localStorage.getItem(SHOP_KEY);
     let shop = XM.state.shops.find((s) => String(s.id) === saved);
     if (!shop && XM.state.shops.length) shop = XM.state.shops[0];
     XM.state.shopId = shop ? shop.id : null;
+    const sel = $("#shopSelect");
     if (shop) sel.value = String(shop.id);
     applyNoShop(!!shop);
     sel.addEventListener("change", () => {
@@ -285,6 +346,7 @@ const UI = (() => {
     try {
       const shop = await XM.post("/shops", { name });
       localStorage.setItem(SHOP_KEY, String(shop.id));
+      // 新店铺默认追加到末尾：不写入本地顺序，orderShops 会自动把它排在已有店铺之后
       ok(`店铺「${shop.name}」已创建`);
       setTimeout(() => window.location.reload(), 600);
     } catch (e) { apiFail(e, "创建店铺失败"); }
@@ -471,7 +533,8 @@ const UI = (() => {
     $, $$, esc, fmtTime, fmtTimeShort, fmtDelta, fmtMoney, fmtVal,
     toast, ok, fail, apiFail, apiFailHtml, warnHtml, okHtml, withBusy, codeTitle,
     baseDialog, promptDialog, confirmDialog, mkBtn, resultBox, renderPager, fillItemOptions,
-    itemOptionLabel,
+    itemOptionLabel, SHOP_KEY, readOrder, orderShops, applyShopOrder, forgetShop,
+    renderShopOptions, applyNoShop, createShopFlow,
     requireShop: () => XM.state.shopId !== null,
   };
 })();

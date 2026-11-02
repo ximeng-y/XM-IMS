@@ -94,6 +94,19 @@ def close_all():
         _generation += 1
 
 
+def close_shop(shop_id: int) -> None:
+    """关闭单间店铺的缓存连接并移除缓存项（不触碰索引库与其他店铺）。
+
+    没有缓存连接时什么都不做，不为关闭而新建连接。调用方通常已持有协调锁，
+    这里仍自行加锁，保证与 shop_db 的缓存写入互斥。
+    """
+    with _coordinator:
+        with _cache_lock:
+            database = _shop_dbs.pop(shop_id, None)
+        if database is not None:
+            database.conn.close()
+
+
 def epoch():
     return (_generation, _write_epoch)
 

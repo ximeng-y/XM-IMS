@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}店铺管理{% endblock %}
+{% block nav %}shops{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>店铺管理</h1>
+    <div class="sub">每间店铺的数据相互独立，可在这里切换、重命名或删除</div>
+  </div>
+</div>
+
+<div class="shops-toolbar">
+  <button type="button" id="btnCreateShop" class="btn-sm">创建店铺</button>
+  <span class="hint shops-order-hint">排列顺序保存在当前浏览器，不影响其他设备</span>
+</div>
+
+<div id="shopList" class="shop-list" aria-live="polite">
+  <div class="t-empty">加载中…</div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/pages/shops.js?v=1"></script>{% endblock %}
