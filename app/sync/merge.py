@@ -122,8 +122,14 @@ class Merger:
         sides = [m["rows"] for m in self.models]
         keys = sorted(set().union(*(set(s) for s in sides)))
         result, grouped = {}, set()
+        # 整店去留先于逐行检查：共同版本里的店铺被某一侧删除时，所属业务记录会因
+        # 「共同版本有、该侧没有」被当成篡改不可变记录。这里以店铺 sync_uid 为界，
+        # 把索引行与该店铺库下的全部记录当成一个单元处理。
+        self.shop_units(sides, result, grouped)
         # 字段定义变化/删除与另一侧值修改必须共同处理，避免用错误类型解释编码。
         for key in keys:
+            if key in grouped:
+                continue
             if "/custom_fields/" not in key:
                 continue
             b, l, r = [s.get(key) for s in sides]
@@ -209,6 +215,78 @@ class Merger:
         self.idempotency(result, sides)
         self.inventory(result, sides)
         return result
+
+    def shop_units(self, sides, result, grouped):
+        """整店去留单元：共同版本存在、某一侧索引已删除的店铺。
+
+        店铺库文件的库键即该店铺的 sync_uid，故「索引行 + 该库键下全部记录」构成
+        一个不可拆分的单元。保留侧仍保持共同版本内容时，删除成立（不逐条产生
+        immutable 冲突）；保留侧修改过店铺或其所属记录时，产生一项关联冲突，
+        由用户在「采用本地/采用远端/采用共同版本」中整套取舍，不能只恢复索引行
+        或只保留没有索引的业务行。
+        """
+        keys = sorted(set().union(*(set(s) for s in sides)))
+        rows_of = {}
+        for key in keys:
+            database, table, _ = key.split("/", 2)
+            if database == "index" and table == "shops":
+                rows_of[key.split("/", 2)[2]] = [
+                    k for k in keys if k == key or k.startswith(key.split("/", 2)[2] + "/")]
+
+        for uid, rows in rows_of.items():
+            index_key = "index/shops/" + uid
+            if index_key not in sides[0]:
+                continue
+            local_has, remote_has = index_key in sides[1], index_key in sides[2]
+            if local_has and remote_has:
+                continue
+            grouped.update(rows)
+            removal = {"key": index_key, "base": display(sides[0].get(index_key)),
+                       "note": "整间店铺已删除，所属记录一并移除"}
+            if not local_has and not remote_has:
+                # 双方都删除：整店一并移除
+                self.changes.append(removal)
+                continue
+            kept = sides[1] if local_has else sides[2]
+            content = lambda side: {k: logical(side.get(k)) for k in rows}
+            if content(kept) == content(sides[0]):
+                # 保留侧未改动共同版本内容：删除成立
+                self.changes.append(removal)
+                continue
+            values = [sides[i].get(index_key) for i in range(3)]
+            identity = index_key + "#$references"
+            self.detail_sets[identity] = [{k: side.get(k) for k in rows} for side in sides]
+            chosen = self.conflict(index_key, "$references", values, "dependencies",
+                                   extra={"affected": len(rows) - 1})
+            choice = self.choices.get(identity)
+            if choice is None:
+                # 去留尚未选择：候选内容不结算，也不提前登记逐条不可变冲突
+                continue
+            if chosen is None:
+                # 选择了「没有该店铺」的版本：整店及其所属记录一并从候选结果移除
+                self.changes.append(removal)
+                continue
+            source = choice.get("source", "local")
+            side = sides[("base", "local", "remote").index(source)]
+            for key in rows:
+                base_row, row = sides[0].get(key), side.get(key)
+                table = key.split("/")[1]
+                if table in ("movements", "audit_log") and base_row is not None:
+                    # 整店来源选择只豁免「整店删除导致的整体缺失」，不豁免已有流水
+                    # 与审计的不可变约束：所选版本仍须与共同版本逐条一致
+                    if row != base_row:
+                        self.conflict(key, "$immutable", [base_row, sides[1].get(key), sides[2].get(key)], "immutable")
+                        if self.choices.get(key + "#$immutable", {}).get("source") not in (None, "base"):
+                            fail("IMMUTABLE_RECORD", "共同版本中的流水和审计只能保留原记录",
+                                 user_message="已有的流水记录不能改动",
+                                 user_hint="请选择「保留共同版本」；库存差异可通过追加调整流水修正")
+                    result[key] = copy.deepcopy(base_row)
+                elif row is not None:
+                    result[key] = copy.deepcopy(row)
+            if content(side) != content(sides[0]):
+                # 逐行变更记录对整店单元被跳过，这里补一条整店摘要供候选总览
+                self.changes.append({"key": index_key, "base": display(sides[0].get(index_key)),
+                                     "result": display(side.get(index_key))})
 
     def describe(self, key):
         database, table, uid = key.split("/", 2)

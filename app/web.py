@@ -28,6 +28,7 @@ router.get("/items", response_class=HTMLResponse)(_page("items.html"))
 router.get("/spus", response_class=HTMLResponse)(_page("spus.html"))
 router.get("/fields", response_class=HTMLResponse)(_page("fields.html"))
 router.get("/movements", response_class=HTMLResponse)(_page("movements.html"))
+router.get("/shops", response_class=HTMLResponse)(_page("shops.html"))
 
 router.get("/sync", response_class=HTMLResponse)(_page("sync.html"))
 router.get("/onboarding", response_class=HTMLResponse)(_page("onboarding/first-use.html"))

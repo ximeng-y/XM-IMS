@@ -55,6 +55,13 @@ class ShopCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100, description="店铺名，全局唯一")
 
 
+class ShopRename(BaseModel):
+    name: str = Field(min_length=1, max_length=100, description="店铺新名称，去首尾空白后全局唯一")
+    dry_run: bool = Field(default=False, description="只校验店铺存在与名称是否可用，不修改索引、审计或店铺文件")
+    idempotency_key: Optional[str] = Field(default=None, max_length=100,
+                                           description="写操作幂等键：同一键重放首次成功结果")
+
+
 class SpuCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200, description="SPU（商品）名称")
 
@@ -161,6 +168,22 @@ class ShopOut(BaseModel):
 
 class ShopList(BaseModel):
     shops: list[ShopOut]
+
+
+class ShopRenameOut(BaseModel):
+    id: int
+    name: str
+    created_at: str
+    dry_run: bool
+    idempotent_replay: bool
+
+
+class ShopDeleteOut(BaseModel):
+    deleted: bool
+    shop_id: int
+    name: str
+    dry_run: bool
+    idempotent_replay: bool
 
 
 class SpuOut(BaseModel):

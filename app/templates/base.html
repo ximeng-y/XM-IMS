@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}概览{% endblock %} · XM-IMS</title>
   <link rel="stylesheet" href="/static/vendor/pico.min.css?v=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=38">
+  <link rel="stylesheet" href="/static/css/app.css?v=39">
   {% block styles %}{% endblock %}
 </head>
 <body data-page="{% block nav %}{% endblock %}">
@@ -33,6 +33,7 @@
     <a href="/spus" data-nav="spus">SPU</a>
     <a href="/fields" data-nav="fields">字段</a>
     <a href="/movements" data-nav="movements">流水</a>
+    <a href="/shops" data-nav="shops">店铺管理</a>
     <a href="/sync" data-nav="sync">数据同步</a>
   </nav>
   <main class="content fade-in">
@@ -47,7 +48,7 @@
 {% block core_scripts %}
 <script src="/static/js/api.js?v=3"></script>
 <script src="/static/js/sync-common.js?v=5"></script>
-<script src="/static/js/ui.js?v=15"></script>
+<script src="/static/js/ui.js?v=17"></script>
 <script src="/static/js/components/context-menu.js?v=2"></script>
 <script src="/static/js/components/delete-flow.js?v=1"></script>
 <script src="/static/js/update.js?v=3"></script>
