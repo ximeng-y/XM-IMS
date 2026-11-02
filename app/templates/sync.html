@@ -26,7 +26,6 @@
       <div class="grid"><label>数据分支<input id="dataBranch" value="main" required></label><label>本机名称<input id="deviceName" maxlength="80" required></label><label>间隔（分钟）<input id="syncInterval" type="number" min="1" step="1" value="10" required></label></div>
       <label><input type="checkbox" id="autoSync" role="switch" checked>自动检查、提交和推送</label>
       <div class="sync-actions"><button type="submit">保存设置</button><button type="button" id="testConnection" class="btn-outline">测试连接</button><button type="button" id="restartOnboarding" class="btn-outline">开始配置备份</button></div>
-      <p id="credentialStatus" class="muted"></p>
       <p class="muted">认证失败时，请先在本机完成仓库的账号登录或密钥配置，再测试连接。自动同步不会弹出登录窗口，也不会保存你的访问令牌；如需登录 GitHub，请在配置引导中主动操作。</p>
     </form>
   </details>
@@ -43,4 +42,4 @@
   </article>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/js/pages/sync-onboarding.js?v=2"></script><script src="/static/js/pages/sync.js?v=9"></script>{% endblock %}
+{% block scripts %}<script src="/static/js/pages/sync-onboarding.js?v=2"></script><script src="/static/js/pages/sync.js?v=10"></script>{% endblock %}

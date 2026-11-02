@@ -43,7 +43,6 @@ async function refresh(){
   $s('useRemote').hidden=!syncState.configured;
   $s('syncNow').disabled=syncState.busy;
   $s('checkNow').disabled=syncState.busy;
-  text($s('credentialStatus'),'读取：'+(syncState.read_verified?'已验证':'未验证')+'；写入：'+(syncState.write_verified?'已通过实际推送验证':'待首次实际推送验证'));
   const onboardingLabel=syncState.configured?'重新引导':'开始配置备份';
   for(const id of ['startOnboarding','restartOnboarding']){const b=$s(id);if(b){text(b,onboardingLabel);b.disabled=syncState.busy;}}
   const active=syncState.session&&!syncState.business_ready;
