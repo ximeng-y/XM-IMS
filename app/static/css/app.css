@@ -358,9 +358,16 @@ form { margin: 0; }
   align-items: end;
 }
 .form-grid label { margin-bottom: .3rem; font-size: .85rem; color: var(--ink-soft); }
-input:focus, select:focus, textarea:focus {
+/* 勾选框/单选框不套用输入框的蓝色边框：鼠标点击后 :focus 仍停留在控件上，
+   蓝色边框盖满小方框，弹窗里的勾选框会看起来「关不掉」，要等焦点移走才恢复。
+   它们改为只在键盘聚焦时给一圈描边，鼠标点击不染色 */
+input:not([type=checkbox]):not([type=radio]):focus, select:focus, textarea:focus {
   border-color: var(--blue) !important;
   outline: 2px solid rgba(26, 95, 180, .18);
+}
+input[type=checkbox]:focus-visible, input[type=radio]:focus-visible {
+  outline: 2px solid rgba(26, 95, 180, .45);
+  outline-offset: 1px;
 }
 .form-check {
   display: flex; align-items: center; gap: .5rem;
@@ -987,9 +994,15 @@ dialog.sync-onboarding { width: 36rem; max-width: calc(100vw - 2rem); }
 }
 .sync-onboarding .sync-onboarding-option:hover { border-color: var(--blue); }
 .sync-onboarding .sync-onboarding-option small { color: var(--ink-soft); display: block; overflow-wrap: anywhere; }
-.sync-onboarding .sync-onboarding-option input { width: auto; margin-top: .2rem; }
+/* Pico 原生勾选框/单选框是 1.25em 正方形，width:auto 会退回浏览器默认约 13px 宽，
+   高度不变就成了竖条，这里固定方形（同 .form-check 的处理） */
+.sync-onboarding .sync-onboarding-option input {
+  width: 1.25em; height: 1.25em; margin-top: .2rem; flex-shrink: 0;
+}
 .sync-onboarding .sync-onboarding-check { display: flex; gap: .5rem; align-items: center; }
-.sync-onboarding .sync-onboarding-check input { width: auto; }
+.sync-onboarding .sync-onboarding-check input {
+  width: 1.25em; height: 1.25em; margin: 0; flex-shrink: 0;
+}
 .sync-onboarding .sync-onboarding-ok {
   border: 1px solid var(--line-light); border-radius: .5rem;
   background: var(--blue-pale); color: var(--blue-dark); padding: .7rem .9rem;
