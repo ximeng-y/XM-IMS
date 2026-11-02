@@ -5,9 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}概览{% endblock %} · XM-IMS</title>
   <link rel="stylesheet" href="/static/vendor/pico.min.css?v=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=37">
+  <link rel="stylesheet" href="/static/css/app.css?v=38">
+  {% block styles %}{% endblock %}
 </head>
 <body data-page="{% block nav %}{% endblock %}">
+{% block body %}
 <header class="topbar">
   <button type="button" id="navToggle" class="nav-toggle"
           aria-controls="primaryNav" aria-expanded="false" aria-label="打开导航菜单">
@@ -41,12 +43,15 @@
   </main>
 </div>
 <div id="toasts"></div>
+{% endblock %}
+{% block core_scripts %}
 <script src="/static/js/api.js?v=3"></script>
-<script src="/static/js/sync-common.js?v=4"></script>
-<script src="/static/js/ui.js?v=14"></script>
+<script src="/static/js/sync-common.js?v=5"></script>
+<script src="/static/js/ui.js?v=15"></script>
 <script src="/static/js/components/context-menu.js?v=2"></script>
 <script src="/static/js/components/delete-flow.js?v=1"></script>
 <script src="/static/js/update.js?v=3"></script>
+{% endblock %}
 {% block scripts %}{% endblock %}
 </body>
 </html>

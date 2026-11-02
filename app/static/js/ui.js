@@ -253,6 +253,12 @@ const UI = (() => {
     } catch (e) {
       apiFail(e, "无法获取店铺列表");
       XM.state.shops = [];
+      applyNoShop(false);
+      return false;
+    }
+    if (!XM.state.shops.length && Sync.local) {
+      location.replace("/onboarding");
+      return false;
     }
     sel.innerHTML = XM.state.shops
       .map((s) => `<option value="${s.id}">${esc(s.name)}（#${s.id}）</option>`).join("");
@@ -267,6 +273,7 @@ const UI = (() => {
       // 切换店铺后整页刷新，确保所有数据与新店铺上下文一致
       window.location.reload();
     });
+    return true;
   }
 
   async function createShopFlow() {
@@ -453,7 +460,7 @@ const UI = (() => {
     }
     try { if (!await Sync.ensureReady()) return; }
     catch (e) { fail("无法检查同步状态：" + e.message); return; }
-    await initShop();
+    if (!await initShop()) return;
     if (typeof window.PAGE_INIT === "function") {
       try { await window.PAGE_INIT(); }
       catch (e) { console.error(e); fail("页面初始化失败：" + (e.message || e)); }

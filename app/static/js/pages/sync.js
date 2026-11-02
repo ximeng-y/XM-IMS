@@ -2,7 +2,7 @@
    labels 只用于把后端返回的记录键翻成中文说明：库表列名（created_at、spu_id 等）不进界面，
    未收录的键按「该记录的一项内容」笼统呈现，不显示原始键名。 */
 "use strict";
-let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changesOffset=0, settingsLoaded=false;
+let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changesOffset=0, settingsLoaded=false, savedSettings=null;
 const limit=20;
 const $s=id=>document.getElementById(id);
 const text=(node,value)=>{node.textContent=value;};
@@ -10,7 +10,7 @@ const labels={name:'名称',type:'类型',scale:'小数位数',allow_negative:'�
 // 库表里的金额列以分为单位存储，直接输出会与「单价」标签的元单位对不上，这里统一换算
 const money=(x)=>x===null||x===undefined?'空值':(Number(x)/100).toFixed(2)+' 元';
 function printable(v){if(v===null||v===undefined)return '不存在／已删除';if(typeof v!=='object')return String(v);return Object.entries(v).map(([k,x])=>k==='unit_price'?labels[k]+'：'+money(x):(labels[k]||'该记录的一项内容')+'：'+(typeof x==='object'?JSON.stringify(x,null,2):String(x??'空值'))).join('\n');}
-async function action(button,fn){await UI.withBusy(button,async()=>{try{await fn();}catch(e){if(e.code)console.warn('[sync]',e.code,e.message);UI.fail(e.user_message||e.message||'同步操作未完成',{title:UI.codeTitle(e.code)||'同步操作未完成',hint:e.user_hint||''});}await refresh().catch(showRefreshError);});}
+async function action(button,fn){await UI.withBusy(button,async()=>{try{await fn();}catch(e){UI.fail(e.user_message||'同步操作暂未完成',{title:UI.codeTitle(e.code)||'同步操作暂未完成',hint:e.user_hint||''});}await refresh().catch(showRefreshError);});}
 function showLocalOnly(){
   text($s('syncHeading'),'同步管理仅限本机');
   text($s('syncMessage'),'请在运行本程序的电脑上打开此页面来管理数据同步。');
@@ -21,35 +21,43 @@ function showLocalOnly(){
 function showRefreshError(error){
   if(!Sync.local){showLocalOnly();return;}
   text($s('syncHeading'),'同步状态暂不可用');
-  text($s('syncMessage'),(error.user_message||error.message||'连接同步服务失败')+'。请检查程序是否仍在运行，页面会自动重试。');
+  text($s('syncMessage'),(error.user_message||'连接同步服务暂未完成')+'。请确认程序正在运行，页面会自动重试。');
   const badge=$s('syncStatus');if(badge)badge.textContent='同步状态暂不可用';
 }
 async function refresh(){
   if(!Sync.local){showLocalOnly();return;}
   syncState=await Sync.api('GET','/status');Sync.render(syncState);
   if(!settingsLoaded){
-    const settings=await Sync.api('GET','/settings');
+    const settings=await Sync.api('GET','/settings');savedSettings=settings;
     $s('remoteUrl').value=settings.remote;$s('dataBranch').value=settings.branch;$s('deviceName').value=settings.device;$s('syncInterval').value=settings.interval;$s('autoSync').checked=settings.auto;
     settingsLoaded=true;document.querySelectorAll('#syncSettings input,#syncSettings button').forEach(el=>{el.disabled=false;});
   }
   text($s('syncHeading'),Sync.label(syncState));
-  let message=syncState.error?.user_message||syncState.error?.message||({setup:'首次运行：请新建数据集，或配置仓库后从远端恢复。',checking:'检查完成前暂不能使用本程序。',behind:'远端有更新。点击立即同步后重新比较并更新。',conflict:'双方都有修改。点击立即同步进入冲突处理。',synced:'本地已确认与远端同步。',offline:'无法确认远端状态。可重试连接；没有已知冲突时可主动离线进入。',initialize:'远端尚未初始化，请确认使用本地数据。',binding:'本地与远端没有共同基线，请明确选择初始化来源。',local:'数据已保存到本机；配置私有仓库后可同步。'}[syncState.state]||'');
-  if(syncState.legacy_present && syncState.state==='setup')message+=' 检测到旧数据库：文件原样保留，本版本不自动迁移。';
+  let message=syncState.error?.user_message||({setup:'选择开始方式，即可准备第一间店铺。',checking:'正在准备数据，请稍候…',behind:'远端有更新。点击立即同步后重新核对并更新。',conflict:'双方都有修改。点击立即同步进入冲突处理。',synced:'本机与远端的备份已同步。',offline:'连接暂未完成。可重试连接，或按当前状态选择离线进入。',initialize:'仓库准备好后，即可继续首次备份。',binding:'请核对本机与仓库中的数据，在高级维护中选择使用的数据。',local:'数据已保存在本机。'}[syncState.state]||'');
+  if(syncState.legacy_present && syncState.state==='setup')message+=' 检测到旧数据库，原文件已保留。';
   text($s('syncMessage'),message);
   $s('enterApp').hidden=!syncState.business_ready;
-  $s('offlineEnter').hidden=syncState.state!=='offline';
+  const first=await Sync.api('GET','/onboarding/first-use/status');
+  const firstEntry=['choose_source','create_shop','restore_pending'].includes(first.phase)||(first.phase==='waiting'&&!first.has_local_data);
+  const firstBackup=first.has_local_data&&!syncState.business_ready&&['initialize','binding'].includes(syncState.state);
+  $s('continueFirstUse').hidden=!firstEntry;
+  if(firstEntry)$s('enterApp').hidden=true;
+  $s('offlineEnter').hidden=syncState.state!=='offline'||!first.has_local_data;
   $s('offlineEnter').disabled=syncState.busy;
   $s('initializeBox').hidden=!['setup','initialize','binding'].includes(syncState.state);
   $s('useRemote').hidden=!syncState.configured;
-  $s('syncNow').disabled=syncState.busy;
-  $s('checkNow').disabled=syncState.busy;
-  const onboardingLabel=syncState.configured?'重新引导':'开始配置备份';
-  for(const id of ['startOnboarding','restartOnboarding']){const b=$s(id);if(b){text(b,onboardingLabel);b.disabled=syncState.busy;}}
+  $s('syncNow').hidden=firstEntry||firstBackup;$s('checkNow').hidden=firstEntry||firstBackup;$s('startOnboarding').hidden=firstEntry;
+  text($s('startOnboarding'),firstBackup?'继续配置备份':'配置备份');
+  $s('syncNow').disabled=syncState.busy;$s('checkNow').disabled=syncState.busy;
+  $s('startOnboarding').disabled=syncState.busy;$s('restartOnboarding').disabled=syncState.busy;
+  updateConnectionState();
   const active=syncState.session&&!syncState.business_ready;
   $s('conflictPanel').hidden=!active;
   if(active&&conflictSession!==syncState.session){conflictSession=syncState.session;offset=0;try{await loadConflicts();}catch(error){conflictSession=null;throw error;}}
-  if(!syncState.configured)$s('settingsPanel').open=true;
 }
+function settingsValues(){return {remote:$s('remoteUrl').value.trim(),branch:$s('dataBranch').value.trim(),device:$s('deviceName').value.trim(),interval:Number($s('syncInterval').value),auto:$s('autoSync').checked};}
+function settingsDirty(){const values=settingsValues();return !savedSettings||!$s('syncInterval').value.trim()||Object.keys(values).some(key=>values[key]!==savedSettings[key]);}
+function updateConnectionState(){const dirty=settingsDirty();$s('testConnection').disabled=!settingsLoaded||dirty||!!syncState?.busy;text($s('connectionSaveHint'),dirty?'先保存后测试':'');}
 async function loadConflicts(){
   if(!conflictSession)return;
   const p=await Sync.api('GET','/conflicts/'+conflictSession+'?offset='+offset+'&limit='+limit+'&unresolved='+$s('onlyUnresolved').checked);
@@ -79,12 +87,14 @@ async function saveChoice(button,id,choice){await action(button,async()=>{await 
 window.PAGE_INIT=async()=>{
   if(!Sync.local){showLocalOnly();return;}
   document.querySelectorAll('#syncSettings input,#syncSettings button').forEach(el=>{el.disabled=true;});
-  $s('syncSettings').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{await Sync.api('PATCH','/settings',{remote:$s('remoteUrl').value.trim(),branch:$s('dataBranch').value.trim(),device:$s('deviceName').value.trim(),interval:Number($s('syncInterval').value),auto:$s('autoSync').checked});UI.ok('设置已保存');});};
-  $s('testConnection').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/test-connection');UI.ok('读取连接通过；写权限以实际推送为准');});
+  $s('syncSettings').oninput=updateConnectionState;
+  $s('syncSettings').onchange=updateConnectionState;
+  $s('syncSettings').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{savedSettings=await Sync.api('PATCH','/settings',settingsValues());UI.ok('设置已保存');});};
+  $s('testConnection').onclick=e=>{if(settingsDirty())return;action(e.currentTarget,async()=>{await Sync.api('POST','/test-connection');UI.ok('已连接到备份仓库');});};
   $s('syncNow').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/run',{synchronize:true});conflictSession=null;});
   $s('checkNow').onclick=e=>action(e.currentTarget,()=>Sync.api('POST','/run',{synchronize:false}));
-  $s('startOnboarding').onclick=openOnboarding;
-  $s('restartOnboarding').onclick=openOnboarding;
+  $s('startOnboarding').onclick=()=>openOnboarding('backup');
+  $s('restartOnboarding').onclick=()=>openOnboarding('maintenance');
   $s('offlineEnter').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/offline');location.href='/';});
   for(const [id,source] of [['useLocal','local'],['useRemote','remote']])$s(id).onclick=e=>action(e.currentTarget,async()=>{if(await UI.confirmDialog({title:'确认初始化来源',bodyHtml:source==='local'?'将使用本地数据（没有数据时新建）。如远端已有数据，其当前内容将被本地版本替换，旧版本保留在历史中。':'将从远端恢复整套数据，当前本地数据会先保留副本。',confirmText:'确认使用',danger:true}))await Sync.api('POST','/initialize',{source,confirm:true});});
   $s('previousChanges').onclick=e=>action(e.currentTarget,async()=>{changesOffset=Math.max(0,changesOffset-limit);await loadChanges();});
@@ -114,11 +124,12 @@ async function loadChanges(){
 }
 
 // 打开备份配置向导：草稿以已保存设置为准，不用未保存的表单内容隐式应用。
-async function openOnboarding(){
+async function openOnboarding(intent){
   let settings;
   try{settings=await Sync.api('GET','/settings');}
-  catch(e){UI.fail(e.user_message||e.message||'读取同步设置未成功');return;}
-  SyncOnboarding.open({settings,onDone:reloadSettings});
+  catch(e){UI.fail(e.user_message||'读取备份设置暂未完成');return;}
+  BackupOnboarding.open({intent,settings,request:Sync.api,onComplete:reloadSettings,
+    onCancel:context=>context.result?.settings_applied?reloadSettings():refresh().catch(showRefreshError)});
 }
 // 向导结束后明确重读设置表单：重置 settingsLoaded，随后刷新同步状态。
 async function reloadSettings(){settingsLoaded=false;await refresh().catch(showRefreshError);}
