@@ -1006,11 +1006,11 @@ dialog.sync-onboarding { width: 36rem; max-width: calc(100vw - 2rem); }
    目前仅数据同步页「自动检查、提交和推送」使用 role="switch"。
    Pico 原生开关是胶囊轨道 + 圆形滑块，与全站直角风格不符，这里把
    轨道圆角从 1.25em 收小为 0.25em（近长方形），滑块从 border-radius:50%
-   改为同样的小圆角，使白色滑块变成与边框协调的方块。 */
+   改为 0，白色滑块呈直角方形，与全站直角风格一致。 */
 [type=checkbox][role=switch] {
   --pico-border-radius: 0.25em;
   border-radius: 0.25em;
 }
 [type=checkbox][role=switch]::before {
-  border-radius: 0.25em;
+  border-radius: 0;
 }
