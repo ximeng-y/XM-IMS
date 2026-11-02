@@ -82,7 +82,25 @@ window.SyncOnboarding = (() => {
         async enter(c) {
           // 本步骤自行确认前置：GCM 缺失时就地提供安装动作，不假设某个固定步骤已执行。
           if (!c.env || !c.env.gcm.available) c.env = await Sync.api('GET', '/onboarding/environment');
-          if (c.env.gcm.available) c.github = await Sync.api('GET', '/onboarding/github');
+          if (!c.env.gcm.available) return;
+          // 已经针对当前所选账号取过结果（含验证失败的原因）就不再重复请求；
+          // 否则每次重绘都会覆盖掉刚登录成功的状态，本步永远无法通过。
+          // 账号名大小写由后端按不区分大小写比对，这里同样忽略大小写。
+          const sameAccount = (a, b) => (a || '').toLowerCase() === (b || '').toLowerCase();
+          if (c.github && sameAccount(c.github.selected, c.draft.github_account)) return;
+          const account = c.draft.github_account;
+          if (!account) {
+            c.github = await Sync.api('GET', '/onboarding/github');
+            return;
+          }
+          try {
+            c.github = await Sync.api('GET', '/onboarding/github?account=' + encodeURIComponent(account));
+          } catch (e) {
+            // 记住的账号已从本机移除：退回账号列表，让用户重新选择或登录。
+            if (e.code !== 'ONBOARDING_GITHUB_ACCOUNT') throw e;
+            c.draft.github_account = '';
+            c.github = await Sync.api('GET', '/onboarding/github');
+          }
         },
         render(c, box) {
           if (!c.env.gcm.available) {
@@ -413,6 +431,8 @@ window.SyncOnboarding = (() => {
         if (!radio.checked || ctx.mode === value) return;
         invalidateCheck(ctx);
         ctx.mode = value;
+        // 选择本身就满足本步条件，立即刷新按钮，否则要离开本步再回来才会亮起。
+        updateNav();
       };
       const wrap = document.createElement('span');
       wrap.append(Object.assign(document.createElement('strong'), { textContent: title }),
@@ -441,7 +461,8 @@ window.SyncOnboarding = (() => {
       if (placeholder) input.placeholder = placeholder;
       if (type) input.type = type;
       input.autocomplete = 'off';
-      input.oninput = () => onInput(input.value);
+      // 填写内容常是本步的放行条件，输入后立即刷新按钮状态。
+      input.oninput = () => { onInput(input.value); updateNav(); };
       label.append(input);
       return label;
     }
