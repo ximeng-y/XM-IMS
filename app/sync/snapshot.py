@@ -79,8 +79,40 @@ def _known_catalogs(kind):
             _template(schema.SHOP_DDL_V3, alter=True)]
 
 
+def strip_comments(sql):
+    """去掉 DDL 里的 `--` 行注释，保留字符串字面量
+
+    SQLite 把建表语句原文抄进库文件，注释也在其中且之后无法改写。同一结构在不同
+    版本里只要改过注释，库里抄下的原文就对不上当前模板，会被误判为结构不兼容。
+    因此比对前先剥掉注释，只比较真实结构。
+
+    逐字符扫描而非正则替换：字符串字面量里的 `--` 不是注释，不能用 `--.*$` 一刀切。
+    """
+    result, index, quoted = [], 0, None
+    while index < len(sql):
+        char = sql[index]
+        if quoted:
+            result.append(char)
+            if char == quoted:
+                quoted = None
+            index += 1
+        elif char in ("'", '"'):
+            quoted = char
+            result.append(char)
+            index += 1
+        elif char == "-" and sql.startswith("--", index):
+            end = sql.find("\n", index)
+            index = len(sql) if end < 0 else end
+        else:
+            result.append(char)
+            index += 1
+    return "".join(result)
+
+
 def normalized(objects):
-    return [{**o, "sql": re.sub(r"\s+", " ", o["sql"]).strip()} for o in objects]
+    # 注释不参与比较，结构细节（列、类型、约束、索引、外键）仍逐字比对
+    return [{**o, "sql": re.sub(r"\s+", " ", strip_comments(o["sql"])).strip()} for o in objects]
+
 
 
 def check_schema(objects, kind):
