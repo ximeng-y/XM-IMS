@@ -1,0 +1,50 @@
+/* 引导专用布局；沿用全站控件和焦点样式，长内容在页面或弹窗内部滚动。 */
+.first-use { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem; }
+.first-use > header { margin-bottom: 2rem; }
+.first-use .brand { display: inline-flex; align-items: center; gap: .6rem; margin-bottom: 1.5rem; color: var(--ink); font-weight: 700; text-decoration: none; }
+.first-use .logo { display: inline-grid; place-items: center; width: 2rem; height: 2rem; background: var(--blue); color: white; border-radius: .25rem; }
+.first-use h1 { margin-bottom: .5rem; }
+.sync-onboarding { min-width: 0; }
+.sync-onboarding [hidden] { display: none !important; }
+dialog.sync-onboarding { width: 38rem; max-width: calc(100vw - 2rem); max-height: calc(100dvh - 2rem); padding: 1.5rem; overflow: auto; }
+.sync-onboarding .sync-onboarding-counter { font-size: 1.1rem; }
+.sync-onboarding .sync-onboarding-steps { display: flex; flex-direction: column; gap: .6rem; }
+.sync-onboarding .sync-onboarding-note { font-size: .85rem; color: var(--ink-soft); margin: 0; overflow-wrap: anywhere; }
+.sync-onboarding .sync-onboarding-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; align-items: end; }
+.sync-onboarding .sync-onboarding-options { display: flex; flex-direction: column; gap: .4rem; }
+.sync-onboarding .sync-onboarding-option {
+  display: flex; gap: .6rem; align-items: flex-start;
+  border: 1px solid var(--line-light); border-radius: .5rem; padding: .6rem .8rem; cursor: pointer;
+}
+.sync-onboarding .sync-onboarding-option:hover { border-color: var(--blue); }
+.sync-onboarding .sync-onboarding-option small { color: var(--ink-soft); display: block; overflow-wrap: anywhere; }
+/* 保持 Pico 的 1.25em 方形尺寸，避免浏览器默认宽度把控件压成竖条。 */
+.sync-onboarding .sync-onboarding-option input {
+  width: 1.25em; height: 1.25em; margin-top: .2rem; flex-shrink: 0;
+}
+.sync-onboarding .sync-onboarding-check { display: flex; gap: .5rem; align-items: center; }
+.sync-onboarding .sync-onboarding-check input {
+  width: 1.25em; height: 1.25em; margin: 0; flex-shrink: 0;
+}
+.sync-onboarding .sync-onboarding-ok {
+  border: 1px solid var(--line-light); border-radius: .5rem;
+  background: var(--blue-pale); color: var(--blue-dark); padding: .7rem .9rem;
+}
+.sync-onboarding .sync-onboarding-error {
+  border: 1px solid var(--danger); border-radius: .5rem;
+  background: #fdf0ef; padding: .7rem .9rem;
+}
+.sync-onboarding .sync-onboarding-error p { margin: .3rem 0 0; }
+.sync-onboarding .sync-onboarding-change { overflow-wrap: anywhere; font-size: .85rem; }
+.sync-onboarding .dlg-body { max-height: 60vh; overflow: auto; }
+.sync-onboarding .onboarding-footer { display: flex; justify-content: flex-end; gap: .6rem; flex-wrap: wrap; margin-top: 1.2rem; }
+.sync-onboarding .onboarding-footer button { margin: 0; }
+.sync-onboarding .onboarding-start { display: grid; gap: 1rem; }
+.sync-onboarding .onboarding-start button { text-align: left; padding: 1.2rem; }
+.sync-onboarding .onboarding-start small { display: block; margin-top: .3rem; }
+.sync-onboarding .onboarding-summary { max-height: 18rem; overflow: auto; }
+.sync-onboarding .onboarding-summary li { overflow-wrap: anywhere; }
+@media (max-width: 40rem) {
+  .first-use { margin: 1.5rem auto; padding: 0 1rem; }
+  .sync-onboarding .sync-onboarding-grid { grid-template-columns: 1fr; }
+}

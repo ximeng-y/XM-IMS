@@ -12,7 +12,6 @@ from . import snapshot
 from .common import atomic_json, read_json, remove_tree, replace_path, fail, ProcessLock
 from .gitstore import GitStore
 from .merge import Merger
-from .onboarding import Onboarding
 
 DEFAULTS = {"remote": "", "branch": "main", "auto": True, "interval": 10, "device": "本机",
             "github_account": ""}
@@ -37,7 +36,6 @@ class SyncManager:
         self.started = False
         self._merger = None
         self._space = (0.0, 0)
-        self.onboarding = Onboarding(self)
 
     @staticmethod
     def _error_entry(exc):
@@ -298,7 +296,7 @@ class SyncManager:
         with self.operation():
             return self._initialize_body(source)
 
-    def _initialize_body(self, source):
+    def _initialize_body(self, source, *, checked_remote=None):
         # 已持有 operation 锁时（向导最终应用）可直接调用本方法，不再嵌套进入 operation()。
         if any(self.state.get(k) for k in ("pending", "session", "journal", "requires_resolution")):
             self.error = None
@@ -319,6 +317,11 @@ class SyncManager:
             return self.status()
         git = self.git()
         tip = git.fetch()
+        # 新手流程绑定已确认的地址、分支和提交；旧初始化入口仍保留原行为。
+        if checked_remote is not None and (git.remote, git.branch, tip) != checked_remote:
+            fail("ONBOARDING_REMOTE_CHANGED", "实际初始化的远端提交与确认结果不一致",
+                 user_message="备份内容有新的变化",
+                 user_hint="请重新检查后确认")
         remote = self.remote_snapshot(git, tip) if tip else None
         if source == "remote":
             if not remote:

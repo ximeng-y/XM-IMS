@@ -98,7 +98,8 @@ function renderOverview() {
   if (!rows.length) {
     const msg = searchError ? `搜索失败：${UI.esc(searchError)}`
       : query ? "没有匹配的 SPU / SKU"
-      : "该店铺还没有 SPU，可点上方「新建 SPU」或「新建单品」创建";
+      : '从第一个单品开始记录库存。<br><a href="/inventory?op=new-item">添加第一个单品</a><br>' +
+        '<a href="/fields">设置成本、售价等字段（可稍后）</a>';
     tbody.innerHTML = `<tr><td colspan="${colCount}" class="t-empty">${msg}</td></tr>`;
     return;
   }
