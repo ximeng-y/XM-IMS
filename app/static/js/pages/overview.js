@@ -19,7 +19,7 @@ window.PAGE_INIT = async function () {
   if (!movs) return;
   const tbody = $("#recentMovs");
   if (!movs.movements.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="t-empty">还没有流水，去「库存」页记一笔</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="t-empty">还没有流水，<a href="/inventory">去「库存」页记一笔</a></td></tr>`;
     return;
   }
   // 文本列单元格：固定列宽下长内容被省略号截断，title 让悬停可看全文；空值不挂 title

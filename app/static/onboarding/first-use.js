@@ -45,9 +45,12 @@ document.addEventListener("DOMContentLoaded", () => {
     location.replace("/inventory");
   }
   function showComplete(preferred) {
-    root.replaceChildren(node("h2", "店铺已准备好"), node("p", "数据保存在本机。"),
+    // 两个入口放进独立操作容器，由容器统一给出间距；全局按钮外边距已被清零
+    const actions = node("div", undefined, "onboarding-actions");
+    actions.append(
       button("开始使用", () => enterBusiness(state.shops, preferred), ""),
       button("配置远端备份（可稍后）", () => startBackup("backup")));
+    root.replaceChildren(node("h2", "店铺已准备好"), node("p", "数据保存在本机。"), actions);
   }
   function showShop() {
     root.replaceChildren(node("h2", "创建第一间店铺"),
