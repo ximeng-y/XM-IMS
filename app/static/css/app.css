@@ -380,6 +380,13 @@ input[type=checkbox]:focus-visible, input[type=radio]:focus-visible {
 .hint { font-size: .78rem; color: var(--ink-soft); margin-top: .25rem; }
 .fieldreq { color: var(--danger); }
 
+/* 面板内的操作按钮行（设置页等） */
+.panel-actions {
+  display: flex; align-items: center; gap: .6rem;
+  flex-wrap: wrap; margin-top: .8rem;
+}
+.panel-actions > * { margin-bottom: 0; }
+
 /* ---------- SPU 可搜索组合框（单品新建表单） ---------- */
 .spu-combo { position: relative; }
 .spu-combo-list {

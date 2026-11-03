@@ -515,7 +515,8 @@ const UI = (() => {
         a.setAttribute("aria-current", "page");
       }
     });
-    if (page === "sync") {
+    // 同步与设置页不使用店铺上下文：零店铺时也要能用，顶栏店铺框一并隐藏
+    if (page === "sync" || page === "settings") {
       $(".shop-box").hidden = true;
       if (typeof window.PAGE_INIT === "function") await window.PAGE_INIT();
       return;

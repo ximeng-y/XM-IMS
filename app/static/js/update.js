@@ -1,5 +1,6 @@
 /* 自动更新提示：页面加载后查询 /update/status，发现新版本时弹窗询问
-   - 同步页（数据安全操作）不打扰
+   - 同步页与设置页（数据与更新管理页）不打扰
+   - 关闭「启动时自动检查新版本」后不自动检查、不弹窗
    - 后台检查是启动时另起线程跑的 git ls-remote，可能比页面加载慢，
      因此 checked=false 时按间隔重试若干次，避免整次启动都不提示
    - 检查类网络/接口错误一律静默（console.warn），不弹错误 toast */
@@ -9,29 +10,9 @@ const UPDATE_FIRST_DELAY = 800;   // 首查延迟，避免抢首屏
 const UPDATE_RETRY_MS = 3000;     // 后台检查未完成时的重试间隔
 const UPDATE_MAX_RETRY = 25;      // 覆盖 origin 与两个镜像依次检查的超时窗口
 
-window.addEventListener("load", () => {
-  setTimeout(() => check(0), UPDATE_FIRST_DELAY);
-
-  async function check(tries) {
-    if (document.body.dataset.page === "sync") return;
-    let st;
-    try {
-      st = await XM.get("/update/status");
-    } catch (e) {
-      console.warn("[update] 检查更新失败（静默）", e);
-      return;
-    }
-    if (st && st.checked === false && tries < UPDATE_MAX_RETRY) {
-      setTimeout(() => check(tries + 1), UPDATE_RETRY_MS);
-      return;
-    }
-    if (!st || !st.has_update || !st.latest_tag) return;
-    // 本次会话已提示过该版本则不再打扰
-    if (sessionStorage.getItem("xmims.updatePrompted") === st.latest_tag) return;
-    prompt(st);
-  }
-
-  function prompt(st) {
+// 更新弹窗：启动提示与设置页的「检查更新」共用同一实现
+window.UpdatePrompt = (() => {
+  function show(st) {
     const wrap = document.createElement("div");
     wrap.innerHTML =
       "<ul class='update-info'>" +
@@ -81,5 +62,38 @@ window.addEventListener("load", () => {
       dlg.close();
     };
     dlg.showModal();
+  }
+
+  return { show };
+})();
+
+window.addEventListener("load", () => {
+  const page = document.body.dataset.page;
+  if (page === "sync" || page === "settings") return;
+  setTimeout(() => check(0), UPDATE_FIRST_DELAY);
+
+  async function check(tries) {
+    // 用户关闭自动检查后不发起提示；读取失败按默认值继续，避免设置故障吞掉提醒
+    let auto = true;
+    try {
+      const settings = await XM.get("/update/settings");
+      auto = settings.auto_check !== false;
+    } catch (_) { /* 读取失败时保持默认开启 */ }
+    if (!auto) return;
+    let st;
+    try {
+      st = await XM.get("/update/status");
+    } catch (e) {
+      console.warn("[update] 检查更新失败（静默）", e);
+      return;
+    }
+    if (st && st.checked === false && tries < UPDATE_MAX_RETRY) {
+      setTimeout(() => check(tries + 1), UPDATE_RETRY_MS);
+      return;
+    }
+    if (!st || !st.has_update || !st.latest_tag) return;
+    // 本次会话已提示过该版本则不再打扰
+    if (sessionStorage.getItem("xmims.updatePrompted") === st.latest_tag) return;
+    UpdatePrompt.show(st);
   }
 });

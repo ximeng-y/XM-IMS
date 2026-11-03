@@ -31,4 +31,5 @@ router.get("/movements", response_class=HTMLResponse)(_page("movements.html"))
 router.get("/shops", response_class=HTMLResponse)(_page("shops.html"))
 
 router.get("/sync", response_class=HTMLResponse)(_page("sync.html"))
+router.get("/settings", response_class=HTMLResponse)(_page("settings.html"))
 router.get("/onboarding", response_class=HTMLResponse)(_page("onboarding/first-use.html"))

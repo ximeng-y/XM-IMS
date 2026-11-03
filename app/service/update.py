@@ -20,6 +20,7 @@ from pathlib import Path, PurePosixPath
 from .. import db
 from ..config import BASE_DIR, DATA_ROOT
 from ..errors import error_dict
+from ..sync.common import atomic_json, read_json
 from ..version import APP_VERSION
 
 # 远端操作超时（秒）
@@ -47,6 +48,34 @@ _install_lock = threading.Lock()
 _installed_tag = None
 _PROCESS_STARTED = time.time()
 _SKIPPED = {"data", ".git", ".venv", ".xmtemp", "backups", "exports", ".env"}
+
+# 用户设置：与同步设置同级存放，切换数据代次不影响
+DEFAULT_SETTINGS = {"auto_check": True}
+
+
+def _settings_path():
+    return DATA_ROOT / "update" / "settings.json"
+
+
+def load_settings():
+    """读取更新检查设置；文件缺失或损坏时回落默认值"""
+    try:
+        saved = read_json(_settings_path(), {}) or {}
+    except (OSError, ValueError):
+        saved = {}
+    auto = saved.get("auto_check")
+    return {"auto_check": auto if isinstance(auto, bool) else DEFAULT_SETTINGS["auto_check"]}
+
+
+def save_settings(values):
+    """校验并落盘更新设置，返回完整设置"""
+    current = load_settings()
+    if "auto_check" in values:
+        if not isinstance(values["auto_check"], bool):
+            raise ValueError("auto_check 必须是布尔值")
+        current["auto_check"] = values["auto_check"]
+    atomic_json(_settings_path(), current)
+    return current
 
 
 def _git(args, timeout):
@@ -197,8 +226,13 @@ def check_update(force=False):
 
 
 def start_background_check():
-    """后台线程执行一次更新检查，不阻塞程序启动；模块级标记防止重复启动"""
+    """启动时的自动检查：用户关闭自动检查则不发起网络请求。
+
+    模块级标记只在真正启动线程后置位，用户开启自动检查后仍可补做一次。
+    """
     global _bg_started
+    if not load_settings()["auto_check"]:
+        return
     with _bg_lock:
         if _bg_started:
             return
