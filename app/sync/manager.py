@@ -8,14 +8,14 @@ import uuid
 from pathlib import Path
 from .. import config, db
 from ..errors import ApiError, error_dict
-from . import snapshot
+from . import settings as sync_settings, snapshot
 from .common import fail, ProcessLock
 from ..storage.files import atomic_json, read_json, remove_tree, replace_path
 from .gitstore import GitStore
+from .local_backup import LocalBackups
 from .merge import Merger
 
-DEFAULTS = {"remote": "", "branch": "main", "auto": True, "interval": 10, "device": "本机",
-            "github_account": ""}
+DEFAULTS = sync_settings.DEFAULTS
 
 
 class SyncManager:
@@ -24,7 +24,7 @@ class SyncManager:
         self.directory = self.root / "sync"
         self.runtime = self.root / "runtime"
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.settings = {**DEFAULTS, **read_json(self.directory / "settings.json", {})}
+        self.settings = sync_settings.normalize(read_json(self.directory / "settings.json", {}))
         self.state = read_json(self.directory / "state.json", {"cache_order": [], "pending": []})
         self.mutex = threading.RLock()
         self.process_lock = ProcessLock(self.runtime / "instance.lock")
@@ -33,10 +33,14 @@ class SyncManager:
         self.captured_epoch = None
         self.status_name = "checking"
         self.error = None
+        self.local_error = None
         self.busy = False
         self.started = False
         self._merger = None
         self._space = (0.0, 0)
+        # (epoch, digest)：仅用于本进程内的内容关系缓存，不能替代持久备份/上传状态。
+        self._relation = None
+        self.backups = LocalBackups(self.directory / "local-backups", self.settings["device"])
 
     @staticmethod
     def _error_entry(exc):
@@ -55,15 +59,21 @@ class SyncManager:
         """记录后台同步错误；不改变业务门禁，已开放的业务继续可用。"""
         self.error = self._error_entry(error) if isinstance(error, ApiError) else error
 
+    def record_local_error(self, error):
+        """本地备份错误与远端错误分开表达，互不覆盖。"""
+        self.local_error = self._error_entry(error) if isinstance(error, ApiError) else error
+
     def background_window(self):
-        """后台自动同步的节奏与当前可执行性。
+        """后台自动任务的节奏与当前可执行性。
 
         应用生命周期用这些公开读取决定是否触发一次运行，不必直接读设置或内部字典。
-        同步切换期间（存在冲突会话而业务未就绪）不自动运行。
+        同步切换期间（存在冲突会话而业务未就绪）不自动运行；本地阶段与云端阶段
+        各自判断前置条件。
         """
         settings = self.settings_snapshot()
         return {"interval": settings["interval"], "remote": bool(settings["remote"]),
-                "auto": bool(settings["auto"]), "started": self.started, "busy": self.busy,
+                "auto": bool(settings["auto"]), "local_auto": bool(settings["local_auto"]),
+                "started": self.started, "busy": self.busy,
                 "session_open": bool(self.state.get("session")) and not db.business_ready}
 
     def block_start(self, error):
@@ -97,11 +107,42 @@ class SyncManager:
             if journal.get("apply"):
                 self.apply_snapshot(journal["hash"])
             self.mark_synced(journal["hash"], journal["commit"], compact=False)
+        if not self.settings["auto"]:
+            # 关闭自动上云：启动阶段不访问远端；本地自动备份仍按开关执行。
+            self._start_offline_cloud()
+            if self.settings["local_auto"] and db.business_ready:
+                self._automatic_local_backup("scheduled")
+            return
+        if self.settings["local_auto"] and self.active:
+            # 先保存当前版本，保证启动采用远端数据前已有本地保护。
+            self._automatic_local_backup("scheduled")
         if self.settings["remote"]:
             self.run(startup=True, synchronize=True)
         else:
             self.status_name = "local" if self.active else "setup"
             db.set_ready(bool(self.active))
+
+    def _start_offline_cloud(self):
+        """关闭自动上云后的启动收尾：只按本机数据与已知状态开放业务。
+
+        未解决的冲突、未完成的冲突会话与未确认的推送/替换日志都属于已知问题，
+        不能为了离线使用而跳过；无活动数据时仍进入首次使用流程。
+        """
+        if self.state.get("requires_resolution") or self.state.get("session"):
+            self.status_name = "conflict"
+            db.set_ready(False)
+            return
+        journal = self.state.get("journal")
+        if journal and not journal.get("confirmed"):
+            self.status_name = "blocked"
+            self.error = error_dict(
+                "SYNC_JOURNAL_PENDING", "上次同步未确认，需联网检查后才能继续",
+                user_message="上次同步没有完成",
+                user_hint="请打开数据同步页面，点击「检查远端」完成上次的操作")
+            db.set_ready(False)
+            return
+        self.status_name = "local" if self.active else "setup"
+        db.set_ready(bool(self.active))
 
     def upgrade_active_shops(self):
         """内部访问阶段把当前代次的店铺库升到当前结构版本
@@ -220,7 +261,12 @@ class SyncManager:
             return self.directory / "objects" / digest
         return source
 
-    def capture(self, force=False):
+    def capture(self, force=False, advance=True):
+        """生成一致性快照并纳入内容缓存。
+
+        advance=False 供状态查询使用：只取内容标识，不推进「已捕获」标记，
+        因此 dirty 仍按原有的捕获口径表达。
+        """
         if not self.active:
             return None
         marker = db.epoch()
@@ -248,12 +294,29 @@ class SyncManager:
             digest = self.cache(text)
             self.state["last_capture"] = {"write_pause_seconds": pause, "total_seconds": time.perf_counter() - started}
             self.state["local_hash"] = digest
-            self.captured_epoch = captured
+            if advance:
+                self.captured_epoch = captured
+            self._relation = (captured, digest)
             self.save()
             return digest
         finally:
             remove_tree(raw, self.directory)
             remove_tree(text, self.directory)
+
+    def current_digest(self):
+        """当前运行数据的内容标识；只复用已有捕获缓存，不新导出整套数据。
+
+        状态轮询每几秒一次，不能每次都完整导出。尚未捕获的写入返回 None，
+        由调用方的「有修改待备份」表达；需要精确内容时走 capture(force=True)。
+        """
+        if not self.active:
+            return None
+        marker = db.epoch()
+        if marker == self.captured_epoch and self.state.get("local_hash"):
+            return self.state["local_hash"]
+        if self._relation and self._relation[0] == marker:
+            return self._relation[1]
+        return None
 
     def local_commit(self, git, digest):
         head = git.head()
@@ -386,8 +449,9 @@ class SyncManager:
             fail("SETTINGS_INVALID", "设置包含未知字段",
              user_message="提交的设置中包含无法识别的项",
              user_hint="请刷新页面后重新填写")
-        updated = {**self.settings, **values}
-        if type(updated["interval"]) is not int or updated["interval"] < 1 or type(updated["auto"]) is not bool:
+        updated = sync_settings.merge(self.settings, values)
+        if type(updated["interval"]) is not int or updated["interval"] < 1 \
+                or type(updated["auto"]) is not bool or type(updated["local_auto"]) is not bool:
             fail("SETTINGS_INVALID", "自动同步间隔必须是至少 1 分钟的整数",
              user_message="自动同步间隔至少为 1 分钟",
              user_hint="请填写一个不小于 1 的整数")
@@ -422,6 +486,7 @@ class SyncManager:
             for key in ("baseline", "base_commit", "write_verified", "read_verified", "requires_resolution"):
                 self.state.pop(key, None)
         self.settings = updated
+        self.backups.device = updated["device"]
         atomic_json(self.directory / "settings.json", self.settings)
         self.save()
         return self.settings
@@ -434,109 +499,311 @@ class SyncManager:
             self.save()
             return {"read_verified": True, "write_verified": bool(self.state.get("write_verified"))}
 
-    def run(self, startup=False, synchronize=False):
+    def run(self, startup=False, synchronize=False, automatic=False):
+        """执行一次同步检查；automatic=True 表示后台自动上云，只能用已保存的本地备份上传。"""
         with self.operation():
-            was_ready = db.business_ready
-            self.error = None
-            if synchronize:
-                db.set_ready(False)
+            return self._run_locked(startup=startup, synchronize=synchronize, automatic=automatic)
+
+    def _run_locked(self, startup=False, synchronize=False, automatic=False):
+        was_ready = db.business_ready
+        self.error = None
+        if synchronize:
+            db.set_ready(False)
+        try:
+            if not self.settings["remote"]:
+                if not startup and self.active:
+                    # 未配置远端也能显式操作本地历史；失败只记录本地错误。
+                    self._save_current("sync")
+                self.status_name = "local" if self.active else "setup"
+                db.set_ready(bool(self.active))
+                return self.status()
+            git = self.git()
+            if synchronize and self.active:
+                # 显式同步处理当前数据，先把它保存到本地历史，形成可上传候选。
+                self._save_current("sync")
+            local = self.capture()
             try:
-                if not self.settings["remote"]:
-                    self.status_name = "local" if self.active else "setup"
-                    db.set_ready(bool(self.active))
-                    return self.status()
-                git = self.git()
-                local = self.capture()
-                try:
-                    tip = git.fetch()
-                except ApiError:
-                    if local and self.state.get("baseline") and not self.state.get("session"):
-                        self.local_commit(git, local)
-                    raise
-                self.state["read_verified"] = True
-                remote = self.remote_snapshot(git, tip) if tip else None
-                baseline = self.state.get("baseline")
-                if baseline is None:
-                    empty = not self.active
-                    if self.active:
-                        with db.internal_access(), db.coordinated_access():
-                            empty = db.index_db().conn.execute("SELECT COUNT(*) FROM shops").fetchone()[0] == 0
-                    if remote and empty:
-                        db.set_ready(False)
-                        self.apply_snapshot(remote)
-                        self.mark_synced(remote, tip)
-                        db.set_ready(True)
-                    else:
-                        self.status_name = "binding" if remote else "initialize"
-                        db.set_ready(was_ready and not startup)
-                    return self.status()
-                if not remote:
-                    fail("REMOTE_MISSING", "已绑定的远端分支消失，禁止自动重新初始化",
-                     user_message="远端的分支不存在了",
-                     user_hint="请确认远端仓库和分支，或在下方重新选择数据来源")
-                if read_json(self._snapshot_source(remote) / "manifest.json")["dataset"] != self.active["dataset"]:
-                    fail("DATASET_CONFLICT", "远端数据集已改变，请重新绑定并明确选择数据来源",
-                     user_message="远端换成了另一套数据",
-                     user_hint="请在下方明确选择以本地数据还是远端数据为准")
-                self.state["remote_hash"], self.state["remote_commit"] = remote, tip
-                journal = self.state.get("journal")
-                session = self.state.get("session")
-                if journal and journal.get("apply") and tip == journal["commit"] and remote == journal["hash"] and session and local == session["local"]:
-                    journal["confirmed"] = True
-                    self.save()
+                tip = git.fetch()
+            except ApiError:
+                if local and self.state.get("baseline") and not self.state.get("session"):
+                    self.local_commit(git, local)
+                raise
+            self.state["read_verified"] = True
+            remote = self.remote_snapshot(git, tip) if tip else None
+            baseline = self.state.get("baseline")
+            if baseline is None:
+                empty = not self.active
+                if self.active:
+                    with db.internal_access(), db.coordinated_access():
+                        empty = db.index_db().conn.execute("SELECT COUNT(*) FROM shops").fetchone()[0] == 0
+                if remote and empty:
+                    db.set_ready(False)
                     self.apply_snapshot(remote)
                     self.mark_synced(remote, tip)
                     db.set_ready(True)
-                    return self.status()
-                if local == remote:
-                    head = git.head()
-                    if self.state.get("pending") and head != tip and not git.is_ancestor(head, tip):
-                        commit = git.commit(self.object(local), "合并内容一致的离线历史", [tip, head])
-                        self.publish(git, local, commit, apply=False)
-                    else:
-                        self.mark_synced(local, tip)
-                    db.set_ready(True)
-                elif remote == baseline:
+                else:
+                    self.status_name = "binding" if remote else "initialize"
+                    db.set_ready(was_ready and not startup)
+                return self.status()
+            if not remote:
+                fail("REMOTE_MISSING", "已绑定的远端分支消失，禁止自动重新初始化",
+                 user_message="远端的分支不存在了",
+                 user_hint="请确认远端仓库和分支，或在下方重新选择数据来源")
+            if read_json(self._snapshot_source(remote) / "manifest.json")["dataset"] != self.active["dataset"]:
+                fail("DATASET_CONFLICT", "远端数据集已改变，请重新绑定并明确选择数据来源",
+                 user_message="远端换成了另一套数据",
+                 user_hint="请在下方明确选择以本地数据还是远端数据为准")
+            self.state["remote_hash"], self.state["remote_commit"] = remote, tip
+            journal = self.state.get("journal")
+            session = self.state.get("session")
+            if journal and journal.get("apply") and tip == journal["commit"] and remote == journal["hash"] and session and local == session["local"]:
+                journal["confirmed"] = True
+                self.save()
+                self.apply_snapshot(remote)
+                self.mark_synced(remote, tip)
+                db.set_ready(True)
+                return self.status()
+            if local == remote:
+                self._confirm_uploaded(local)
+                head = git.head()
+                if self.state.get("pending") and head != tip and not git.is_ancestor(head, tip):
+                    commit = git.commit(self.object(local), "合并内容一致的离线历史", [tip, head])
+                    self.publish(git, local, commit, apply=False)
+                else:
+                    self.mark_synced(local, tip)
+                db.set_ready(True)
+            elif remote == baseline:
+                if automatic and not self.backups.backed_up(local):
+                    # 后台自动上云只发送已保存的本地备份，不把尚未备份的新编辑代为上传。
+                    self.status_name = "local"
+                    db.set_ready(was_ready)
+                else:
                     commit = self.local_commit(git, local)
                     if not git.is_ancestor(tip, commit):
                         commit = git.commit(self.object(local), "保留双方版本历史", [tip, commit])
                     self.publish(git, local, commit, apply=False)
+                    self._confirm_uploaded(local)
                     db.set_ready(True)
-                elif local == baseline:
-                    self.status_name = "behind"
+            elif local == baseline:
+                self.status_name = "behind"
+                if startup or synchronize:
+                    db.set_ready(False)
+                    if self.state.get("pending"):
+                        commit = git.commit(self.object(remote), "采用远端并保留离线中间历史", [tip, git.head()])
+                        self.publish(git, remote, commit, apply=True)
+                    else:
+                        self.apply_snapshot(remote)
+                        self.mark_synced(remote, tip)
+                    self._confirm_uploaded(remote)
+                    db.set_ready(True)
+                else:
+                    db.set_ready(was_ready)
+            else:
+                commit = self.local_commit(git, local)
+                if git.is_ancestor(tip, commit):
+                    self.publish(git, local, commit, apply=False)
+                    self._confirm_uploaded(local)
+                    db.set_ready(True)
+                else:
+                    self.status_name = "conflict"
+                    self.state["requires_resolution"] = True
                     if startup or synchronize:
                         db.set_ready(False)
-                        if self.state.get("pending"):
-                            commit = git.commit(self.object(remote), "采用远端并保留离线中间历史", [tip, git.head()])
-                            self.publish(git, remote, commit, apply=True)
-                        else:
-                            self.apply_snapshot(remote)
-                            self.mark_synced(remote, tip)
-                        db.set_ready(True)
+                        self.begin_session(baseline, local, remote, tip, commit)
                     else:
                         db.set_ready(was_ready)
-                else:
-                    commit = self.local_commit(git, local)
-                    if git.is_ancestor(tip, commit):
-                        self.publish(git, local, commit, apply=False)
-                        db.set_ready(True)
-                    else:
-                        self.status_name = "conflict"
-                        self.state["requires_resolution"] = True
-                        if startup or synchronize:
-                            db.set_ready(False)
-                            self.begin_session(baseline, local, remote, tip, commit)
-                        else:
-                            db.set_ready(was_ready)
-                self.save()
-            except ApiError as exc:
-                self.error = self._error_entry(exc)
-                self.status_name = "offline" if exc.code in ("GIT_FAILED", "GIT_UNAVAILABLE") else "blocked"
-                if self.state.get("requires_resolution"):
-                    self.status_name = "conflict"
-                db.set_ready(was_ready and not startup)
-                self.save()
+            self.save()
             return self.status()
+        except ApiError as exc:
+            self.error = self._error_entry(exc)
+            self.status_name = "offline" if exc.code in ("GIT_FAILED", "GIT_UNAVAILABLE") else "blocked"
+            if self.state.get("requires_resolution"):
+                self.status_name = "conflict"
+            db.set_ready(was_ready and not startup)
+            self.save()
+            return self.status()
+
+    def _save_current(self, reason):
+        """把当前运行数据保存为持久本地备份；失败只记录本地错误，不打断流程。"""
+        if not self.active:
+            return None
+        try:
+            return self._persist_backup(reason)
+        except ApiError as exc:
+            self.record_local_error(exc)
+            return None
+
+    def _persist_backup(self, reason, *, source_backup=None, idempotency_key=None):
+        """捕获当前数据并写入本地历史；capture 只更新捕获缓存，不代表已持久备份。"""
+        self.capture(force=True)
+        record, created = self.backups.save(self._snapshot_source(self.state["local_hash"]),
+                                            self.active["dataset"], reason,
+                                            source_backup=source_backup,
+                                            idempotency_key=idempotency_key)
+        self.local_error = None
+        return record, created
+
+    def _automatic_local_backup(self, reason="scheduled"):
+        """定时与启动阶段的本地备份：不要求远端、不混用同步工作仓库的 pending 状态。
+
+        活动数据可用、没有冲突会话或待解决冲突时执行；同步任务互斥由 operation() 保证。
+        """
+        if not self.active or self.state.get("session") or self.state.get("requires_resolution"):
+            return None
+        try:
+            with self.operation():
+                return self._persist_backup(reason)
+        except ApiError as exc:
+            self.record_local_error(exc)
+            return None
+
+    def background_local_backup(self):
+        """后台定时本地备份入口；开关关闭时不做任何事，失败只记录本地错误。"""
+        if not self.settings["local_auto"]:
+            return None
+        return self._automatic_local_backup("scheduled")
+
+    def _confirm_uploaded(self, digest):
+        """上传成功后只确认对应候选；当前数据库可能已有更新编辑，不推进捕获标记。"""
+        self.backups.confirm_uploaded(digest)
+
+    def local_backup(self, dry_run=False, idempotency_key=None):
+        """手动立即备份；内容没有变化时返回已有版本与 created=false。"""
+        if not dry_run and not idempotency_key:
+            fail("BACKUP_IDEMPOTENCY_REQUIRED", "正式备份必须提供 idempotency_key",
+                 user_message="操作标识缺失",
+                 user_hint="请刷新页面后重试")
+        with self.operation():
+            replay = self.backups.receipt(idempotency_key) if idempotency_key else None
+            if replay and replay.get("kind") == "backup":
+                record = self.backups.describe(replay["backup"])
+                return {"backup": self.backup_row(record), "created": bool(replay.get("created")),
+                        "dry_run": False, "idempotent_replay": True}
+            if not self.active:
+                fail("BACKUP_NO_DATA", "尚无活动数据可备份",
+                     user_message="还没有可以备份的数据",
+                     user_hint="请先创建店铺并录入数据")
+            if dry_run:
+                digest = self.current_digest()
+                return {"backup": None, "created": not self.backups.backed_up(digest),
+                        "dry_run": True, "idempotent_replay": False}
+            record, created = self._persist_backup("manual", idempotency_key=idempotency_key)
+            return {"backup": self.backup_row(record), "created": created,
+                    "dry_run": False, "idempotent_replay": False}
+
+    def backup_row(self, record):
+        """单条本地备份描述，附带它与当前活动数据的关系。"""
+        dataset = self.active["dataset"] if self.active else None
+        return self.backups.row(record, dataset, self.current_digest())
+
+    def backup_page(self, offset=0, limit=20):
+        with self.mutex:
+            return self.backups.list(offset, limit,
+                                     current_dataset=self.active["dataset"] if self.active else None,
+                                     current_digest=self.current_digest())
+
+    def restore_backup(self, backup_id, dry_run=False, confirm=False, idempotency_key=None):
+        """本地还原：保护当前数据、重建目标代次、切换指针并追加还原结果。"""
+        if not dry_run and (confirm is not True or not idempotency_key):
+            fail("RESTORE_CONFIRM_REQUIRED", "还原必须明确确认并提供 idempotency_key",
+                 user_message="还原前需要确认",
+                 user_hint="请确认还原后重试")
+        with self.operation():
+            return self._restore_locked(backup_id, dry_run, idempotency_key)
+
+    def _restore_locked(self, backup_id, dry_run, idempotency_key):
+        record = self.backups.describe(backup_id)
+        replay = self.backups.receipt(idempotency_key) if idempotency_key else None
+        if replay and replay.get("kind") == "restore":
+            if replay.get("stage") != "done" and self.active \
+                    and self.active["generation"] == replay.get("candidate_generation"):
+                # 指针已切换到该候选，只是结果记录没写成：只补齐记录，不重复覆盖数据。
+                return self._finish_restore_record(replay, record)
+            return self._restore_receipt_view(replay, idempotent_replay=True)
+        if self.state.get("session") or self.state.get("requires_resolution"):
+            fail("SYNC_PENDING", "存在未解决的冲突，不能执行本地还原",
+                 user_message="还有未处理的冲突",
+                 user_hint="请先处理完冲突，再进行本地还原")
+        journal = self.state.get("journal")
+        if journal and not journal.get("confirmed"):
+            fail("SYNC_PENDING", "上一次同步尚未完成，不能执行本地还原",
+                 user_message="上一次同步还没有完成",
+                 user_hint="请先进入数据同步页面完成上次的操作")
+        work = self.temporary("restore")
+        generation = uuid.uuid4().hex
+        target = self.runtime / generation
+        try:
+            record, source = self.backups.extract(backup_id, work)
+            # 直接重建到运行目录下的新代次：校验失败时只清掉这一份，不动活动指针。
+            snapshot.restore_set(source, target)
+            if dry_run:
+                return {"target": self.backup_row(record), "protect_backup": None,
+                        "result_backup": None, "restored": False, "dry_run": True,
+                        "idempotent_replay": False}
+            return self._apply_restore(record, target, idempotency_key)
+        finally:
+            remove_tree(work, self.directory)
+            if target.exists() and self.active and self.active["generation"] != generation:
+                remove_tree(target, self.runtime)
+
+    def _apply_restore(self, record, target, idempotency_key):
+        dataset = record["dataset"]
+        current_dataset = self.active["dataset"] if self.active else None
+        was_ready = db.business_ready
+        db.set_ready(False)
+        try:
+            protect, _ = self._persist_backup("protect")
+        except ApiError:
+            db.set_ready(was_ready)
+            raise
+        old = self.active
+        receipt = {"kind": "restore", "idempotency_key": idempotency_key, "target": record["id"],
+                   "protect_backup": protect["id"],
+                   "old_generation": old["generation"] if old else None,
+                   "candidate_generation": Path(target).name, "stage": "applying"}
+        self.backups.set_receipt(idempotency_key, receipt)
+        try:
+            self._activate_generation(target, dataset)
+        except BaseException:
+            # 指针未生效（或已由 _activate_generation 回滚到原代次）：保护备份保留，业务恢复。
+            db.set_ready(was_ready)
+            raise
+        if dataset != current_dataset:
+            # 目标属于另一数据集：不把结果自动推向当前远端，交由用户明确选择数据来源。
+            self.status_name = "binding"
+        self.invalidate_capture_cache()
+        self.backups.invalidate_candidate()
+        self.save()
+        return self._finish_restore_record(receipt, record, current_dataset=current_dataset)
+
+    def _finish_restore_record(self, receipt, record, current_dataset=None):
+        """指针已指向目标代次后追加还原结果；失败时保留保护备份并返回可重试状态。"""
+        if current_dataset is None:
+            current_dataset = record["dataset"]
+        try:
+            result, _ = self._persist_backup("restore", source_backup=record["id"])
+        except ApiError as exc:
+            self.record_local_error(exc)
+            db.set_ready(True)
+            return {"target": self.backup_row(record), "protect_backup": {"id": receipt["protect_backup"]},
+                    "result_backup": None, "restored": True, "dry_run": False,
+                    "idempotent_replay": receipt.get("stage") == "done",
+                    "dataset_changed": record["dataset"] != current_dataset,
+                    "retryable": True, "error": self._error_entry(exc)}
+        self.backups.set_receipt(receipt["idempotency_key"],
+                                 {**receipt, "stage": "done", "result_backup": result["id"]})
+        db.set_ready(True)
+        return {"target": self.backup_row(record), "protect_backup": {"id": receipt["protect_backup"]},
+                "result_backup": self.backup_row(result), "restored": True, "dry_run": False,
+                "idempotent_replay": receipt.get("stage") == "done",
+                "dataset_changed": record["dataset"] != current_dataset}
+
+    @staticmethod
+    def _restore_receipt_view(receipt, idempotent_replay=False):
+        return {"target": {"id": receipt["target"]}, "protect_backup": {"id": receipt["protect_backup"]},
+                "result_backup": {"id": receipt.get("result_backup")},
+                "restored": receipt.get("stage") == "done", "dry_run": False,
+                "idempotent_replay": idempotent_replay}
 
     def begin_session(self, base, local, remote, tip, head):
         old = self.state.get("session")
@@ -711,8 +978,24 @@ class SyncManager:
         except BaseException:
             remove_tree(target, self.runtime)
             raise
+        self._activate_generation(target, manifest["dataset"])
+        self.state["local_hash"] = digest
+        self._relation = (db.epoch(), digest)
+        self.captured_epoch = db.epoch()
+        self.save()
+        if upgraded:
+            # 恢复来源含 v3 店铺库，实际运行库已升到 v4：不能再把它当成与旧快照相同
+            self.invalidate_capture_cache()
+
+    def _activate_generation(self, target, dataset):
+        """把已完整重建的代次目录切换为活动数据集；失败时回滚到原指针与连接。
+
+        调用前该目录必须已完成快照校验与数据库重建，本方法只负责指针、连接与升级。
+        """
         old = self.active
-        updated = {"generation": generation, "dataset": manifest["dataset"], "previous": old["generation"] if old else None}
+        target = Path(target)
+        updated = {"generation": target.name, "dataset": dataset,
+                   "previous": old["generation"] if old else None}
         with db.coordinated_access(), db.internal_access():
             db.close_all()
             try:
@@ -728,12 +1011,7 @@ class SyncManager:
             config.use_generation(target)
             db.init()
             self.upgrade_active_shops()
-        self.state["local_hash"] = digest
-        self.captured_epoch = db.epoch()
-        self.save()
-        if upgraded:
-            # 恢复来源含 v3 店铺库，实际运行库已升到 v4：不能再把它当成与旧快照相同
-            self.invalidate_capture_cache()
+        return updated
 
     @staticmethod
     def needs_upgrade(source) -> bool:
@@ -812,9 +1090,12 @@ class SyncManager:
             except OSError:
                 pass
         # 可变内容一律返回副本，避免调用方经响应对象改写内部状态。
+        current = self.current_digest() if self.active else None
         return {"state": self.status_name, "business_ready": db.business_ready, "busy": self.busy,
                 "dirty": self.active is not None and db.epoch() != self.captured_epoch,
                 "error": dict(self.error) if self.error else None,
+                "local_error": dict(self.local_error) if self.local_error else None,
+                "local_backup": self.backups.state_view(current),
                 "configured": bool(self.settings["remote"]),
                 "pending_commits": len(self.state.get("pending", [])),
                 "session": self.state.get("session", {}).get("id"),

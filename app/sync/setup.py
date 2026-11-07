@@ -181,14 +181,14 @@ class SyncSetup:
         更新，所以按读回结果决定是否再保存一次。
         """
         settings = self.manager.settings
-        values = {key: draft[key] for key in ("device", "interval", "auto")
+        values = {key: draft[key] for key in ("device", "interval", "auto", "local_auto")
                   if draft[key] != settings[key]}
         if draft["github_account"] != settings.get("github_account", ""):
             values["github_account"] = draft["github_account"]
         if values:
             self.manager._settings_update_locked(values)
         if ensure_persisted:
-            keys = ("device", "interval", "auto", "github_account")
+            keys = ("device", "interval", "auto", "local_auto", "github_account")
             if not self.persisted_settings_match({key: draft[key] for key in keys}):
                 self.manager._settings_update_locked({key: draft[key] for key in keys})
 

@@ -22,7 +22,8 @@ const BackupOnboarding = (() => {
       mode: intent === "restore" || settings.remote ? "existing" : null,
       draft: { remote: settings.remote || "", branch: settings.branch || "main",
         device: settings.device || "本机", interval: settings.interval ?? 10,
-        auto: settings.auto !== false, github_account: settings.github_account || "",
+        auto: settings.auto !== false, local_auto: settings.local_auto !== false,
+        github_account: settings.github_account || "",
         repository: "xm-ims-backup" },
       env: null, needsGit: false, github: null, accounts: new Map(),
       check: null, source: null, result: null, key: null, created: null, resume: false,
@@ -38,7 +39,7 @@ const BackupOnboarding = (() => {
     }
     function payload() {
       const p = { mode: c.mode, device: c.draft.device, interval: Number(c.draft.interval),
-        auto: c.draft.auto, github_account: c.draft.github_account };
+        auto: c.draft.auto, local_auto: c.draft.local_auto, github_account: c.draft.github_account };
       if (c.mode === "existing") { p.remote = c.draft.remote; p.branch = c.draft.branch; }
       else p.repository = c.draft.repository;
       if (c.intent !== "maintenance") p.intent = c.intent;
@@ -229,11 +230,15 @@ const BackupOnboarding = (() => {
           const grid = node("div", undefined, "sync-onboarding-grid");
           grid.append(input("间隔（分钟）", c.draft.interval, "10",
             value => { c.draft.interval = value; }, { type: "number" }));
-          const auto = node("label", undefined, "sync-onboarding-check"), check = node("input");
-          check.type = "checkbox"; check.checked = c.draft.auto;
-          check.onchange = () => { c.draft.auto = check.checked; invalidate(); wizard.updateNav(); };
-          auto.append(check, node("span", "自动检查、提交和推送"));
-          grid.append(auto); details.append(grid); box.append(details);
+          const switches = node("div", undefined, "sync-onboarding-switches");
+          for (const [field, text] of [["local_auto", "本地自动备份"], ["auto", "自动将备份同步到云端"]]) {
+            const row = node("label", undefined, "sync-onboarding-check"), check = node("input");
+            check.type = "checkbox"; check.checked = c.draft[field];
+            check.onchange = () => { c.draft[field] = check.checked; invalidate(); wizard.updateNav(); };
+            row.append(check, node("span", text));
+            switches.append(row);
+          }
+          grid.append(switches); details.append(grid); box.append(details);
           // 底栏显示校验结果，即使高级设置折叠也能看到具体阻塞原因。
         },
         canNext: repositoryError, onPrimary: afterRepository,

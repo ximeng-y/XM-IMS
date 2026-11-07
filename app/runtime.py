@@ -49,10 +49,22 @@ async def lifespan(app):
                 pass
             window = manager.background_window()
             if time.monotonic() - last_run >= window["interval"] * 60:
-                if not update.maintenance_error() and window["started"] and window["auto"] \
-                        and window["remote"] and not window["busy"] and not window["session_open"]:
+                runnable = not update.maintenance_error() and window["started"] \
+                    and not window["busy"] and not window["session_open"]
+                # 本地阶段不依赖远端；云端阶段失败不回滚刚保存的本地版本。
+                if runnable and window["local_auto"]:
                     try:
-                        await asyncio.to_thread(manager.run)
+                        await asyncio.to_thread(manager.background_local_backup)
+                    except ApiError as exc:
+                        manager.record_background_error(exc)
+                    except Exception:
+                        manager.record_background_error(error_dict(
+                            "BACKUP_FAILED", "后台本地备份未完成，请进入同步页重试",
+                            user_message="后台备份没有完成",
+                            user_hint="请进入数据同步页面点击「立即备份」重试"))
+                if runnable and window["auto"] and window["remote"]:
+                    try:
+                        await asyncio.to_thread(manager.run, automatic=True)
                     except ApiError as exc:
                         manager.record_background_error(exc)
                     except Exception:

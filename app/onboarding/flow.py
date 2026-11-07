@@ -156,7 +156,7 @@ class Flow:
                         setup.resume_business(previously_ready)
                         return self._result(draft, error=exc, action="recheck_remote")
                 values = {key: draft[key] for key in (
-                    "remote", "branch", "device", "interval", "auto", "github_account")}
+                    "remote", "branch", "device", "interval", "auto", "local_auto", "github_account")}
                 setup.configure(values)
                 applied = True
                 setup.initialize(
@@ -168,7 +168,7 @@ class Flow:
                 # 设置文件可能已写成功、后续状态保存才失败；以磁盘读回而非返回码判断。
                 applied = applied or setup.persisted_settings_match({
                     key: draft[key] for key in
-                    ("remote", "branch", "device", "interval", "auto", "github_account")})
+                    ("remote", "branch", "device", "interval", "auto", "local_auto", "github_account")})
                 setup.record_failure(error, previously_ready)
                 setup.resume_business(previously_ready)
                 action = "retry_check" if error.code == "ONBOARDING_REMOTE_CHANGED" else \

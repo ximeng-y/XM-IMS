@@ -23,6 +23,8 @@ dialog.sync-onboarding { width: 38rem; max-width: calc(100vw - 2rem); max-height
   width: 1.25em; height: 1.25em; margin-top: .2rem; flex-shrink: 0;
 }
 .sync-onboarding .sync-onboarding-check { display: flex; gap: .5rem; align-items: center; }
+/* 两个自动开关竖向紧邻，与同步页顺序一致 */
+.sync-onboarding .sync-onboarding-switches { display: flex; flex-direction: column; gap: .35rem; align-self: start; }
 .sync-onboarding .sync-onboarding-check input {
   width: 1.25em; height: 1.25em; margin: 0; flex-shrink: 0;
 }

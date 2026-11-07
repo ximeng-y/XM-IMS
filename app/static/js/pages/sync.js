@@ -6,8 +6,9 @@
 import { UI } from "xm/ui";
 import { Sync } from "xm/sync";
 import { BackupOnboarding } from "xm/onboarding/backup";
+import { mountLocalBackups } from "xm/components/local-backups";
 
-let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changesOffset=0, settingsLoaded=false, savedSettings=null;
+let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changesOffset=0, settingsLoaded=false, savedSettings=null, backups=null;
 const limit=20;
 const $s=id=>document.getElementById(id);
 const text=(node,value)=>{node.textContent=value;};
@@ -21,6 +22,7 @@ function showLocalOnly(){
   text($s('syncMessage'),'请在运行本程序的电脑上打开此页面来管理数据同步。');
   document.querySelectorAll('.sync-page button,.sync-page input').forEach(el=>{el.disabled=true;});
   $s('settingsPanel').hidden=true;$s('conflictPanel').hidden=true;$s('initializeBox').hidden=true;
+  $s('autoSettings').hidden=true;$s('localBackupPanel').hidden=true;
   $s('offlineEnter').hidden=true;$s('enterApp').hidden=false;$s('enterApp').textContent='返回应用';
 }
 function showRefreshError(error){
@@ -34,12 +36,15 @@ async function refresh(){
   syncState=await Sync.api('GET','/status');Sync.render(syncState);
   if(!settingsLoaded){
     const settings=await Sync.api('GET','/settings');savedSettings=settings;
-    $s('remoteUrl').value=settings.remote;$s('dataBranch').value=settings.branch;$s('deviceName').value=settings.device;$s('syncInterval').value=settings.interval;$s('autoSync').checked=settings.auto;
-    settingsLoaded=true;document.querySelectorAll('#syncSettings input,#syncSettings button').forEach(el=>{el.disabled=false;});
+    $s('remoteUrl').value=settings.remote;$s('dataBranch').value=settings.branch;$s('deviceName').value=settings.device;$s('syncInterval').value=settings.interval;
+    $s('localAuto').checked=settings.local_auto;$s('autoSync').checked=settings.auto;
+    settingsLoaded=true;document.querySelectorAll('#syncSettings input,#syncSettings button,#autoSettings input,#autoSettings button').forEach(el=>{el.disabled=false;});
+    await loadBackups();
   }
   text($s('syncHeading'),Sync.label(syncState));
   let message=syncState.error?.user_message||({setup:'选择开始方式，即可准备第一间店铺。',checking:'正在准备数据，请稍候…',behind:'远端有更新。点击立即同步后重新核对并更新。',conflict:'双方都有修改。点击立即同步进入冲突处理。',synced:'本机与远端的备份已同步。',offline:'连接暂未完成。可重试连接，或按当前状态选择离线进入。',initialize:'仓库准备好后，即可继续首次备份。',binding:'请核对本机与仓库中的数据，在高级维护中选择使用的数据。',local:'数据已保存在本机。'}[syncState.state]||'');
   if(syncState.legacy_present && syncState.state==='setup')message+=' 检测到旧数据库，原文件已保留。';
+  if(syncState.local_error?.user_message)message+=' '+syncState.local_error.user_message+'。';
   text($s('syncMessage'),message);
   $s('enterApp').hidden=!syncState.business_ready;
   const first=await Sync.api('GET','/onboarding/first-use/status');
@@ -55,14 +60,19 @@ async function refresh(){
   text($s('startOnboarding'),firstBackup?'继续配置备份':'配置备份');
   $s('syncNow').disabled=syncState.busy;$s('checkNow').disabled=syncState.busy;
   $s('startOnboarding').disabled=syncState.busy;$s('restartOnboarding').disabled=syncState.busy;
+  $s('backupNow').disabled=syncState.busy||firstEntry;
   updateConnectionState();
   const active=syncState.session&&!syncState.business_ready;
   $s('conflictPanel').hidden=!active;
   if(active&&conflictSession!==syncState.session){conflictSession=syncState.session;offset=0;try{await loadConflicts();}catch(error){conflictSession=null;throw error;}}
 }
-function settingsValues(){return {remote:$s('remoteUrl').value.trim(),branch:$s('dataBranch').value.trim(),device:$s('deviceName').value.trim(),interval:Number($s('syncInterval').value),auto:$s('autoSync').checked};}
+function autoValues(){return {local_auto:$s('localAuto').checked,auto:$s('autoSync').checked};}
+function autoDirty(){const values=autoValues();return !savedSettings||values.local_auto!==savedSettings.local_auto||values.auto!==savedSettings.auto;}
+function settingsValues(){return {remote:$s('remoteUrl').value.trim(),branch:$s('dataBranch').value.trim(),device:$s('deviceName').value.trim(),interval:Number($s('syncInterval').value)};}
 function settingsDirty(){const values=settingsValues();return !savedSettings||!$s('syncInterval').value.trim()||Object.keys(values).some(key=>values[key]!==savedSettings[key]);}
+// 连接测试只取决于已保存的仓库、分支与设备名，自动开关未保存不应妨碍它。
 function updateConnectionState(){const dirty=settingsDirty();$s('testConnection').disabled=!settingsLoaded||dirty||!!syncState?.busy;text($s('connectionSaveHint'),dirty?'先保存后测试':'');}
+async function loadBackups(){if(backups)await backups.load();}
 async function loadConflicts(){
   if(!conflictSession)return;
   const p=await Sync.api('GET','/conflicts/'+conflictSession+'?offset='+offset+'&limit='+limit+'&unresolved='+$s('onlyUnresolved').checked);
@@ -93,10 +103,18 @@ export const page = {
   shell: true, shopContext: "none", requireSyncReady: false, autoUpdatePrompt: false,
   async init() {
     if(!Sync.local){showLocalOnly();return;}
-    document.querySelectorAll('#syncSettings input,#syncSettings button').forEach(el=>{el.disabled=true;});
+    document.querySelectorAll('#syncSettings input,#syncSettings button,#autoSettings input,#autoSettings button').forEach(el=>{el.disabled=true;});
     $s('syncSettings').oninput=updateConnectionState;
     $s('syncSettings').onchange=updateConnectionState;
     $s('syncSettings').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{savedSettings=await Sync.api('PATCH','/settings',settingsValues());UI.ok('设置已保存');});};
+    // 两个自动开关独立保存，只写这两项，仓库输入未填不会妨碍本地备份。
+    $s('autoSettings').onsubmit=e=>{e.preventDefault();const values=autoValues();UI.withBusy(e.submitter,async()=>{
+      try{const saved=await Sync.api('PATCH','/settings',values);savedSettings={...savedSettings,...saved};UI.ok('自动设置已保存');}
+      catch(error){UI.fail(error.user_message||'自动设置暂未保存',{title:UI.codeTitle(error.code)||'自动设置暂未保存',hint:error.user_hint||''});}
+      await refresh().catch(showRefreshError);});};
+    backups=mountLocalBackups({list:$s('localBackupList'),pager:$s('localBackupPager'),backupButton:$s('backupNow'),
+      request:Sync.api,onChanged:()=>refresh().catch(showRefreshError),
+      onRestored:()=>location.reload()});
     $s('testConnection').onclick=e=>{if(settingsDirty())return;action(e.currentTarget,async()=>{await Sync.api('POST','/test-connection');UI.ok('已连接到备份仓库');});};
     $s('syncNow').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/run',{synchronize:true});conflictSession=null;});
     $s('checkNow').onclick=e=>action(e.currentTarget,()=>Sync.api('POST','/run',{synchronize:false}));

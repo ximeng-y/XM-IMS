@@ -78,3 +78,35 @@ def details(request: Request, identity: str, conflict_id: str, offset: int = Que
 @router.get("/conflicts/{identity}/changes")
 def changes(request: Request, identity: str, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
     return require_sync_manager(request).changes_page(identity, offset, limit)
+
+
+# ---------- 本地备份历史 ----------
+
+@router.get("/backups")
+def backups(request: Request, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
+    return require_sync_manager(request).backup_page(offset, limit)
+
+
+@router.post("/backups")
+def create_backup(request: Request, body: dict = Body(default={})):
+    if body.get("dry_run") is not True:
+        key = body.get("idempotency_key")
+        if not isinstance(key, str) or not key.strip():
+            raise ApiError("BACKUP_IDEMPOTENCY_REQUIRED", "正式备份必须提供 idempotency_key",
+                           status=409, user_message="操作标识缺失",
+                           user_hint="请刷新页面后重试")
+    return require_sync_manager(request).local_backup(
+        dry_run=body.get("dry_run") is True, idempotency_key=body.get("idempotency_key"))
+
+
+@router.post("/backups/{backup_id}/restore")
+def restore_backup(request: Request, backup_id: str, body: dict = Body(default={})):
+    if body.get("dry_run") is not True:
+        key = body.get("idempotency_key")
+        if body.get("confirm") is not True or not isinstance(key, str) or not key.strip():
+            raise ApiError("RESTORE_CONFIRM_REQUIRED", "还原必须明确确认并提供 idempotency_key",
+                           status=409, user_message="还原前需要确认",
+                           user_hint="请确认还原后重试")
+    return require_sync_manager(request).restore_backup(
+        backup_id, dry_run=body.get("dry_run") is True,
+        confirm=body.get("confirm") is True, idempotency_key=body.get("idempotency_key"))

@@ -23,11 +23,12 @@ MODULES = {
     "xm/api": ("/static/js/api.js", 4),
     "xm/ui": ("/static/js/ui.js", 19),
     "xm/shop-context": ("/static/js/runtime/shop-context.js", 1),
-    "xm/sync": ("/static/js/sync-common.js", 6),
+    "xm/sync": ("/static/js/sync-common.js", 7),
     "xm/update": ("/static/js/update.js", 5),
     "xm/responsive": ("/static/js/runtime/responsive.js", 1),
     "xm/shell": ("/static/js/runtime/shell.js", 1),
     "xm/components/context-menu": ("/static/js/components/context-menu.js", 3),
+    "xm/components/local-backups": ("/static/js/components/local-backups.js", 1),
     "xm/components/delete-flow": ("/static/js/components/delete-flow.js", 2),
     "xm/components/formula-editor": ("/static/js/components/formula-editor.js", 4),
     "xm/components/item-form": ("/static/js/components/item-form.js", 8),
@@ -42,10 +43,10 @@ MODULES = {
     "xm/pages/fields": ("/static/js/pages/fields.js", 11),
     "xm/pages/movements": ("/static/js/pages/movements.js", 4),
     "xm/pages/shops": ("/static/js/pages/shops.js", 4),
-    "xm/pages/sync": ("/static/js/pages/sync.js", 12),
+    "xm/pages/sync": ("/static/js/pages/sync.js", 13),
     "xm/pages/settings": ("/static/js/pages/settings.js", 2),
     "xm/onboarding/wizard": ("/static/onboarding/wizard.js", 2),
-    "xm/onboarding/backup": ("/static/onboarding/backup.js", 2),
+    "xm/onboarding/backup": ("/static/onboarding/backup.js", 3),
     "xm/onboarding/first-use": ("/static/onboarding/first-use.js", 3),
 }
 
@@ -59,8 +60,8 @@ STYLES = {
     "css/pages/movements": ("/static/css/pages/movements.css", 1),
     "css/pages/overview": ("/static/css/pages/overview.css", 1),
     "css/pages/shops": ("/static/css/pages/shops.css", 1),
-    "css/pages/sync": ("/static/css/pages/sync.css", 1),
-    "css/onboarding": ("/static/onboarding/onboarding.css", 3),
+    "css/pages/sync": ("/static/css/pages/sync.css", 2),
+    "css/onboarding": ("/static/onboarding/onboarding.css", 4),
 }
 
 # 启动入口：所有页面共用同一模块，页面能力由入口模块导出的 page 描述决定。
