@@ -570,11 +570,13 @@ class SyncManager:
                 self.mark_synced(remote, tip)
                 db.set_ready(True)
                 return self.status()
+            # 在创建本轮提交前检查历史，所有自动推送（包括启动）共用这个结果。
+            push_allowed = synchronize or self._auto_push_allowed(git, tip)
             if local == remote:
                 self._confirm_uploaded(local)
                 head = git.head()
                 if self.state.get("pending") and head != tip and not git.is_ancestor(head, tip):
-                    if synchronize:
+                    if push_allowed:
                         # 内容一致，把离线期间的本地提交并入远端历史，不丢任何一侧数据。
                         commit = git.commit(self.object(local), "合并内容一致的离线历史", [tip, head])
                         self.publish(git, local, commit, apply=False)
@@ -590,7 +592,7 @@ class SyncManager:
                     # 没有已保存的备份：只报告本地状态，不代替用户上传当前编辑。
                     self.status_name = "local"
                     db.set_ready(was_ready or startup)
-                elif not (synchronize or self._auto_push_allowed(git, tip)):
+                elif not push_allowed:
                     # 本地还有远端没有的提交：自动推送会把它们一并送进远端历史。
                     self.status_name = "local"
                     db.set_ready(was_ready or startup)
@@ -607,7 +609,8 @@ class SyncManager:
                     db.set_ready(True)
             elif local == baseline:
                 self.status_name = "behind"
-                if startup or synchronize:
+                # 没有待上传历史时只采用远端，不会推送本地提交。
+                if (startup or synchronize) and (not self.state.get("pending") or push_allowed):
                     db.set_ready(False)
                     # 采用远端会覆盖当前数据：先存一份保护备份，不受本地自动备份开关
                     # 限制；保存失败时保留当前数据不动。
@@ -628,7 +631,7 @@ class SyncManager:
                     self.backups.invalidate_candidate()
                     db.set_ready(True)
                 else:
-                    db.set_ready(was_ready)
+                    db.set_ready(was_ready or startup)
             else:
                 # 双方都有变化：远端已偏离共同基线，自动路径不能覆盖远端内容，也不能用
                 # 添加父节点代替结构化合并。只有显式处理（启动检查、用户立即同步）才
@@ -637,8 +640,12 @@ class SyncManager:
                 if upload and upload == local and (startup or synchronize):
                     commit = self.local_commit(git, local)
                     if git.is_ancestor(tip, commit):
-                        self.publish(git, local, commit, apply=False)
-                        self._confirm_uploaded(local)
+                        if push_allowed:
+                            self.publish(git, local, commit, apply=False)
+                            self._confirm_uploaded(local)
+                        else:
+                            # 快进仍会上传祖先提交；遗留历史等用户显式同步时处理。
+                            self.status_name = "local"
                         db.set_ready(True)
                     else:
                         self._enter_conflict(baseline, local, remote, tip, commit,
