@@ -71,7 +71,8 @@
   padding: .25rem .7rem;
 }
 
-/* 六点拖动手柄：横向 2 点、纵向 3 点，靠近卡片右侧居中铺满卡片高度 */
+/* 拖动手柄：2 列 × 5 行圆点，整体排成竖向窄长方形。
+   点直径约为节距的一半，点与点之间留出等宽空隙，缩小后仍能看出规整的排列。 */
 .shop-drag {
   flex: 0 0 3.2rem;
   display: flex;
@@ -88,10 +89,11 @@
 }
 .shop-drag:hover { background: var(--blue-pale); color: var(--blue-dark); }
 .shop-drag > span {
-  width: 1.2rem;
-  height: 1.8rem;
-  background-image: radial-gradient(circle, currentColor .15rem, transparent .15rem);
-  background-size: .6rem .6rem;
+  /* 尺寸取节距的整数倍，边缘的点不会被裁掉一半 */
+  width: 1rem;
+  height: 2.5rem;
+  background-image: radial-gradient(circle, currentColor .12rem, transparent .12rem);
+  background-size: .5rem .5rem;
   background-position: 0 0;
 }
 .shop-drag:active { cursor: grabbing; }
