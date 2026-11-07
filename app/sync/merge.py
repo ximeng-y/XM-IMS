@@ -417,11 +417,18 @@ class Merger:
                 result[parent] = copy.deepcopy(value)
 
     def unique_names(self, result):
+        """重名消解：店铺与字段全店唯一，SPU 全店唯一，SKU 组内唯一（按所属 SPU 分组）
+
+        两侧各自在原 SPU 下建了同名单品、或各自建了同名 SPU 时，合并结果会落在同一
+        唯一范围内，必须让用户逐条改成不同名称，否则合并后的数据与本程序的创建规则冲突。
+        """
         groups = defaultdict(list)
         for key, row in result.items():
             database, table, uid = key.split("/", 2)
-            if table in ("shops", "custom_fields"):
-                groups[(database, table, row["name"])].append(key)
+            if table in ("shops", "custom_fields", "spus"):
+                groups[(database, table, "", row["name"])].append(key)
+            elif table == "items":
+                groups[(database, table, row["spu_id"], row["name"])].append(key)
         for keys in groups.values():
             if len(keys) > 1:
                 for key in keys:

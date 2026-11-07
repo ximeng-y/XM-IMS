@@ -274,6 +274,10 @@ const ItemForm = (() => {
       if (bad) { UI.fail("字段值格式不正确"); return; }
       if (Object.keys(values).length) body.values = values;
       if (!Object.keys(body).length) { UI.toast("没有任何修改"); dlg.close(); return; }
+      // 改名或换挂会让名称落到另一个 SPU 组内，先在界面口径上查一次重名
+      if (body.spu_id !== undefined || body.spu_name !== undefined || body.name !== undefined) {
+        if (!await checkRenameCollision(body)) return;
+      }
       try {
         const updated = await XM.patch(`/items/${encodeURIComponent(item.id)}`, body);
         // 换挂 SPU 会改变单品编号，提示时以新编号为准
@@ -294,6 +298,32 @@ const ItemForm = (() => {
 
     dlg.showModal();
     setTimeout(() => $("#edName", wrap).focus(), 50);
+
+    // 改名/换挂前的重名提示：目标 SPU 组内已有同名 SKU 时给出对照，返回 false 拦下保存。
+    // 判断口径与后端一致（同名、同 SPU、排除自身）；最终仍以后端校验为准
+    async function checkRenameCollision(body) {
+      const finalName = body.name !== undefined ? body.name : item.name;
+      let targetSpu = item.spu_id;
+      if (body.spu_id !== undefined) targetSpu = body.spu_id;
+      else if (body.spu_name !== undefined) {
+        const hit = spus.find((s) => s.name === body.spu_name);
+        // 名称不存在时后端会新建一个空 SPU，组内不可能有同名单品
+        if (!hit) return true;
+        targetSpu = hit.id;
+      }
+      // 取多条再排除自身：存量数据允许过重名，只取一条可能刚好取到自己而漏判
+      let data;
+      try {
+        data = await XM.get(`/items?spu_id=${targetSpu}&name=${encodeURIComponent(finalName)}&limit=20`);
+      } catch (e) { UI.apiFail(e, "查重失败"); return false; }
+      const dup = data.items.find((x) => x.id !== item.id);
+      if (!dup) return true;
+      UI.fail(`目标 SPU 下已有同名单品「${dup.name}」（编号 ${dup.id}）`,
+              { title: "SKU 重名", hint: "同一 SPU 下的 SKU 名称唯一，请换一个名称" });
+      $("#edName", wrap).focus();
+      $("#edName", wrap).select();
+      return false;
+    }
   }
 
   // ---------- 新建单品（SKU）小窗 ----------
