@@ -13,11 +13,10 @@ const ShopsPage = (() => {
 
   function cardHtml(shop) {
     const active = String(shop.id) === String(currentId());
-    // 当前店铺不显示「切换到此店铺」，但用同样文案的透明占位按钮守住宽度，
-    // 避免「重命名」「删除」向左补位
+    // 首个操作位二选一：非当前店铺显示切换按钮，当前店铺在同一槽位显示标签；
+    // 槽位宽度由 CSS 固定，保证后面的「重命名」「删除」在各卡片间对齐
     const switchSlot = active
-      ? `<button type="button" class="btn-outline btn-sm shop-switch-ghost" tabindex="-1"
-                 aria-hidden="true" disabled>切换到此店铺</button>`
+      ? `<span class="shop-current-tag">当前店铺</span>`
       : `<button type="button" class="btn-outline btn-sm" data-switch="${shop.id}">切换到此店铺</button>`;
     return `
       <div class="shop-card${active ? " is-current" : ""}" data-shop="${shop.id}">
@@ -25,10 +24,9 @@ const ShopsPage = (() => {
         <div class="shop-card-main">
           <h2 class="shop-card-name" title="${UI.esc(shop.name)}">${UI.esc(shop.name)}</h2>
           <div class="shop-card-actions">
-            ${switchSlot}
+            <span class="shop-switch-slot">${switchSlot}</span>
             <button type="button" class="btn-outline btn-sm" data-rename="${shop.id}">重命名</button>
             <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${shop.id}">删除</button>
-            ${active ? `<span class="shop-current-tag">当前店铺</span>` : ""}
           </div>
         </div>
         <span class="shop-drag" title="按住拖动调整顺序" aria-hidden="true">

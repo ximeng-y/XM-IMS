@@ -39,6 +39,7 @@ dialog.sync-onboarding { width: 38rem; max-width: calc(100vw - 2rem); max-height
 .sync-onboarding .dlg-body { max-height: 60vh; overflow: auto; }
 .sync-onboarding .onboarding-footer { display: flex; justify-content: flex-end; gap: .6rem; flex-wrap: wrap; margin-top: 1.2rem; }
 .sync-onboarding .onboarding-footer button { margin: 0; }
+.sync-onboarding .onboarding-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
 .sync-onboarding .onboarding-start { display: grid; gap: 1rem; }
 .sync-onboarding .onboarding-start button { text-align: left; padding: 1.2rem; }
 .sync-onboarding .onboarding-start small { display: block; margin-top: .3rem; }

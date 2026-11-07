@@ -1048,36 +1048,45 @@ body[data-page="overview"] .table-scroll th:nth-child(5) { width: 6rem; }
   flex-wrap: wrap;
 }
 .shop-card-actions button { margin: 0; }
-/* 当前店铺的切换按钮占位：不可点、不可聚焦，只用于保持按钮位置 */
-.shop-switch-ghost { visibility: hidden; pointer-events: none; }
+/* 首个操作位固定宽度：切换按钮与「当前店铺」标签共用同一槽位，
+   两者宽度不同也不会让后面的「重命名」「删除」错位 */
+.shop-switch-slot { display: inline-flex; align-items: stretch; flex: 0 0 auto; width: 7.2rem; }
+.shop-switch-slot > button { width: 100%; }
 .shop-current-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  /* 内边距与 .btn-sm 对齐，标签与相邻按钮等高，不会显得矮一截 */
   font-size: .78rem;
   color: var(--blue-dark);
   background: var(--blue-pale);
   border: 1px solid var(--blue-pale-2);
-  padding: .1rem .45rem;
+  padding: .25rem .7rem;
 }
 
-/* 六点拖动手柄：横向 2 点、纵向 3 点，灰色，靠近卡片右侧居中 */
+/* 六点拖动手柄：横向 2 点、纵向 3 点，靠近卡片右侧居中铺满卡片高度 */
 .shop-drag {
-  flex: 0 0 2.6rem;
+  flex: 0 0 3.2rem;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: grab;
-  color: var(--line-deep);
+  color: var(--ink-soft);
   user-select: none;
-  /* 手柄是纯装饰元素，压掉浏览器对行内元素的默认外观 */
+  /* 手柄是纯拖拽热区，压掉浏览器对行内元素的默认外观 */
   background: none;
   border: 0;
   padding: 0;
+  transition: background-color .15s ease, color .15s ease;
 }
+.shop-drag:hover { background: var(--blue-pale); color: var(--blue-dark); }
 .shop-drag > span {
-  width: .9rem;
-  height: 1.35rem;
-  background-image: radial-gradient(circle, currentColor .11rem, transparent .11rem);
-  background-size: .45rem .45rem;
-  background-position: .05rem .05rem;
+  width: 1.2rem;
+  height: 1.8rem;
+  background-image: radial-gradient(circle, currentColor .15rem, transparent .15rem);
+  background-size: .6rem .6rem;
+  background-position: 0 0;
 }
 .shop-drag:active { cursor: grabbing; }
 .shop-card.dragging { opacity: .5; }
