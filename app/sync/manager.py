@@ -534,12 +534,7 @@ class SyncManager:
             # 上传内容与当前数据库分开判断：显式同步上传刚保存的备份，其余情况只上传
             # 已保存的本地备份；尚未备份的新编辑不会被任何自动路径带走。候选只在
             # 需要上传的分支取出，普通状态检查不额外解包历史仓库。
-            try:
-                tip = git.fetch()
-            except ApiError:
-                if local and self.state.get("baseline") and not self.state.get("session"):
-                    self.local_commit(git, local)
-                raise
+            tip = git.fetch()
             self.state["read_verified"] = True
             remote = self.remote_snapshot(git, tip) if tip else None
             baseline = self.state.get("baseline")
@@ -579,8 +574,13 @@ class SyncManager:
                 self._confirm_uploaded(local)
                 head = git.head()
                 if self.state.get("pending") and head != tip and not git.is_ancestor(head, tip):
-                    commit = git.commit(self.object(local), "合并内容一致的离线历史", [tip, head])
-                    self.publish(git, local, commit, apply=False)
+                    if synchronize:
+                        # 内容一致，把离线期间的本地提交并入远端历史，不丢任何一侧数据。
+                        commit = git.commit(self.object(local), "合并内容一致的离线历史", [tip, head])
+                        self.publish(git, local, commit, apply=False)
+                    else:
+                        # 这些本地提交未在远端出现，可能含未备份的中间快照；自动路径不推送。
+                        self.status_name = "local"
                 else:
                     self.mark_synced(local, tip)
                 db.set_ready(True)
@@ -590,9 +590,14 @@ class SyncManager:
                     # 没有已保存的备份：只报告本地状态，不代替用户上传当前编辑。
                     self.status_name = "local"
                     db.set_ready(was_ready or startup)
+                elif not (synchronize or self._auto_push_allowed(git, tip)):
+                    # 本地还有远端没有的提交：自动推送会把它们一并送进远端历史。
+                    self.status_name = "local"
+                    db.set_ready(was_ready or startup)
                 else:
                     commit = self.local_commit(git, upload)
                     if not git.is_ancestor(tip, commit):
+                        # 本地分支与远端历史分叉（内容仍等于共同基线）：保留双方历史。
                         commit = git.commit(self.object(upload), "保留双方版本历史", [tip, commit])
                     self.publish(git, upload, commit, apply=False)
                     self._confirm_uploaded(upload)
@@ -625,10 +630,11 @@ class SyncManager:
                 else:
                     db.set_ready(was_ready)
             else:
-                # 双方都有变化：自动上传只能用已保存的本地备份，绝不带走当前未备份的编辑。
+                # 双方都有变化：远端已偏离共同基线，自动路径不能覆盖远端内容，也不能用
+                # 添加父节点代替结构化合并。只有显式处理（启动检查、用户立即同步）才
+                # 能安全快进上传；其余情况只提示远端有更新。
                 upload = self._upload_digest(synchronize, saved)
-                if upload and upload == local:
-                    # 要上传的就是当前数据：与远端历史能快进才上传，否则进入冲突处理。
+                if upload and upload == local and (startup or synchronize):
                     commit = self.local_commit(git, local)
                     if git.is_ancestor(tip, commit):
                         self.publish(git, local, commit, apply=False)
@@ -637,22 +643,8 @@ class SyncManager:
                     else:
                         self._enter_conflict(baseline, local, remote, tip, commit,
                                              startup, synchronize, was_ready)
-                elif upload:
-                    # 上传持久候选：与远端历史合成一次提交，当前编辑留在运行库等待备份。
-                    commit = self.local_commit(git, upload)
-                    if git.is_ancestor(commit, tip):
-                        # 该备份内容已在远端历史中，只需确认上传状态。
-                        self._confirm_uploaded(upload)
-                    else:
-                        if not git.is_ancestor(tip, commit):
-                            commit = git.commit(self.object(upload), "保留双方版本历史", [tip, commit])
-                        self.publish(git, upload, commit, apply=False)
-                        self._confirm_uploaded(upload)
-                    # 当前数据库可能还有更新的未备份编辑，不能标记为全部已同步。
-                    self.status_name = "local"
-                    db.set_ready(True)
                 elif startup or synchronize:
-                    # 没有可上传的备份：不能代替用户上传当前编辑，需要用户确认处理方式。
+                    # 没有可直接上传的备份，或候选与当前数据不一致：进入冲突处理。
                     self._enter_conflict(baseline, local, remote, tip,
                                          self.local_commit(git, local),
                                          startup, synchronize, was_ready)
@@ -739,6 +731,16 @@ class SyncManager:
             return None
         finally:
             remove_tree(work, self.directory)
+
+    def _auto_push_allowed(self, git, tip):
+        """自动路径能否推送：本地分支不能有远端缺失的提交。
+
+        推送新提交会把它的祖先一并送到远端。本地分支上可能存在旧版本留下的待上传
+        提交，其中的快照未必保存为本地备份；只要本地分支领先于远端，自动路径就只
+        提示状态，等用户显式同步时确认处理。
+        """
+        head = git.head()
+        return not head or head == tip or git.is_ancestor(head, tip)
 
     def _enter_conflict(self, baseline, local, remote, tip, commit,
                         startup, synchronize, was_ready):
