@@ -20,7 +20,7 @@ from pathlib import Path, PurePosixPath
 from .. import db
 from ..config import BASE_DIR, DATA_ROOT
 from ..errors import error_dict
-from ..sync.common import atomic_json, read_json
+from ..storage.files import atomic_json, read_json
 from ..version import APP_VERSION
 
 # 远端操作超时（秒）
@@ -432,7 +432,7 @@ def _install_update(tag):
         # 4) 备份、替换，失败回滚；业务数据不在安装计划中。
         # 等待既有事务结束，再关闭业务写入；等待中的旧请求也会重新检查 ready。
         # 与同步恢复共用协调锁，避免后台同步在替换期间重新开放数据库。
-        with db._coordinator:
+        with db.coordinated_access():
             was_ready = db.business_ready
             db.set_ready(False)
             try:

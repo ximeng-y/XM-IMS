@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}概览{% endblock %} · XM-IMS</title>
   <link rel="stylesheet" href="/static/vendor/pico.min.css?v=1">
-  <link rel="stylesheet" href="/static/css/app.css?v=40">
-  {% block styles %}{% endblock %}
+  <link rel="stylesheet" href="/static/css/app.css?v=41">
+  {% for style in page_styles %}<link rel="stylesheet" href="{{ style.url }}">
+  {% endfor %}{% block styles %}{% endblock %}
+  <script type="importmap">{{ import_map | tojson }}</script>
 </head>
 <body data-page="{% block nav %}{% endblock %}">
 {% block body %}
@@ -46,15 +48,14 @@
 </div>
 <div id="toasts"></div>
 {% endblock %}
-{% block core_scripts %}
-<script src="/static/js/api.js?v=3"></script>
-<script src="/static/js/sync-common.js?v=5"></script>
-<script src="/static/js/ui.js?v=18"></script>
-<script src="/static/js/components/context-menu.js?v=2"></script>
-<script src="/static/js/components/delete-flow.js?v=1"></script>
-<script src="/static/js/update.js?v=4"></script>
-{% endblock %}
-{% block scripts %}{% endblock %}
+<script type="module">
+  import * as page from {{ page_entry | tojson }};
+  import { boot } from {{ bootstrap.url | tojson }};
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => boot(page), { once: true });
+  } else {
+    boot(page);
+  }
+</script>
 </body>
 </html>
-

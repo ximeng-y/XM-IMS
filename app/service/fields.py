@@ -13,26 +13,12 @@
 - 值由后端按公式实时算出，不落 custom_values，不可手填/清除，不可与普通字段互转
 - 被公式引用的字段不能删除，也不能转成非数值类型（否则公式失去可计算性）
 """
-from .. import db, fieldtypes, formulas
+from .. import db
+from ..catalog import fieldtypes, fields, formulas
+from ..catalog.item_refs import format_item_ref
 from ..config import now_iso
 from ..errors import ApiError
-from . import items
 
-# 系统字段（API 统一呈现；readonly 表示不可通过「字段值编辑」路径修改）
-# SKU 的对外标识是「SPU 号-组内序号」（如 1-2），故 ID 字段按文本呈现
-SYSTEM_FIELDS = [
-    {"system": True, "key": "id", "name": "ID", "type": "string", "readonly": True,
-     "allow_negative": False, "scale": 0},
-    {"system": True, "key": "name", "name": "名称", "type": "string", "readonly": False,
-     "allow_negative": False, "scale": 0},
-    {"system": True, "key": "qty", "name": "库存数量", "type": "int", "readonly": True,
-     "allow_negative": False, "scale": 0},
-    {"system": True, "key": "spu_id", "name": "SPU ID", "type": "int", "readonly": True,
-     "allow_negative": False, "scale": 0},
-    {"system": True, "key": "spu_name", "name": "SPU 名称", "type": "string", "readonly": True,
-     "allow_negative": False, "scale": 0},
-]
-RESERVED_NAMES = {f["name"] for f in SYSTEM_FIELDS}
 # 计算字段允许的结果类型：整数（结果四舍五入取整）／小数／百分比
 COMPUTED_TYPES = formulas.RESULT_TYPES
 
@@ -76,7 +62,7 @@ def _out(defn: dict, dry_run: bool = False, field_id=None, uid=None) -> dict:
 
 
 def _field_out(row) -> dict:
-    return _out(items.field_def(None, row=row))
+    return _out(fields.definition_from_row(row))
 
 
 def _target_def(field_id: int, name: str, t: str, s: int, neg: bool) -> dict:
@@ -91,11 +77,11 @@ def _def_str(t: str, s: int, neg: bool) -> str:
 
 
 def _ensure_name_free(conn, name: str) -> None:
-    if name in RESERVED_NAMES:
+    if name in fields.RESERVED_NAMES:
         raise ApiError("FIELD_NAME_EXISTS", f"字段名「{name}」与系统字段重名",
-                       hint=f"系统字段（保留名）：{'、'.join(sorted(RESERVED_NAMES))}", status=409,
+                       hint=f"系统字段（保留名）：{'、'.join(sorted(fields.RESERVED_NAMES))}", status=409,
                        user_message=f"字段名「{name}」与系统字段重名",
-                       user_hint=f"系统字段（保留名）：{'、'.join(sorted(RESERVED_NAMES))}")
+                       user_hint=f"系统字段（保留名）：{'、'.join(sorted(fields.RESERVED_NAMES))}")
     if conn.execute("SELECT id FROM custom_fields WHERE name = ?", (name,)).fetchone():
         raise ApiError("FIELD_NAME_EXISTS", f"字段「{name}」已存在", status=409,
                        user_message=f"字段「{name}」已存在",
@@ -117,7 +103,7 @@ def _tokens(formula_in) -> list:
 
 def _referenced_defs(conn, uid: str) -> list:
     """返回引用了该字段的计算字段名（删除与类型转换的依赖保护）"""
-    defs = items.field_defs(conn)
+    defs = fields.load_definitions(conn)
     parsed = {d["uid"]: formulas.parse(d["formula"]) for d in defs if d["formula"]}
     names = {d["uid"]: d["name"] for d in defs}
     return sorted(names[other] for other in formulas.dependents(parsed, uid))
@@ -137,7 +123,7 @@ def list_fields(shop_id: int) -> dict:
     d = db.shop_db(shop_id)
     with d.lock:
         rows = d.conn.execute("SELECT * FROM custom_fields ORDER BY id").fetchall()
-    return {"fields": [dict(f) for f in SYSTEM_FIELDS] + [_field_out(r) for r in rows]}
+    return {"fields": [dict(f) for f in fields.SYSTEM_FIELDS] + [_field_out(r) for r in rows]}
 
 
 def create_field(shop_id: int, body) -> dict:
@@ -199,7 +185,7 @@ def _create_computed(shop_id: int, name: str, body) -> dict:
     d = db.shop_db(shop_id)
     with d.lock, d.conn:
         _ensure_name_free(d.conn, name)
-        defs = items.field_defs(d.conn)
+        defs = fields.load_definitions(d.conn)
         formulas.check(defs, defn)
         if body.dry_run:
             return _out(defn, dry_run=True)
@@ -242,7 +228,7 @@ def update_formula(shop_id: int, field_id: int, body) -> dict:
         defn = {"id": field_id, "uid": row["sync_uid"], "name": row["name"], "type": t2,
                 "scale": s2, "allow_negative": neg2, "formula": tokens}
 
-        defs = [x for x in items.field_defs(d.conn) if x["uid"] != row["sync_uid"]]
+        defs = [x for x in fields.load_definitions(d.conn) if x["uid"] != row["sync_uid"]]
         formulas.check(defs, defn)
         formula_json = formulas.dump(tokens)
         unchanged = (formula_json == row["formula_json"] and t2 == row["type"]
@@ -371,7 +357,7 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
             "WHERE v.field_id = ? ORDER BY i.spu_id, i.seq", (field_id,)).fetchall()
 
         def sample(row, old, new) -> dict:
-            return {"item_id": items.format_item_ref(row["spu_id"], row["seq"]),
+            return {"item_id": format_item_ref(row["spu_id"], row["seq"]),
                     "item_name": row["item_name"], "old": old, "new": new}
 
         def stored_value(row):

@@ -11,7 +11,8 @@ from .. import config, db
 from ..config import now_iso
 from ..errors import ApiError
 from ..schemas import AdjustIn, InboundIn, OutboundIn
-from .items import format_item_ref, resolve_item_ref
+from ..catalog.item_refs import format_item_ref, resolve_item_ref
+from ..inventory.ledger import append_movement
 
 
 def _item_or_404(conn, item_ref: str):
@@ -99,14 +100,11 @@ def _execute_movement(shop_id: int, *, item_ref: str, mtype: str, qty_delta: int
                     "current_qty": current, "new_qty": new_qty,
                     "idempotent_replay": False}
 
-        cur = d.conn.execute(
-            "INSERT INTO movements (sync_uid, item_id, type, qty, unit_price, batch_no, supplier, "
-            "channel, customer, note, idempotency_key, actor, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (db.new_uid(), item_id, mtype, qty_delta, cents, movement["batch_no"], movement["supplier"],
-             movement["channel"], movement["customer"], movement["note"],
-             payload.idempotency_key, config.ACTOR, ts))
-        movement["id"] = cur.lastrowid
+        movement["id"] = append_movement(
+            d.conn, item_id=item_id, mtype=mtype, qty_delta=qty_delta, unit_price=cents,
+            batch_no=movement["batch_no"], supplier=movement["supplier"],
+            channel=movement["channel"], customer=movement["customer"], note=movement["note"],
+            idempotency_key=payload.idempotency_key, actor=config.ACTOR, created_at=ts)
         return {"movement": movement, "current_qty": new_qty,
                 "idempotent_replay": False, "dry_run": False}
 

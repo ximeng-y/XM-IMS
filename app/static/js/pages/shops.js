@@ -1,15 +1,25 @@
 /* 店铺管理页：卡片列表、创建 / 切换 / 重命名 / 删除，以及本机拖动排序
 
-   排列顺序只保存在 localStorage（UI.applyShopOrder / UI.readOrder），
-   不上传服务器，也不进入备份或同步快照。 */
+   排列顺序只保存在 localStorage，由 runtime/shop-context.js 拥有；
+   本页读取上下文快照渲染卡片，改动后显式刷新顶栏，不共享同一个数组对象。 */
 "use strict";
+
+import { XM } from "xm/api";
+import { UI, $, $$ } from "xm/ui";
+import { ShopContext } from "xm/shop-context";
+import { createShopFlow, refreshShopChrome } from "xm/shell";
 
 const ShopsPage = (() => {
   const list = () => $("#shopList");
   let dragging = null;          // 正在拖动的卡片
   let shops = [];               // 当前页面的店铺列表（已按本地顺序）
 
-  const currentId = () => XM.state.shopId;
+  const currentId = () => ShopContext.currentId();
+
+  // 上下文变化后统一刷新：顶栏与卡片顺序都由上下文快照重算
+  function syncChrome() {
+    shops = refreshShopChrome({ isShopsPage: true });
+  }
 
   function cardHtml(shop) {
     const active = String(shop.id) === String(currentId());
@@ -106,14 +116,10 @@ const ShopsPage = (() => {
 
   function persistOrder() {
     const ids = $$(".shop-card", list()).map((c) => Number(c.dataset.shop));
-    const ordered = ids.map((id) => shops.find((s) => s.id === id)).filter(Boolean);
-    // 落盘的是本次拖动产生的新顺序；不能再经 applyShopOrder 套用旧的本地偏好，
+    // 落盘的是本次拖动产生的新顺序；不能再套用旧的本地偏好，
     // 否则页面暂时显示新顺序、刷新后回退
-    UI.saveShopOrder(ids);
-    shops = ordered;
-    XM.state.shops = ordered;
-    // 顶栏下拉与卡片顺序保持一致；当前选择不变
-    UI.renderShopOptions();
+    ShopContext.reorder(ids);
+    syncChrome();
     render();
   }
 
@@ -121,7 +127,7 @@ const ShopsPage = (() => {
   function switchShop(ev) {
     const id = Number(ev.currentTarget.dataset.switch);
     if (id === currentId()) return;
-    localStorage.setItem(UI.SHOP_KEY, String(id));
+    ShopContext.rememberSelection(id);
     // 切换后整页刷新，确保页面数据与业务请求都使用新店铺
     location.reload();
   }
@@ -137,9 +143,8 @@ const ShopsPage = (() => {
     if (name === null || name === shop.name) return;
     try {
       const res = await XM.patch(`/shops/${id}`, { name });
-      shop.name = res.name;
-      shops = shops.map((s) => (s.id === res.id ? { ...s, name: res.name } : s));
-      UI.renderShopOptions();
+      ShopContext.rename(res.id, res.name);
+      syncChrome();
       render();
       UI.ok(`店铺已改名为「${res.name}」`);
     } catch (e) { UI.apiFail(e, "改名失败"); }
@@ -160,16 +165,9 @@ const ShopsPage = (() => {
     if (!confirmed) return;
     try {
       const res = await XM.del(`/shops/${id}?confirm=true`);
-      shops = shops.filter((s) => s.id !== id);
-      // 本地记录同步清理；删的是当前店铺时，本地顺序中的第一个剩余店铺成为当前店铺
-      UI.forgetShop(id, shops);
-      // 只有删的是当前店铺才切换选择；删除其他店铺不能从本地键重建当前值，
-      // 新客户端的默认选择只存在内存中，重读本地键会把当前店铺清空
-      if (isCurrent) XM.state.shopId = shops.length ? shops[0].id : null;
-      XM.state.shops = shops;
-      UI.renderShopOptions();
-      // 删到零店铺时，顶栏原选择框位置改为「新建店铺」
-      UI.applyNoShop(shops.length > 0);
+      // 本地顺序与选择同步清理；删的是当前店铺时，顺序中的第一间剩余店铺成为当前店铺
+      ShopContext.remove(id);
+      syncChrome();
       render();
       UI.ok(`店铺「${res.name}」已删除`);
       // 当前店铺变化后，页面上下文（业务数据）需要重新读取
@@ -177,38 +175,31 @@ const ShopsPage = (() => {
     } catch (e) { UI.apiFail(e, "删除店铺失败"); }
   }
 
-  async function load() {
-    const box = list();
-    try {
-      const data = await XM.get("/shops");
-      XM.state.shops = UI.applyShopOrder(data.shops);
-      shops = XM.state.shops;
-      // 当前选择优先沿用本地记录；记录不存在时取本地顺序里的第一间店铺
-      if (!shops.some((s) => String(s.id) === String(XM.state.shopId))) {
-        XM.state.shopId = shops.length ? shops[0].id : null;
-        if (shops.length) localStorage.setItem(UI.SHOP_KEY, String(shops[0].id));
-      }
-      UI.renderShopOptions();
-      // 顶栏跟随实际店铺数：有店铺显示选择框，零店铺显示「新建店铺」
-      UI.applyNoShop(shops.length > 0);
-      render();
-    } catch (e) {
-      // 读取失败不等于空列表：不能显示「还没有店铺」
-      box.innerHTML = `<div class="t-empty">店铺列表读取失败：${UI.esc(e.display || e.message)}</div>`;
+  function load() {
+    // 外壳已请求过店铺列表并交给上下文；本页只按快照渲染卡片
+    shops = ShopContext.snapshot();
+    // 本页进入时会落盘默认选择：没有本地记录的客户端刷新后仍回到同一间店铺
+    const saved = localStorage.getItem(ShopContext.SHOP_KEY);
+    if (shops.length && !shops.some((s) => String(s.id) === saved)) {
+      ShopContext.rememberSelection(shops[0].id);
     }
+    render();
   }
 
   return { load, onDragOver };
 })();
 
-window.PAGE_INIT = async function () {
-  // 本页不使用 X-Shop-Id，零店铺时也必须能用
-  $("#btnCreateShop").addEventListener("click", async () => {
-    await UI.createShopFlow();
-  });
-  const box = $("#shopList");
-  box.addEventListener("dragover", ShopsPage.onDragOver);
-  // 拖到列表空白处时阻止浏览器默认处理，保证落点稳定
-  box.addEventListener("drop", (ev) => ev.preventDefault());
-  await ShopsPage.load();
+export const page = {
+  shell: true, shopContext: "optional", requireSyncReady: true, autoUpdatePrompt: true,
+  async init() {
+    // 本页不使用 X-Shop-Id，零店铺时也必须能用
+    $("#btnCreateShop").addEventListener("click", async () => {
+      await createShopFlow();
+    });
+    const box = $("#shopList");
+    box.addEventListener("dragover", ShopsPage.onDragOver);
+    // 拖到列表空白处时阻止浏览器默认处理，保证落点稳定
+    box.addEventListener("drop", (ev) => ev.preventDefault());
+    ShopsPage.load();
+  },
 };

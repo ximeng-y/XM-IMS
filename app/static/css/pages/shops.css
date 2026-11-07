@@ -1,0 +1,119 @@
+/* 店铺管理页
+   卡片样式只作用于本页 .shop-list 内，不动其他页面的整体样式。
+   阴影与悬停浮起是本页特有需求，故对 const 流程里「全站无阴影」的兜底单独覆盖。 */
+.shops-toolbar {
+  display: flex;
+  align-items: center;
+  gap: .8rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.shops-order-hint { margin: 0; flex: 1 1 14rem; }
+
+.shop-list { display: flex; flex-direction: column; gap: .6rem; }
+
+.shop-card {
+  display: flex;
+  align-items: stretch;
+  background: #fff;
+  border: 1px solid var(--line-light);
+  box-shadow: 0 1px 3px rgba(28, 39, 51, .10) !important;
+  transition: box-shadow .15s ease, transform .12s ease;
+}
+.shop-card:hover {
+  box-shadow: 0 4px 12px rgba(28, 39, 51, .16) !important;
+  transform: translateY(-2px);
+}
+.shop-card.is-current { border-color: var(--blue); }
+/* 左侧窄主题色区域 */
+.shop-card-accent {
+  flex: 0 0 .5rem;
+  background: var(--blue);
+}
+.shop-card-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .9rem;
+  justify-content: space-between;
+}
+.shop-card-name {
+  margin: 0;
+  font-size: 1.3rem;
+  color: var(--ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.shop-card-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-wrap: wrap;
+}
+.shop-card-actions button { margin: 0; }
+/* 首个操作位固定宽度：切换按钮与「当前店铺」标签共用同一槽位，
+   两者宽度不同也不会让后面的「重命名」「删除」错位 */
+.shop-switch-slot { display: inline-flex; align-items: stretch; flex: 0 0 auto; width: 7.2rem; }
+.shop-switch-slot > button { width: 100%; }
+.shop-current-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  /* 内边距与 .btn-sm 对齐，标签与相邻按钮等高，不会显得矮一截 */
+  font-size: .78rem;
+  color: var(--blue-dark);
+  background: var(--blue-pale);
+  border: 1px solid var(--blue-pale-2);
+  padding: .25rem .7rem;
+}
+
+/* 六点拖动手柄：横向 2 点、纵向 3 点，靠近卡片右侧居中铺满卡片高度 */
+.shop-drag {
+  flex: 0 0 3.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--ink-soft);
+  user-select: none;
+  /* 手柄是纯拖拽热区，压掉浏览器对行内元素的默认外观 */
+  background: none;
+  border: 0;
+  padding: 0;
+  transition: background-color .15s ease, color .15s ease;
+}
+.shop-drag:hover { background: var(--blue-pale); color: var(--blue-dark); }
+.shop-drag > span {
+  width: 1.2rem;
+  height: 1.8rem;
+  background-image: radial-gradient(circle, currentColor .15rem, transparent .15rem);
+  background-size: .6rem .6rem;
+  background-position: 0 0;
+}
+.shop-drag:active { cursor: grabbing; }
+.shop-card.dragging { opacity: .5; }
+.shop-card.drop-before { box-shadow: inset 0 2px 0 var(--blue) !important; }
+.shop-card.drop-after { box-shadow: inset 0 -2px 0 var(--blue) !important; }
+
+/* 零店铺时的原文提示 */
+.shop-empty {
+  border: 1px dashed var(--line-deep);
+  background: #fff;
+  color: var(--ink-soft);
+  text-align: center;
+  padding: 2.5rem 1.5rem;
+}
+
+/* 拖动排序期间禁止选中卡片文字（手柄是唯一拖动起点） */
+.shop-list.is-dragging { user-select: none; }
+
+@media (max-width: 600px) {
+  .shop-card-main { padding: .8rem .9rem; }
+  .shop-card-name { font-size: 1.1rem; }
+  /* 窄屏下操作按钮换行时保留自然间距 */
+  .shop-card-actions { gap: .4rem; }
+}

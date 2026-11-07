@@ -5,10 +5,13 @@ import hashlib
 import re
 import sqlite3
 from pathlib import Path
-from .. import formulas, schema
+from .. import schema
+from ..catalog import formulas
+from ..catalog.fields import RESERVED_NAMES
 from ..errors import ApiError
 from ..migrate import migrate_connection
-from .common import atomic_json, dump, read_json, fail
+from .common import fail
+from ..storage.files import atomic_json, dump, read_json
 
 FORMAT = 1
 # 当前导出版本：索引库 1、店铺库 4（custom_fields 带 formula_json）
@@ -289,7 +292,6 @@ def validate_business(conn, kind):
                          user_message="部分记录缺少有效的标识信息",
                          user_hint="请在另一台设备上完成同步后再回到本机重试")
     if kind == "shop":
-        from ..service.fields import RESERVED_NAMES
         for name, in conn.execute("SELECT name FROM custom_fields"):
             if not name.strip() or name in RESERVED_NAMES:
                 fail("FIELD_INVALID", "自定义字段名称为空或与系统字段冲突",

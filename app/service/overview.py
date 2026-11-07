@@ -10,7 +10,8 @@
 与接口结构都不用改动。
 """
 from .. import db
-from . import items
+from ..catalog.fields import load_values
+from ..catalog.item_refs import format_item_ref
 
 # 规则注册表：顺序即接口 anomalies[] 的输出顺序
 ANOMALY_RULES: list[dict] = []
@@ -49,14 +50,14 @@ def summary(shop_id: int) -> dict:
             "COALESCE((SELECT SUM(m.qty) FROM movements m WHERE m.item_id = i.id), 0) AS qty "
             "FROM items i ORDER BY i.spu_id, i.seq").fetchall()
         contexts = [{"id": r["id"], "qty": r["qty"], "spu_id": r["spu_id"]} for r in rows]
-        values, calculations = items._load_values(d.conn, contexts)
+        values, calculations = load_values(d.conn, contexts)
 
     total_qty = sum(ctx["qty"] for ctx in contexts)
     counts = {rule["code"]: 0 for rule in ANOMALY_RULES}
     anomaly_items = 0
     for row, ctx in zip(rows, contexts):
         item_ctx = {"id": row["id"],
-                    "ref": items.format_item_ref(row["spu_id"], row["seq"]),
+                    "ref": format_item_ref(row["spu_id"], row["seq"]),
                     "qty": row["qty"],
                     "values": values[row["id"]],
                     "calculations": calculations[row["id"]]}

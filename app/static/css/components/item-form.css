@@ -1,0 +1,33 @@
+/* 商品表单组件（单品新建/编辑小窗、库存页操作弹窗共用）：
+   SPU 可搜索组合框、计算字段只读区、SKU 重名对照列表 */
+
+/* ---------- SPU 可搜索组合框 ---------- */
+.spu-combo { position: relative; }
+.spu-combo-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + .25rem);
+  background: #fff; border: 1px solid var(--line);
+  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .08);
+  max-height: 15rem; overflow: auto;
+  z-index: 50; display: none;
+}
+.spu-combo-list.open { display: block; }
+.spu-combo-opt {
+  padding: .45rem .7rem; font-size: .85rem; cursor: pointer;
+  border-bottom: 1px solid var(--line-light);
+}
+.spu-combo-opt:last-child { border-bottom: 0; }
+.spu-combo-opt:hover { background: var(--blue-pale); }
+.spu-combo-opt.spu-new { color: var(--blue); font-weight: 600; border-bottom: 1px solid var(--line); }
+
+/* 单品页／编辑小窗里的计算字段只读单元格 */
+.calc-block { display: flex; gap: .45rem; align-items: baseline; flex-wrap: wrap; }
+.calc-msg { font-size: .78rem; color: var(--danger); overflow-wrap: anywhere; }
+/* 只读结果与同排的输入框对齐：给一个与输入框相当的高度，不参与编辑 */
+.calc-cell { min-height: 2.4rem; display: flex; align-items: center; }
+
+/* SKU 重名对照竖列表（issue #33） */
+.dup-list{border:1px solid var(--pico-muted-border-color);border-radius:.5rem;padding:.15rem .75rem;margin:.7rem 0 .2rem}
+.dup-row{display:flex;gap:.75rem;padding:.35rem 0;border-bottom:1px solid var(--pico-muted-border-color)}
+.dup-row:last-child{border-bottom:none}
+.dup-key{flex:0 0 6rem;color:var(--pico-muted-color)}
+.dup-val{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}

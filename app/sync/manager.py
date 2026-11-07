@@ -9,7 +9,8 @@ from pathlib import Path
 from .. import config, db
 from ..errors import ApiError, error_dict
 from . import snapshot
-from .common import atomic_json, read_json, remove_tree, replace_path, fail, ProcessLock
+from .common import fail, ProcessLock
+from ..storage.files import atomic_json, read_json, remove_tree, replace_path
 from .gitstore import GitStore
 from .merge import Merger
 
@@ -41,6 +42,35 @@ class SyncManager:
     def _error_entry(exc):
         """状态栏错误：同时保留面向接口的文案与面向界面的文案，界面优先取后者。"""
         return error_dict(exc.code, exc.message, exc.hint, exc.user_message, exc.user_hint)
+
+    def settings_snapshot(self):
+        """配置副本，另带只供同步包内部使用的 allow_file；不含可写配置引用。"""
+        return {**self.settings, "allow_file": self.allow_file}
+
+    def settings_view(self):
+        """HTTP 输出用的配置副本：字段与保存时的设置完全一致。"""
+        return {**self.settings}
+
+    def record_background_error(self, error):
+        """记录后台同步错误；不改变业务门禁，已开放的业务继续可用。"""
+        self.error = self._error_entry(error) if isinstance(error, ApiError) else error
+
+    def background_window(self):
+        """后台自动同步的节奏与当前可执行性。
+
+        应用生命周期用这些公开读取决定是否触发一次运行，不必直接读设置或内部字典。
+        同步切换期间（存在冲突会话而业务未就绪）不自动运行。
+        """
+        settings = self.settings_snapshot()
+        return {"interval": settings["interval"], "remote": bool(settings["remote"]),
+                "auto": bool(settings["auto"]), "started": self.started, "busy": self.busy,
+                "session_open": bool(self.state.get("session")) and not db.business_ready}
+
+    def block_start(self, error):
+        """启动失败：记录错误并关闭业务门禁，由生命周期决定进程是否继续。"""
+        self.status_name = "blocked"
+        self.error = self._error_entry(error) if isinstance(error, ApiError) else error
+        db.set_ready(False)
 
     def save(self):
         atomic_json(self.directory / "state.json", self.state)
@@ -200,7 +230,7 @@ class SyncManager:
         raw, text = self.temporary("capture-db"), self.temporary("capture-json")
         raw.mkdir(parents=True)
         try:
-            with db._coordinator, db.internal_access():
+            with db.coordinated_access(), db.internal_access():
                 locked = time.perf_counter()
                 index = db.index_db()
                 shops = index.conn.execute("SELECT id,db_file FROM shops ORDER BY id").fetchall()
@@ -429,7 +459,7 @@ class SyncManager:
                 if baseline is None:
                     empty = not self.active
                     if self.active:
-                        with db.internal_access(), db._coordinator:
+                        with db.internal_access(), db.coordinated_access():
                             empty = db.index_db().conn.execute("SELECT COUNT(*) FROM shops").fetchone()[0] == 0
                     if remote and empty:
                         db.set_ready(False)
@@ -543,7 +573,7 @@ class SyncManager:
                     "unresolved": sum(not c["resolved"] for c in merger.conflicts),
                     "conflicts": conflicts[offset:offset + limit], "changes_total": len(merger.changes),
                     "changes": [{**c, "label": merger.describe(c["key"])} for c in merger.changes[offset:offset + limit]], "validated": session.get("validated", False),
-                    "renumber": session.get("renumber", [])}
+                    "renumber": [dict(r) for r in session.get("renumber", [])]}
 
     def conflict_details(self, identity, conflict_id, offset, limit):
         with self.mutex:
@@ -683,7 +713,7 @@ class SyncManager:
             raise
         old = self.active
         updated = {"generation": generation, "dataset": manifest["dataset"], "previous": old["generation"] if old else None}
-        with db._coordinator, db.internal_access():
+        with db.coordinated_access(), db.internal_access():
             db.close_all()
             try:
                 atomic_json(self.runtime / "active.json", updated)
@@ -781,14 +811,16 @@ class SyncManager:
                 self._space = (time.monotonic(), total_bytes)
             except OSError:
                 pass
+        # 可变内容一律返回副本，避免调用方经响应对象改写内部状态。
         return {"state": self.status_name, "business_ready": db.business_ready, "busy": self.busy,
                 "dirty": self.active is not None and db.epoch() != self.captured_epoch,
-                "error": self.error, "configured": bool(self.settings["remote"]),
+                "error": dict(self.error) if self.error else None,
+                "configured": bool(self.settings["remote"]),
                 "pending_commits": len(self.state.get("pending", [])),
                 "session": self.state.get("session", {}).get("id"),
                 "read_verified": bool(self.state.get("read_verified")),
                 "write_verified": bool(self.state.get("write_verified")),
                 "cleanup_pending": bool(self.state.get("cleanup_pending")), "storage_bytes": self._space[1],
-                "snapshots": self.state.get("cache_order", [])[-3:],
+                "snapshots": list(self.state.get("cache_order", [])[-3:]),
                 "retention_exception": bool(self.state.get("pending") or self.state.get("session")),
                 "legacy_present": (self.root / "index.db").exists()}

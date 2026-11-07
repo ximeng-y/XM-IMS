@@ -1,6 +1,11 @@
 /* 流水查询页：单品/类型筛选 + 分页 */
 "use strict";
 
+import { XM } from "xm/api";
+import { UI, $ } from "xm/ui";
+import { ShopContext } from "xm/shop-context";
+import { fillItemOptions } from "xm/components/item-picker";
+
 const MOV_LIMIT = 50;
 let movOffset = 0;
 
@@ -52,12 +57,15 @@ async function loadMovements() {
   }
 }
 
-window.PAGE_INIT = async function () {
-  if (!UI.requireShop()) return;
-  try { await UI.fillItemOptions($("#fltItem"), { allLabel: "全部单品" }); }
-  catch (e) { UI.apiFail(e, "加载单品列表失败"); }
-  $("#btnQuery").addEventListener("click", () => { movOffset = 0; loadMovements(); });
-  $("#fltType").addEventListener("change", () => { movOffset = 0; loadMovements(); });
-  $("#fltItem").addEventListener("change", () => { movOffset = 0; loadMovements(); });
-  loadMovements();
+export const page = {
+  shell: true, shopContext: "required", requireSyncReady: true, autoUpdatePrompt: true,
+  async init() {
+    if (ShopContext.currentId() === null) return;
+    try { await fillItemOptions($("#fltItem"), { allLabel: "全部单品" }); }
+    catch (e) { UI.apiFail(e, "加载单品列表失败"); }
+    $("#btnQuery").addEventListener("click", () => { movOffset = 0; loadMovements(); });
+    $("#fltType").addEventListener("change", () => { movOffset = 0; loadMovements(); });
+    $("#fltItem").addEventListener("change", () => { movOffset = 0; loadMovements(); });
+    loadMovements();
+  },
 };

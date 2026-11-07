@@ -1,0 +1,36 @@
+/* 主数据列表（SPU / 单品 / 字段）：公式列样式与各页固定列宽 */
+
+/* ---------- 数学计算字段 ---------- */
+/* 字段列表里的公式列：只读正文，长公式换行而不是把表格撑宽；宽度归零让列宽由内容与
+   相邻列分配，不因一条长公式把「操作」列挤走 */
+.fx-cell { max-width: 22rem; overflow-wrap: anywhere; font-size: .82rem; text-align: left; }
+
+/* 公式列本就靠 overflow-wrap:anywhere 折行，不能被基础样式里表格单元格的 nowrap
+   覆盖成单行，否则长公式会被裁掉；它自带 max-width 与任意断行，不会撑宽表格。 */
+.table-scroll td.fx-cell { white-space: normal; }
+
+/* ---------- 各列表页固定列宽（issue #56） ----------
+   与库存页同一口径：只给需要稳定的列定宽，名称、备注一类文本列不给宽度，
+   由 fixed 布局平分余量。窄容器下不再压缩，改为横向滚动（阈值见 .table-scroll table）。
+   页面用 body[data-page] 区分（见 base.html 的 data-page 块），限定在 .table-scroll 内，
+   以免命中弹窗结果框里的 .mini-table。
+   数值选的是各列内容宽度加内边距后的一个区间，不求穷尽最长值：定宽列里内容短、
+   不会换行，略宽一点即够，真正长的取值走 title 悬停展示。 */
+/* SPU 管理页：ID 5 + 名称(余) + SKU 数 5 + 更新时间 12 + 操作 9 */
+body[data-page="spus"] .table-scroll th:nth-child(1) { width: 5rem; }
+body[data-page="spus"] .table-scroll th:nth-child(3) { width: 5rem; }
+body[data-page="spus"] .table-scroll th:nth-child(4) { width: 12rem; }
+body[data-page="spus"] .table-scroll th:nth-child(5) { width: 9rem; }
+/* 单品页：ID 5 + 名称(余) + SPU 14 + 库存 6 + 自定义字段(余) + 操作 9 */
+body[data-page="items"] .table-scroll th:nth-child(1) { width: 5rem; }
+body[data-page="items"] .table-scroll th:nth-child(3) { width: 14rem; }
+body[data-page="items"] .table-scroll th:nth-child(4) { width: 6rem; }
+body[data-page="items"] .table-scroll th:last-child { width: 9rem; }
+/* 字段页：标记 5 + ID 4 + 名称(余) + 类型 14 + 公式(余) + 允许负数 6 + 小数位 6 + 操作 15
+   类型列要容下最长取值（如「小数（2 位），允许负数」，12 个全角字符） */
+body[data-page="fields"] .table-scroll th:nth-child(1) { width: 5rem; }
+body[data-page="fields"] .table-scroll th:nth-child(2) { width: 4rem; }
+body[data-page="fields"] .table-scroll th:nth-child(4) { width: 14rem; }
+body[data-page="fields"] .table-scroll th:nth-child(6) { width: 6rem; }
+body[data-page="fields"] .table-scroll th:nth-child(7) { width: 6rem; }
+body[data-page="fields"] .table-scroll th:nth-child(8) { width: 15rem; }

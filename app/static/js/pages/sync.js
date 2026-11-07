@@ -2,6 +2,11 @@
    labels 只用于把后端返回的记录键翻成中文说明：库表列名（created_at、spu_id 等）不进界面，
    未收录的键按「该记录的一项内容」笼统呈现，不显示原始键名。 */
 "use strict";
+
+import { UI } from "xm/ui";
+import { Sync } from "xm/sync";
+import { BackupOnboarding } from "xm/onboarding/backup";
+
 let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changesOffset=0, settingsLoaded=false, savedSettings=null;
 const limit=20;
 const $s=id=>document.getElementById(id);
@@ -84,28 +89,31 @@ function card(c){
   box.append(controls);if(c.kind==='name'){const note=document.createElement('p');note.className='muted';note.textContent='不存在此对象的版本不能提供名称；请至少为其中一条记录输入不同名称，以便同时保留。';box.append(note);}return box;
 }
 async function saveChoice(button,id,choice){await action(button,async()=>{await Sync.api('PATCH','/conflicts/'+conflictSession,{revision,choices:{[id]:choice}});await loadConflicts();$s('mergePreview').replaceChildren();});}
-window.PAGE_INIT=async()=>{
-  if(!Sync.local){showLocalOnly();return;}
-  document.querySelectorAll('#syncSettings input,#syncSettings button').forEach(el=>{el.disabled=true;});
-  $s('syncSettings').oninput=updateConnectionState;
-  $s('syncSettings').onchange=updateConnectionState;
-  $s('syncSettings').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{savedSettings=await Sync.api('PATCH','/settings',settingsValues());UI.ok('设置已保存');});};
-  $s('testConnection').onclick=e=>{if(settingsDirty())return;action(e.currentTarget,async()=>{await Sync.api('POST','/test-connection');UI.ok('已连接到备份仓库');});};
-  $s('syncNow').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/run',{synchronize:true});conflictSession=null;});
-  $s('checkNow').onclick=e=>action(e.currentTarget,()=>Sync.api('POST','/run',{synchronize:false}));
-  $s('startOnboarding').onclick=()=>openOnboarding('backup');
-  $s('restartOnboarding').onclick=()=>openOnboarding('maintenance');
-  $s('offlineEnter').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/offline');location.href='/';});
-  for(const [id,source] of [['useLocal','local'],['useRemote','remote']])$s(id).onclick=e=>action(e.currentTarget,async()=>{if(await UI.confirmDialog({title:'确认初始化来源',bodyHtml:source==='local'?'将使用本地数据（没有数据时新建）。如远端已有数据，其当前内容将被本地版本替换，旧版本保留在历史中。':'将从远端恢复整套数据，当前本地数据会先保留副本。',confirmText:'确认使用',danger:true}))await Sync.api('POST','/initialize',{source,confirm:true});});
-  $s('previousChanges').onclick=e=>action(e.currentTarget,async()=>{changesOffset=Math.max(0,changesOffset-limit);await loadChanges();});
-  $s('nextChanges').onclick=e=>action(e.currentTarget,async()=>{changesOffset+=limit;await loadChanges();});
-  $s('onlyUnresolved').onchange=()=>{offset=0;loadConflicts().catch(e=>UI.fail(e.message));};
-  $s('previousConflicts').onclick=e=>action(e.currentTarget,async()=>{offset=Math.max(0,offset-limit);await loadConflicts();});
-  $s('nextConflicts').onclick=e=>action(e.currentTarget,async()=>{offset+=limit;await loadConflicts();});
-  $s('cancelConflict').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/conflicts/'+conflictSession+'/cancel');location.href='/';});
-  $s('validateConflict').onclick=e=>action(e.currentTarget,async()=>{const p=await Sync.api('POST','/conflicts/'+conflictSession+'/validate',{revision});const el=document.createElement('pre');el.textContent='校验通过。候选修改 '+p.changes+' 条。\n编号变化：\n'+(p.renumber.length?p.renumber.map(r=>(r.label||r.table)+'：'+r.old+' → '+r.new).join('\n'):'无');$s('mergePreview').replaceChildren(el);await loadConflicts();});
-  $s('applyConflict').onclick=e=>action(e.currentTarget,async()=>{if(await UI.confirmDialog({title:'确认应用合并结果',bodyHtml:'请确认修改总览、编号变化和最终库存。推送成功后将整套替换本地数据库。',confirmText:'确认并应用',danger:true})){await Sync.api('POST','/conflicts/'+conflictSession+'/apply',{revision,confirm:true});conflictSession=null;}});
-  await refresh().catch(showRefreshError);setInterval(()=>refresh().catch(showRefreshError),5000);
+export const page = {
+  shell: true, shopContext: "none", requireSyncReady: false, autoUpdatePrompt: false,
+  async init() {
+    if(!Sync.local){showLocalOnly();return;}
+    document.querySelectorAll('#syncSettings input,#syncSettings button').forEach(el=>{el.disabled=true;});
+    $s('syncSettings').oninput=updateConnectionState;
+    $s('syncSettings').onchange=updateConnectionState;
+    $s('syncSettings').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{savedSettings=await Sync.api('PATCH','/settings',settingsValues());UI.ok('设置已保存');});};
+    $s('testConnection').onclick=e=>{if(settingsDirty())return;action(e.currentTarget,async()=>{await Sync.api('POST','/test-connection');UI.ok('已连接到备份仓库');});};
+    $s('syncNow').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/run',{synchronize:true});conflictSession=null;});
+    $s('checkNow').onclick=e=>action(e.currentTarget,()=>Sync.api('POST','/run',{synchronize:false}));
+    $s('startOnboarding').onclick=()=>openOnboarding('backup');
+    $s('restartOnboarding').onclick=()=>openOnboarding('maintenance');
+    $s('offlineEnter').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/offline');location.href='/';});
+    for(const [id,source] of [['useLocal','local'],['useRemote','remote']])$s(id).onclick=e=>action(e.currentTarget,async()=>{if(await UI.confirmDialog({title:'确认初始化来源',bodyHtml:source==='local'?'将使用本地数据（没有数据时新建）。如远端已有数据，其当前内容将被本地版本替换，旧版本保留在历史中。':'将从远端恢复整套数据，当前本地数据会先保留副本。',confirmText:'确认使用',danger:true}))await Sync.api('POST','/initialize',{source,confirm:true});});
+    $s('previousChanges').onclick=e=>action(e.currentTarget,async()=>{changesOffset=Math.max(0,changesOffset-limit);await loadChanges();});
+    $s('nextChanges').onclick=e=>action(e.currentTarget,async()=>{changesOffset+=limit;await loadChanges();});
+    $s('onlyUnresolved').onchange=()=>{offset=0;loadConflicts().catch(e=>UI.fail(e.message));};
+    $s('previousConflicts').onclick=e=>action(e.currentTarget,async()=>{offset=Math.max(0,offset-limit);await loadConflicts();});
+    $s('nextConflicts').onclick=e=>action(e.currentTarget,async()=>{offset+=limit;await loadConflicts();});
+    $s('cancelConflict').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/conflicts/'+conflictSession+'/cancel');location.href='/';});
+    $s('validateConflict').onclick=e=>action(e.currentTarget,async()=>{const p=await Sync.api('POST','/conflicts/'+conflictSession+'/validate',{revision});const el=document.createElement('pre');el.textContent='校验通过。候选修改 '+p.changes+' 条。\n编号变化：\n'+(p.renumber.length?p.renumber.map(r=>(r.label||r.table)+'：'+r.old+' → '+r.new).join('\n'):'无');$s('mergePreview').replaceChildren(el);await loadConflicts();});
+    $s('applyConflict').onclick=e=>action(e.currentTarget,async()=>{if(await UI.confirmDialog({title:'确认应用合并结果',bodyHtml:'请确认修改总览、编号变化和最终库存。推送成功后将整套替换本地数据库。',confirmText:'确认并应用',danger:true})){await Sync.api('POST','/conflicts/'+conflictSession+'/apply',{revision,confirm:true});conflictSession=null;}});
+    await refresh().catch(showRefreshError);setInterval(()=>refresh().catch(showRefreshError),5000);
+  },
 };
 
 async function showDetails(id){

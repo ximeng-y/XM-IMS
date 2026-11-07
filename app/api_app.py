@@ -9,7 +9,7 @@ from . import db
 from .api.v1 import router as v1_router
 from .errors import register_error_handlers
 from .version import APP_VERSION
-from .sync.runtime import lifespan, install
+from .runtime import lifespan, install
 
 
 def create_api_app() -> FastAPI:

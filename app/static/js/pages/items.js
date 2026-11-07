@@ -2,6 +2,12 @@
    新建走共享组件 components/item-form.js 的「新建单品」小窗（与库存页操作区同一实现） */
 "use strict";
 
+import { XM } from "xm/api";
+import { UI, $, $$ } from "xm/ui";
+import { ShopContext } from "xm/shop-context";
+import { ItemForm } from "xm/components/item-form";
+import { DeleteFlow } from "xm/components/delete-flow";
+
 const LIMIT = 50;
 let offset = 0;
 let fieldsMeta = [];   // 自定义字段定义
@@ -109,12 +115,19 @@ function deleteFlow(item) {
 }
 
 // ---------- 新建（共享小窗） ----------
+// 组件只读传入的 SPU 列表，有变化时经 onSpusChanged 交回完整新列表，由本页替换自己的数组
+function applySpus(next) {
+  spusList = next;
+  fillSpuSelects();
+}
+
 function openCreateDialog() {
   ItemForm.openCreateItem({
     fields: fieldsMeta,
     spus: spusList,
     onCreated: () => { offset = 0; loadItems(); },
     onSpuCreated: () => fillSpuSelects(),
+    onSpusChanged: applySpus,
     // issue #33：重名提示里选「编辑这个当前已有的 SKU」时打开同一个编辑小窗
     onEditExisting: (dup) => editFlow(dup),
   });
@@ -129,33 +142,37 @@ function editFlow(item) {
     spus: spusList,
     onSaved: async () => { await loadMeta(); fillSpuSelects(); loadItems(); },
     onSpuCreated: () => fillSpuSelects(),
+    onSpusChanged: applySpus,
   });
 }
 
 // ---------- 启动 ----------
-window.PAGE_INIT = async function () {
-  if (!UI.requireShop()) return;
-  try { await loadMeta(); } catch (e) { UI.apiFail(e, "加载字段/SPU 失败"); }
-  fillSpuSelects();
+export const page = {
+  shell: true, shopContext: "required", requireSyncReady: true, autoUpdatePrompt: true,
+  async init() {
+      if (ShopContext.currentId() === null) return;
+    try { await loadMeta(); } catch (e) { UI.apiFail(e, "加载字段/SPU 失败"); }
+    fillSpuSelects();
 
-  $("#btnNewItem").addEventListener("click", openCreateDialog);
-  $("#btnFilter").addEventListener("click", () => { offset = 0; loadItems(); });
-  $("#fltQ").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { offset = 0; loadItems(); }
-  });
-  $("#fltSpu").addEventListener("change", () => { offset = 0; loadItems(); });
+    $("#btnNewItem").addEventListener("click", openCreateDialog);
+    $("#btnFilter").addEventListener("click", () => { offset = 0; loadItems(); });
+    $("#fltQ").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { offset = 0; loadItems(); }
+    });
+    $("#fltSpu").addEventListener("change", () => { offset = 0; loadItems(); });
 
-  // 双击行内任意非控件区域（含单元格内文字与文字旁的空白）跳到库存页并定位该单品（issue #62）。
-  // 判据与 SPU 页、库存页行点击一致：只排除控件，不排除文字——文字由双击选中的选区自行处理，
-  // 拖选文字后松手不跳转，也不清用户已有选区；委托绑在 tbody 上，分页重渲染后无需重绑
-  $("#itemRows").addEventListener("dblclick", (e) => {
-    const row = e.target.closest("tr.item-row[data-item]");
-    if (!row) return;
-    if (e.target.closest("button, a, input, select, textarea, label")) return;
-    const selection = window.getSelection();
-    if (selection && !selection.isCollapsed) return;
-    location.href = `/inventory?item_id=${encodeURIComponent(row.dataset.item)}`;
-  });
+    // 双击行内任意非控件区域（含单元格内文字与文字旁的空白）跳到库存页并定位该单品（issue #62）。
+    // 判据与 SPU 页、库存页行点击一致：只排除控件，不排除文字——文字由双击选中的选区自行处理，
+    // 拖选文字后松手不跳转，也不清用户已有选区；委托绑在 tbody 上，分页重渲染后无需重绑
+    $("#itemRows").addEventListener("dblclick", (e) => {
+      const row = e.target.closest("tr.item-row[data-item]");
+      if (!row) return;
+      if (e.target.closest("button, a, input, select, textarea, label")) return;
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed) return;
+      location.href = `/inventory?item_id=${encodeURIComponent(row.dataset.item)}`;
+    });
 
-  loadItems();
+    loadItems();
+  },
 };

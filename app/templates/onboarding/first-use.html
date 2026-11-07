@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}首次使用{% endblock %}
 {% block nav %}onboarding{% endblock %}
-{% block styles %}<link rel="stylesheet" href="/static/onboarding/onboarding.css?v=2">{% endblock %}
 {% block body %}
 <main class="first-use">
   <header>
@@ -13,10 +12,4 @@
     <p>正在查看本机数据…</p>
   </article>
 </main>
-{% endblock %}
-{% block core_scripts %}
-<script src="/static/js/sync-common.js?v=5"></script>
-<script src="/static/onboarding/wizard.js?v=1"></script>
-<script src="/static/onboarding/backup.js?v=1"></script>
-<script src="/static/onboarding/first-use.js?v=2"></script>
 {% endblock %}
