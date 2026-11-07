@@ -175,7 +175,7 @@ def patch_item(shop_id: int, item_ref: str, payload: ItemPatch) -> dict:
         # 改名与换挂可能同时提交：名称最终落在目标 SPU 下，按「目标 SPU + 最终名称」
         # 校验一次，避免先改名后换挂时漏掉目标组内的同名单品
         final_name = row["name"] if new_name is None else new_name
-        if new_name != row["name"] or new_spu != row["spu_id"]:
+        if final_name != row["name"] or new_spu != row["spu_id"]:
             _ensure_name_free(d.conn, new_spu, final_name, exclude_id=item_id)
 
         if new_name is not None and new_name != row["name"]:
