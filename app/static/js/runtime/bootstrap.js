@@ -47,12 +47,14 @@ export async function boot(module) {
   highlightNav();
   if (spec.autoUpdatePrompt) startAutoCheck();
 
-  // 同步检查失败或发生跳转时不再继续；不需要该检查的页面只处理非本机降级
+  // 非本机降级必须在分支之前无条件执行：ensureReady 在非本机时直接返回 true，
+  // 若只在 else 分支调用，局域网访问普通业务页时同步入口不会被隐藏
+  Sync.initSync();
+
+  // 同步检查失败或发生跳转时不再继续
   if (spec.requireSyncReady) {
     try { if (!await Sync.ensureReady()) return; }
     catch (e) { UI.fail("无法检查同步状态：" + e.message); return; }
-  } else {
-    Sync.initSync();
   }
 
   if (spec.shopContext === "none") {

@@ -96,8 +96,13 @@ class SyncSetup:
         自己的只读查询与阶段判断（含数据库协调锁）。
         """
         manager = self.manager
-        if not manager.started or not manager.mutex.acquire(blocking=False):
+        if not manager.started:
             yield self.inspect_setup()
+            return
+        # 取锁失败说明同步/初始化/恢复正在进行：此时不查库也不给可用视图，
+        # 页面保持 waiting 继续轮询
+        if not manager.mutex.acquire(blocking=False):
+            yield None
             return
         try:
             if manager.busy:

@@ -64,7 +64,7 @@ STYLES = {
 }
 
 # 启动入口：所有页面共用同一模块，页面能力由入口模块导出的 page 描述决定。
-BOOTSTRAP = ("/static/js/runtime/bootstrap.js", 1)
+BOOTSTRAP = ("/static/js/runtime/bootstrap.js", 2)
 
 # 页面清单：入口模块 + 该页需要的样式；页面名称与 body[data-page] 一致（现有 CSS 仍使用它）。
 # 组件样式排在页面样式之前，页面样式可覆盖组件的同名规则。
