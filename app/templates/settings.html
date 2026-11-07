@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}设置{% endblock %}
+{% block nav %}settings{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>设置</h1>
+    <div class="sub">程序版本与更新设置</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>软件更新</h2>
+  <p class="muted">当前版本 <b id="currentVersion">—</b></p>
+  <div class="form-check">
+    <input type="checkbox" id="autoCheck" checked>
+    <label for="autoCheck" style="margin:0">启动时自动检查新版本</label>
+  </div>
+  <div class="panel-actions">
+    <button type="button" id="checkNow" class="btn-sm">检查更新</button>
+  </div>
+  <div id="checkResult" class="result-box" hidden></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/pages/settings.js?v=1"></script>{% endblock %}

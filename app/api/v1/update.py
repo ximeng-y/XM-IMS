@@ -20,10 +20,28 @@ class InstallBody(BaseModel):
     tag: str
 
 
+class UpdateSettingsBody(BaseModel):
+    auto_check: bool
+
+
 @router.get("/status", summary="更新检查状态")
-def status():
-    """返回最近一次（或进行中）的更新检查结果；后台检查未完成时 checked=false。"""
-    return update.check_update()
+def status(force: bool = False):
+    """返回最近一次（或进行中）的更新检查结果；后台检查未完成时 checked=false。
+
+    force=true 时忽略缓存立即向远端检查（手动「检查更新」按钮使用，可能耗时数十秒）。
+    """
+    return update.check_update(force=force)
+
+
+@router.get("/settings", summary="读取更新检查设置")
+def get_settings():
+    return update.load_settings()
+
+
+@router.patch("/settings", summary="保存更新检查设置")
+def patch_settings(body: UpdateSettingsBody):
+    """auto_check 控制程序启动时是否自动检查新版本；手动检查不受影响。"""
+    return update.save_settings({"auto_check": body.auto_check})
 
 
 @router.post("/install", summary="安装指定版本更新")
