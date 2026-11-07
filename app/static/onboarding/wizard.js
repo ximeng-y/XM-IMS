@@ -1,6 +1,7 @@
 /* 轻量步骤容器：业务检测只在进入步骤时执行，输入变化只刷新导航。 */
 "use strict";
-window.OnboardingWizard = class {
+
+class OnboardingWizard {
   constructor({ steps, context, container, onComplete, onCancel }) {
     this.steps = steps;
     this.context = context;
@@ -132,4 +133,6 @@ window.OnboardingWizard = class {
     }
   }
   async finish() { await this.onComplete?.(this.context); }
-};
+}
+
+export { OnboardingWizard };

@@ -1,6 +1,9 @@
 /* 仓库、授权与续接集中在备份组件；高级维护复用旧接口，普通流程固定数据来源。 */
 "use strict";
-window.BackupOnboarding = (() => {
+
+import { OnboardingWizard } from "xm/onboarding/wizard";
+
+const BackupOnboarding = (() => {
   let activeDialog = null;
   const sameAccount = (a, b) => (a || "").toLowerCase() === (b || "").toLowerCase();
   const node = (tag, text, cls) => {
@@ -388,3 +391,5 @@ window.BackupOnboarding = (() => {
   }
   return { mount, open };
 })();
+
+export { BackupOnboarding };

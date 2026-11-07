@@ -1,0 +1,42 @@
+/* 概览页：统计卡片、快捷入口与最近流水列宽 */
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.stat-card {
+  background: #fff; border: 1px solid var(--line-light);
+  border-top: 3px solid var(--blue);
+  padding: .9rem 1.1rem;
+}
+.stat-card .k { font-size: .8rem; color: var(--ink-soft); }
+.stat-card .v { font-size: 1.6rem; font-weight: 700; color: var(--blue-dark);
+  font-variant-numeric: tabular-nums; margin-top: .15rem; }
+
+/* 概览快捷入口：桌面端换行排列，窄屏改两列/单列（见下方媒体查询） */
+.quick-actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+
+/* 概览页最近流水：只锁数值与时间 */
+body[data-page="overview"] .table-scroll th:nth-child(1) { width: 5rem; }
+body[data-page="overview"] .table-scroll th:nth-child(2) { width: 12rem; }
+body[data-page="overview"] .table-scroll th:nth-child(3) { width: 5rem; }
+body[data-page="overview"] .table-scroll th:nth-child(4) { width: 6rem; }
+body[data-page="overview"] .table-scroll th:nth-child(5) { width: 6rem; }
+
+@media (max-width: 600px) {
+  /* 概览统计卡片：两列等宽，轨道允许收缩，长数值不撑大卡片 */
+  .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-card { min-width: 0; padding: .75rem .85rem; }
+  .stat-card .v { font-size: 1.35rem; overflow-wrap: anywhere; }
+  /* 概览快捷入口：两列等宽按钮 */
+  .quick-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-actions > * { width: 100%; }
+}
+
+@media (max-width: 359px) {
+  /* 极窄屏：概览卡片与快捷入口都改单列 */
+  .stat-cards { grid-template-columns: minmax(0, 1fr); }
+  .quick-actions { grid-template-columns: minmax(0, 1fr); }
+}

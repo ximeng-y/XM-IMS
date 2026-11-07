@@ -1,0 +1,14 @@
+/* 数据同步与三方冲突处理 */
+
+.sync-page{width:100%;max-width:100%}.sync-page h1{margin-bottom:.35rem}.sync-page article,.sync-page details{margin-bottom:1.2rem}
+.sync-actions{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.8rem 0}.sync-actions>*{margin-bottom:0}.sync-actions input{max-width:18rem}
+.conflict-card{border:1px solid var(--pico-muted-border-color);border-radius:.5rem;padding:1rem;margin:1rem 0}.conflict-card h3{font-size:1rem;overflow-wrap:anywhere}
+.conflict-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}.conflict-grid>div{min-width:0}.conflict-grid pre,#automaticChanges pre,#mergePreview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:22rem;overflow:auto;font-size:.8rem;padding:.7rem}
+.sync-page [hidden]{display:none!important}
+@media(max-width:75rem){.conflict-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+@media (max-width: 600px) {
+  /* 同步冲突对照改单列，顺序不变。选择器带上 .sync-page 是为了压过
+     上方定义的两列规则 */
+  .sync-page .conflict-grid { grid-template-columns: minmax(0, 1fr); }
+}

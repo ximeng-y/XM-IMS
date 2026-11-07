@@ -1,6 +1,11 @@
 /* SPU 管理页：列表 / 新建 / 改名 */
 "use strict";
 
+import { XM } from "xm/api";
+import { UI, $, $$ } from "xm/ui";
+import { ShopContext } from "xm/shop-context";
+import { DeleteFlow } from "xm/components/delete-flow";
+
 async function loadSpus() {
   const tbody = $("#spuRows");
   try {
@@ -64,39 +69,42 @@ function deleteFlow(ev) {
   });
 }
 
-window.PAGE_INIT = async function () {
-  if (!UI.requireShop()) return;
+export const page = {
+  shell: true, shopContext: "required", requireSyncReady: true, autoUpdatePrompt: true,
+  async init() {
+      if (ShopContext.currentId() === null) return;
 
-  // 双击行内任意非控件区域（含单元格内文字与文字旁的空白）跳到库存页并展开该 SPU。
-  // 判据与库存页行点击一致：只排除控件，不排除文字——文字由双击选中的选区自行处理，
-  // 拖选文字后松手不跳转，也不清用户已有选区
-  $("#spuRows").addEventListener("dblclick", (e) => {
-    const row = e.target.closest("tr.spu-row[data-spu]");
-    if (!row) return;
-    if (e.target.closest("button, a, input, select, textarea, label")) return;
-    const selection = window.getSelection();
-    if (selection && !selection.isCollapsed) return;
-    location.href = `/inventory?spu_id=${row.dataset.spu}`;
-  });
-
-  $("#fCreate").addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    const btn = ev.target.querySelector("button[type=submit]");
-    const name = $("#spuName").value.trim();
-    if (!name) { UI.fail("请填写 SPU 名称"); return; }
-    UI.withBusy(btn, async () => {
-      try {
-        const spu = await XM.post("/spus", { name });
-        UI.resultBox("#createResult", {
-          html: UI.okHtml(`SPU「${spu.name}」已创建（#${spu.id}）`),
-        });
-        $("#spuName").value = "";
-        loadSpus();
-      } catch (e) {
-        UI.resultBox("#createResult", { error: true, html: UI.apiFailHtml(e) });
-      }
+    // 双击行内任意非控件区域（含单元格内文字与文字旁的空白）跳到库存页并展开该 SPU。
+    // 判据与库存页行点击一致：只排除控件，不排除文字——文字由双击选中的选区自行处理，
+    // 拖选文字后松手不跳转，也不清用户已有选区
+    $("#spuRows").addEventListener("dblclick", (e) => {
+      const row = e.target.closest("tr.spu-row[data-spu]");
+      if (!row) return;
+      if (e.target.closest("button, a, input, select, textarea, label")) return;
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed) return;
+      location.href = `/inventory?spu_id=${row.dataset.spu}`;
     });
-  });
 
-  await loadSpus();
+    $("#fCreate").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const btn = ev.target.querySelector("button[type=submit]");
+      const name = $("#spuName").value.trim();
+      if (!name) { UI.fail("请填写 SPU 名称"); return; }
+      UI.withBusy(btn, async () => {
+        try {
+          const spu = await XM.post("/spus", { name });
+          UI.resultBox("#createResult", {
+            html: UI.okHtml(`SPU「${spu.name}」已创建（#${spu.id}）`),
+          });
+          $("#spuName").value = "";
+          loadSpus();
+        } catch (e) {
+          UI.resultBox("#createResult", { error: true, html: UI.apiFailHtml(e) });
+        }
+      });
+    });
+
+    await loadSpus();
+  },
 };

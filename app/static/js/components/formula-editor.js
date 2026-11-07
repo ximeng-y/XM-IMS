@@ -5,6 +5,8 @@
    token 形如 {kind:"field",uid:"…"}、{kind:"symbol",value:"*"}、{kind:"number",value:"3"}。 */
 "use strict";
 
+import { UI } from "xm/ui";
+
 const FormulaEditor = (() => {
   const esc = UI.esc;
   const SYMBOLS = [["+", "+"], ["-", "−"], ["*", "×"], ["/", "÷"], ["(", "("], [")", ")"]];
@@ -153,3 +155,5 @@ const FormulaEditor = (() => {
 
   return { create, referable, SYMBOL_TEXT };
 })();
+
+export { FormulaEditor };

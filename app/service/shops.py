@@ -102,7 +102,7 @@ def rename_shop(shop_id: int, name: str, dry_run: bool = False,
         raise _name_invalid()
     # dry_run 既不占用也不读取写操作的结果缓存
     cache_key = None if dry_run else _idempotency_key("rename", shop_id, idempotency_key)
-    with db._coordinator:
+    with db.coordinated_access():
         replayed = _replay(cache_key, name)
         if replayed is not None:
             return replayed
@@ -149,7 +149,7 @@ def delete_shop(shop_id: int, confirm: bool = False, dry_run: bool = False,
     旧代次与备份。文件清理失败时整个索引事务回滚，不会返回删除成功。
     """
     cache_key = None if dry_run else _idempotency_key("delete", shop_id, idempotency_key)
-    with db._coordinator:
+    with db.coordinated_access():
         # 重放先于存在性检查：已删店铺的删除重试应返回首次结果
         replayed = _replay(cache_key, True)
         if replayed is not None:

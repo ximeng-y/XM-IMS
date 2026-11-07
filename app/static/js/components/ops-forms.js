@@ -3,6 +3,10 @@
    幂等键仅在小窗内部生成与轮换，不展示给用户 */
 "use strict";
 
+import { XM } from "xm/api";
+import { UI } from "xm/ui";
+import { fillItemOptions, itemOptionLabel } from "xm/components/item-picker";
+
 const OpsForm = (() => {
   const esc = UI.esc;
 
@@ -44,7 +48,7 @@ const OpsForm = (() => {
     },
   };
 
-  // 开窗时的单品下拉：复用 UI.fillItemOptions，返回值用于库存提示
+  // 开窗时的单品下拉：复用 item-picker，返回值用于库存提示
   let itemsCache = [];
 
   function buildFormHtml(cfg) {
@@ -135,12 +139,12 @@ const OpsForm = (() => {
         return false;
       }
       itemsCache.push(it);
-      itemSel.append(new Option(UI.itemOptionLabel(it), it.id));
+      itemSel.append(new Option(itemOptionLabel(it), it.id));
       return true;
     }
     const refreshPickers = async (selected) => {
       const cur = selected ?? itemSel.value;
-      itemsCache = await UI.fillItemOptions(itemSel);
+      itemsCache = await fillItemOptions(itemSel);
       if (cur) {
         const ok = await ensureTargetOption(cur);
         itemSel.value = ok ? String(cur) : "";
@@ -229,3 +233,5 @@ const OpsForm = (() => {
 
   return { open, KINDS };
 })();
+
+export { OpsForm };

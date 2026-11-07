@@ -6,12 +6,12 @@ decimal/percent 字段值以显示数值传（12.34；25 表示 25%）。
 单品（SKU）标识 item_id 为字符串，格式「SPU 号-组内序号」（如 "1-2"），
 即该 SKU 所属 SPU 的 ID 加它在组内自 1 起的序号。
 
-数学计算字段：formula 是版本化的结构化 token 序列（见 app/formulas.py），
+数学计算字段：formula 是版本化的结构化 token 序列（见 app/catalog/formulas.py），
 计算字段的读写只经公式端点，值不可通过 SKU 接口手填或清除。
 """
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 ITEM_ID_DESC = "单品标识，格式「SPU 号-组内序号」，如 1-2"
 FORMULA_DESC = "数学计算公式（结构化组件序列），仅计算字段使用"
@@ -53,6 +53,21 @@ class Formula(BaseModel):
 
 class ShopCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100, description="店铺名，全局唯一")
+
+
+class FirstShopCreate(ShopCreate):
+    # 首次使用的首店创建：与普通店铺创建共用名称约束，另带确认、幂等与预览
+    confirm: bool = False
+    idempotency_key: str = Field(min_length=1, max_length=100)
+    dry_run: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("店铺名称需包含有效文字")
+        return value
 
 
 class ShopRename(BaseModel):

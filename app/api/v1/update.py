@@ -4,12 +4,12 @@ from pydantic import BaseModel
 
 from ...errors import ApiError
 from ...service import update
-from ...sync.api import local_request
+from ..access import update_request
 
 
 def local_update_request(request: Request):
     """在直连后端和前端代理边界使用同一访问规则。"""
-    local_request(request, scope="UPDATE", header="x-xm-update", label="程序更新")
+    update_request(request)
 
 
 router = APIRouter(prefix="/update", tags=["自动更新"],

@@ -1,15 +1,21 @@
-"""两个后端入口共享的同步生命周期与业务访问门禁。"""
+"""应用级装配：生命周期、服务对象与请求门禁。
+
+两个后端入口（app.main、app.api_app）共用这里的生命周期；同步相关路由
+由 app.api.v1 统一注册，本模块不再挂载路由。
+"""
 import asyncio
 import contextlib
 import time
+
 from fastapi.responses import JSONResponse
-from .. import db
-from ..errors import ApiError, error_dict
-from ..service import update
-from ..onboarding.backup import BackupOnboarding
-from ..onboarding.first_use import FirstUse
-from .manager import SyncManager
-from .api import router
+
+from . import db
+from .errors import ApiError, error_dict
+from .onboarding.backup import BackupOnboarding
+from .onboarding.first_use import FirstUse
+from .service import update
+from .sync.manager import SyncManager
+from .sync.setup import SyncSetup
 
 
 @contextlib.asynccontextmanager
@@ -18,42 +24,42 @@ async def lifespan(app):
     # 两个后端入口共用；仅在应用真正启动时检查，模块级锁防止重复线程。
     update.start_background_check()
     manager = SyncManager()
+    setup = SyncSetup(manager)
     app.state.sync = manager
+    app.state.sync_setup = setup
     app.state.onboarding_backup = BackupOnboarding(manager)
-    app.state.onboarding_first_use = FirstUse(manager)
+    app.state.onboarding_first_use = FirstUse(setup)
     stop = asyncio.Event()
 
     async def loop():
         try:
             await asyncio.to_thread(manager.start)
         except ApiError as exc:
-            manager.status_name = "blocked"
-            manager.error = manager._error_entry(exc)
-            db.set_ready(False)
+            manager.block_start(exc)
         except Exception:
-            manager.status_name = "blocked"
-            manager.error = error_dict(
+            manager.block_start(error_dict(
                 "SYNC_START_FAILED", "同步初始化失败，请检查数据目录或重复运行的实例",
                 user_message="数据同步没有启动成功",
-                user_hint="请确认程序没有重复打开，且数据目录可正常读写后重启程序")
-            db.set_ready(False)
+                user_hint="请确认程序没有重复打开，且数据目录可正常读写后重启程序"))
         last_run = time.monotonic()
         while not stop.is_set():
             try:
                 await asyncio.wait_for(stop.wait(), timeout=1)
             except asyncio.TimeoutError:
                 pass
-            if time.monotonic() - last_run >= manager.settings["interval"] * 60:
-                if not update.maintenance_error() and manager.started and manager.settings["auto"] and manager.settings["remote"] and not manager.busy and not (manager.state.get("session") and not db.business_ready):
+            window = manager.background_window()
+            if time.monotonic() - last_run >= window["interval"] * 60:
+                if not update.maintenance_error() and window["started"] and window["auto"] \
+                        and window["remote"] and not window["busy"] and not window["session_open"]:
                     try:
                         await asyncio.to_thread(manager.run)
                     except ApiError as exc:
-                        manager.error = manager._error_entry(exc)
+                        manager.record_background_error(exc)
                     except Exception:
-                        manager.error = error_dict(
+                        manager.record_background_error(error_dict(
                             "SYNC_CHECK_FAILED", "后台同步未完成，请进入同步页重试",
                             user_message="后台同步没有完成",
-                            user_hint="请进入同步页面点击「立即同步」重试")
+                            user_hint="请进入同步页面点击「立即同步」重试"))
                 last_run = time.monotonic()
     task = asyncio.create_task(loop())
     try:
@@ -65,8 +71,7 @@ async def lifespan(app):
 
 
 def install(app):
-    app.include_router(router, prefix="/api/v1")
-
+    """安装请求门禁；路由已由 app.api.v1 统一注册，这里不再挂载。"""
     @app.middleware("http")
     async def guard(request, call_next):
         # 更新响应仍可返回；其他业务、同步操作和单端口静态请求暂停到恢复/重启。

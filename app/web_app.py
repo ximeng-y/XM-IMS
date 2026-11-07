@@ -16,8 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import web
-from .api.v1.update import local_update_request
-from .sync.api import local_request
+from .api.access import local_request, update_request
 from .version import APP_VERSION
 from .errors import error_dict, register_error_handlers
 from .service import update
@@ -69,7 +68,7 @@ async def api_proxy(path: str, request: Request):
         local_request(request)
     if path.startswith("update/"):
         # 必须在转发前检查真实客户端；后端看到的来源已经是本机代理。
-        local_update_request(request)
+        update_request(request)
     headers = {k: v for k, v in request.headers.items() if k.lower() in _FORWARD_HEADERS}
     body = await request.body()
     return await run_in_threadpool(

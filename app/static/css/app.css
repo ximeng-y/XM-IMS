@@ -281,9 +281,6 @@ table { width: 100%; font-size: .9rem; margin: 0; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 公式列本就靠 overflow-wrap:anywhere 折行（见「数学计算字段」一节），不能被上面的
-   nowrap 覆盖成单行，否则长公式会被裁掉；它自带 max-width 与任意断行，不会撑宽表格。 */
-.table-scroll td.fx-cell { white-space: normal; }
 thead th {
   background: var(--blue-pale);
   color: var(--blue-dark);
@@ -300,10 +297,6 @@ tbody td, tbody th {
   padding: .55rem .75rem;
 }
 tbody tr:hover { background: var(--row-hover); }
-/* 悬停色（0,1,2）特异性高于 .sku-sub-row（0,1,0），若不加限制，悬停 SKU 子行会把它
-   盖成与 SPU 行相同的底色，层级对比在指针划过时消失。此处让 SKU 子行的悬停色再深一档，
-   使「SPU 凸起 / SKU 凹陷」的层次在悬停时依然成立 */
-tbody tr.sku-sub-row:hover { background: var(--row-hover-sub); }
 /* .num 只表示等宽数字，不参与对齐（对齐统一由下方 .table-scroll 规则决定） */
 td.num, th.num { font-variant-numeric: tabular-nums; }
 /* 表头与表体统一水平居中、垂直居中；作用域覆盖各列表页的表格容器 */
@@ -386,24 +379,6 @@ input[type=checkbox]:focus-visible, input[type=radio]:focus-visible {
   flex-wrap: wrap; margin-top: .8rem;
 }
 .panel-actions > * { margin-bottom: 0; }
-
-/* ---------- SPU 可搜索组合框（单品新建表单） ---------- */
-.spu-combo { position: relative; }
-.spu-combo-list {
-  position: absolute; left: 0; right: 0; top: calc(100% + .25rem);
-  background: #fff; border: 1px solid var(--line);
-  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .08);
-  max-height: 15rem; overflow: auto;
-  z-index: 50; display: none;
-}
-.spu-combo-list.open { display: block; }
-.spu-combo-opt {
-  padding: .45rem .7rem; font-size: .85rem; cursor: pointer;
-  border-bottom: 1px solid var(--line-light);
-}
-.spu-combo-opt:last-child { border-bottom: 0; }
-.spu-combo-opt:hover { background: var(--blue-pale); }
-.spu-combo-opt.spu-new { color: var(--blue); font-weight: 600; border-bottom: 1px solid var(--line); }
 
 /* ---------- 结果 / 反馈 ---------- */
 .result-box {
@@ -531,174 +506,13 @@ dialog .dlg-foot {
   font-size: .85rem; color: var(--ink-soft);
 }
 
-/* ---------- 概览页 ---------- */
-.stat-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-.stat-card {
-  background: #fff; border: 1px solid var(--line-light);
-  border-top: 3px solid var(--blue);
-  padding: .9rem 1.1rem;
-}
-.stat-card .k { font-size: .8rem; color: var(--ink-soft); }
-.stat-card .v { font-size: 1.6rem; font-weight: 700; color: var(--blue-dark);
-  font-variant-numeric: tabular-nums; margin-top: .15rem; }
-
-/* 概览快捷入口：桌面端换行排列，窄屏改两列/单列（见下方媒体查询） */
-.quick-actions { display: flex; gap: .6rem; flex-wrap: wrap; }
-
 /* 转换报告里的样例表 */
 .mini-table { font-size: .82rem; }
 .mini-table td, .mini-table th { padding: .3rem .55rem; }
 
-/* ---------- 数学计算字段 ---------- */
-/* 字段列表里的公式列：只读正文，长公式换行而不是把表格撑宽；宽度归零让列宽由内容与
-   相邻列分配，不因一条长公式把「操作」列挤走 */
-.fx-cell { max-width: 22rem; overflow-wrap: anywhere; font-size: .82rem; text-align: left; }
-
-/* 公式编辑器（字段页新建／编辑公式小窗）：预览行在上，字段与运算符面板并排在下，
-   窄窗口时自动堆叠。样式只作用于本组件，不改动全局 dialog 宽度 */
-/* 公式编辑器专用弹窗：横向矩形——结果格式三列与两栏公式面板都吃宽度，高度只需容下
-   面板与操作行，故比高度更应向宽度放宽。受视口约束，标题与底部操作区始终可见，
-   中间正文区滚动。样式只作用于本弹窗，其他弹窗宽度不变。
-   选择器带上 :has(.dlg-form-wide)：其特异性高于下方通用宽表单弹窗的定宽规则，
-   否则会被那条规则改写成 32rem */
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) {
-  width: min(64rem, calc(100vw - 2rem));
-  height: min(42rem, calc(100vh - 2rem));
-  /* 纵向三段布局：头部与底部固定，正文吃剩余高度并自行滚动 */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-head { flex: 0 0 auto; }
-/* 底栏贴住右下角（按钮右对齐由全局 .dlg-foot 规则给出） */
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-foot { flex: 0 0 auto; }
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  /* 正文纵向排列，好让公式编辑区吃掉剩余高度 */
-  display: flex;
-  flex-direction: column;
-}
-/* 表单按内容高度撑开：窗口变矮时由 .dlg-body 滚动兜底，不压缩内部控件 */
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body > .dlg-form {
-  flex: 1 0 auto;
-  display: flex;
-  flex-direction: column;
-}
-/* 编辑区之外的各项保持自身高度，只有编辑区参与伸缩 */
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body > .dlg-form > *:not([data-fx-editor]) {
-  flex: 0 0 auto;
-}
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) [data-fx-editor] {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-}
-/* 编辑区吃掉让出的高度：预览在上、面板占中段并随高度铺开、清空按钮留在底部。
-   各级都不设 min-height:0，让 flex 的 min-content 下限兜住内容，
-   窄窗口下面板堆叠成单列时不会把按钮挤出去 */
-.dlg-formula .fx-editor { flex: 1 1 auto; display: flex; flex-direction: column; }
-/* 预览行与操作行按内容高度固定，只有面板吃掉多出来的高度 */
-.dlg-formula .fx-editor > .fx-preview,
-.dlg-formula .fx-editor > .fx-actions { flex: 0 0 auto; }
-.dlg-formula .fx-palette { flex: 1 1 auto; }
-/* 结果格式区铺满宽弹窗：三格等宽（小数位格在整数类型下收起，其余两格留在原位） */
-.dlg-form-formula .form-grid { grid-template-columns: repeat(3, 1fr); }
-
-.fx-editor { border: 1px solid var(--line-light); background: #fff; padding: .8rem .9rem; }
-.fx-pane-title { font-size: .78rem; color: var(--ink-soft); margin-bottom: .35rem; }
-.fx-preview {
-  border-bottom: 1px solid var(--line-light);
-  padding-bottom: .6rem; margin-bottom: .7rem;
-}
-/* 预览框内的公式组件块：每个 token 一个独立块，右上角 × 单独删除该项。
-   × 由包裹层绝对定位（与块右上角重合），块内文字因此可自由换行而不会压到 × */
-.fx-preview-text {
-  min-height: 2.2rem;
-  font-size: .95rem;
-  font-weight: 600;
-  color: var(--blue-dark);
-  overflow-wrap: anywhere;
-}
-.fx-tok-wrap {
-  position: relative;
-  display: inline-block;
-  /* 上留出 × 溢出的一半高度，右留出块间距 */
-  margin: .55rem .55rem 0 0;
-  vertical-align: top;
-}
-.fx-tok {
-  display: inline-block;
-  padding: .22rem .5rem;
-  border: 1px solid var(--line);
-  background: #fff;
-  line-height: 1.5;
-}
-.fx-tok-x {
-  position: absolute;
-  top: -.5rem; right: -.5rem;
-  width: 1.05rem; height: 1.05rem;
-  padding: 0;
-  margin: 0;
-  font-size: .72rem;
-  line-height: 1;
-  color: var(--danger);
-  background: #fff;
-  border: 1px solid var(--danger);
-}
-.fx-tok-x:hover { background: #fdf0ef; color: #8f2a27; }
-.fx-palette {
-  display: grid;
-  /* 字段区与运算区等宽：右栏不再被挤窄 */
-  grid-template-columns: 1fr 1fr;
-  gap: .9rem 1.1rem;
-}
-/* 窄窗口（含高分屏整数缩放下等效窄宽）：面板改为上下堆叠，避免按钮被压成竖排文字 */
-@media (max-width: 46rem) {
-  .fx-palette { grid-template-columns: 1fr; }
-  /* 窄窗口下结果格式区也改为单列 */
-  .dlg-form-formula .form-grid { grid-template-columns: 1fr !important; }
-}
-.fx-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
-.fx-chip {
-  width: auto;
-  margin: 0;
-  padding: .25rem .6rem;
-  font-size: .82rem;
-  line-height: 1.5;
-  background: #fff;
-  color: var(--blue);
-  border: 1px solid var(--blue);
-}
-.fx-chip:hover { background: var(--blue-pale); color: var(--blue-dark); border-color: var(--blue-dark); }
-.fx-chip.fx-op { min-width: 2.4rem; font-weight: 700; }
-.fx-tag {
-  font-size: .68rem;
-  color: #fff;
-  background: var(--blue);
-  padding: 0 .25em;
-  margin-left: .2em;
-  vertical-align: middle;
-}
-.fx-num { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
-/* input 在 Pico 下是 width:100%，flex 收缩后仍会撑破容器，故显式允许收缩并给出可用下限 */
-.fx-num input { min-width: 6rem; flex: 1 1 6rem; }
-.fx-num button { width: auto; margin: 0; flex: 0 0 auto; }
-.fx-actions { display: flex; gap: .5rem; margin-top: .7rem; }
-.fx-actions button { width: auto; margin: 0; }
-.fx-warn { color: var(--danger); }
-
-/* 单品页／编辑小窗里的计算字段只读单元格 */
-.calc-block { display: flex; gap: .45rem; align-items: baseline; flex-wrap: wrap; }
-.calc-msg { font-size: .78rem; color: var(--danger); overflow-wrap: anywhere; }
-/* 只读结果与同排的输入框对齐：给一个与输入框相当的高度，不参与编辑 */
-.calc-cell { min-height: 2.4rem; display: flex; align-items: center; }
+/* ---------- 顶栏同步状态（各页顶栏共有，故留在基础样式） ---------- */
+.sync-status{font-size:.8rem;white-space:nowrap;padding:.35rem .65rem;border:1px solid var(--pico-muted-border-color);border-radius:.4rem}
+.sync-status[data-state="conflict"],.sync-status[data-state="behind"]{color:var(--pico-primary);font-weight:700}
 
 /* 无店铺时的引导横幅 */
 .no-shop {
@@ -708,24 +522,6 @@ dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) [data-fx-editor] {
   margin-bottom: 1.5rem;
 }
 
-/* ---------- 库存页操作区 ----------
-   按钮排参考概览页「快捷入口」；搜索框用 margin-left:auto 顶到行尾，窄屏换行后自然落到下一行 */
-.ops-bar {
-  display: flex;
-  align-items: center;
-  gap: .6rem;
-  flex-wrap: wrap;
-}
-.ops-search {
-  display: flex;
-  align-items: center;
-  gap: .4rem;
-  margin-left: auto;
-  min-width: 14rem;
-  flex: 1 1 14rem;
-  max-width: 22rem;
-}
-.ops-search input { min-width: 0; }
 /* 小窗内的表单：底部 hint 已由 .hint 提供间距，结果框与表单之间留一口气 */
 .dlg-form [data-result]:not(:empty) { margin-top: .8rem; }
 .dlg-form .form-grid label { margin-bottom: .3rem; }
@@ -737,46 +533,6 @@ dialog:has(> .dlg-body > .dlg-form) { width: 26rem; }
 /* 新建单品窗字段较多，需容纳两列自定义字段值。宽度须 ≥ 2×13.125rem(轨道最小) + 1.1rem(列间距)
    + 2×1.5rem(.dlg-body 左右内边距) ≈ 28.85rem，取 32rem 留出余量 */
 dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
-
-/* ---------- 库存总览（SPU 分组 + 可展开 SKU 子行） ---------- */
-/* 列宽规范（issue #56）：fixed 布局下列宽只认表头行的宽度，与是否展开、单元格内容
-   长短无关。固定列在这里定死，名称列与各自定义字段列不给宽度 —— fixed 布局会把
-   扣掉固定列后的余量在它们之间平分，因此字段列是几个都成立，无需按字段数写样式。
-   余量平分让这几列随容器等比例收缩，不会出现某一列被内容挤没的情况。
-   固定列在这里一次写完（列宽只认表头行，故不另给 .tri-cell 写宽度）。 */
-/* 展开三角：3.5rem 才容得下 .tri-btn 的左右内边距加字形，2.5rem 会裁掉它右缘 */
-#inventoryScroll th:nth-child(1) { width: 3.5rem; }
-#inventoryScroll th:nth-child(2) { width: 5rem; }     /* ID */
-#inventoryScroll th:nth-child(4) { width: 5rem; }     /* SKU 数 */
-#inventoryScroll th:nth-child(5) { width: 7rem; }     /* 合计库存 */
-#inventoryScroll th:last-child { width: 12rem; }      /* 更新时间 */
-
-.tri-btn {
-  background: none;
-  border: 0;
-  padding: 0 .35rem;
-  color: var(--blue);
-  cursor: pointer;
-  font-size: .75rem;
-  line-height: 1;
-  display: inline-block;
-  /* 收起时 ▶，展开时转正为 ▼ */
-  transform: rotate(-90deg);
-  transition: transform .15s;
-}
-.tri-btn:hover, .tri-btn:focus { background: none; color: var(--blue-dark); }
-.tri-btn.open { transform: rotate(0); }
-/* 展开的 SKU 子行：与 SPU 行轻微色差体现层级 */
-.sku-sub-row { background: var(--blue-pale-2); }
-
-/* 分组分界线（深一档，突出 SPU 组的边界）：
-   .spu-row                    → SPU 行下沿：SPU↔其首个 SKU、折叠时 SPU↔下一个 SPU
-   .sku-sub-row:has(+ .spu-row) → SKU 组末尾那行：该组↔下一个 SPU
-   .sku-sub-row:last-child      → 页面末尾的 SKU 组收口
-   同组内部相邻 SKU 行仍用浅线，避免一组 SKU 被深线割裂 */
-.spu-row > td,
-.sku-sub-row:has(+ .spu-row) > td,
-#spuRows .sku-sub-row:last-child > td { border-bottom-color: var(--line-deep) !important; }
 
 @media (max-width: 860px) {
   /* 纵向堆叠：导航改为顶栏浮层，正文撑满宽度 */
@@ -849,12 +605,12 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 
   /* 分页允许换行，统计文字与翻页按钮完整显示 */
   .pager { flex-wrap: wrap; justify-content: flex-start; }
-  /* 页面级操作按钮保证点按高度 */
-  .page-head button, .pager button, .ops-bar button { min-height: 44px; }
+  /* 页面级操作按钮保证点按高度（库存页操作区的同类规则在 pages/inventory.css） */
+  .page-head button, .pager button { min-height: 44px; }
 
   /* 表格：横向与纵向都在组件内滚动，最大高度取视口的一部分，短表自然收缩。
-     库存页除外——#inventoryScroll 的限高由脚本按视口与上方实际占位算出 */
-  .table-scroll:not(#inventoryScroll) { overflow: auto; max-height: max(160px, 60dvh); }
+     高度由脚本管理的容器（如库存页）加 .table-scroll-auto 标记，不再套用本规则 */
+  .table-scroll:not(.table-scroll-auto) { overflow: auto; max-height: max(160px, 60dvh); }
   /* 表头在自身滚动区域内吸顶 */
   .table-scroll thead th {
     position: sticky;
@@ -875,14 +631,6 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
 @media (max-width: 600px) {
   .panel { padding: .9rem; }
 
-  /* 概览统计卡片：两列等宽，轨道允许收缩，长数值不撑大卡片 */
-  .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .stat-card { min-width: 0; padding: .75rem .85rem; }
-  .stat-card .v { font-size: 1.35rem; overflow-wrap: anywhere; }
-  /* 概览快捷入口：两列等宽按钮 */
-  .quick-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .quick-actions > * { width: 100%; }
-
   /* 窄屏顶栏余量紧张：隐藏「店铺」标签，给选择框让出宽度（选择框本身已表明用途） */
   .topbar .shop-box label { display: none; }
 
@@ -893,97 +641,11 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
   /* 页面说明文与普通长文本允许换行 */
   .page-head .sub, .hint { overflow-wrap: anywhere; }
 
-  /* 库存页操作区：按钮继续换行，搜索独占一行并撤销桌面端的自适应留白 */
-  .ops-search { flex: 1 1 100%; min-width: 0; max-width: none; margin-left: 0; }
-
   /* 弹窗底栏按钮允许换行，弹窗滚动方式不变 */
   dialog .dlg-foot { flex-wrap: wrap; }
   /* 提示框不超过视口宽度 */
   #toasts { max-width: calc(100vw - 2rem); }
   #toasts .toast { overflow-wrap: anywhere; }
-
-  /* 同步冲突对照改单列，顺序不变。选择器带上 .sync-page 是为了压过
-     其后定义的 @media(max-width:75rem) 两列规则 */
-  .sync-page .conflict-grid { grid-template-columns: minmax(0, 1fr); }
-}
-
-@media (max-width: 359px) {
-  /* 极窄屏：概览卡片与快捷入口都改单列 */
-  .stat-cards { grid-template-columns: minmax(0, 1fr); }
-  .quick-actions { grid-template-columns: minmax(0, 1fr); }
-}
-
-/* 数据同步与三方冲突处理 */
-.sync-status{font-size:.8rem;white-space:nowrap;padding:.35rem .65rem;border:1px solid var(--pico-muted-border-color);border-radius:.4rem}
-.sync-status[data-state="conflict"],.sync-status[data-state="behind"]{color:var(--pico-primary);font-weight:700}
-.sync-page{width:100%;max-width:100%}.sync-page h1{margin-bottom:.35rem}.sync-page article,.sync-page details{margin-bottom:1.2rem}
-.sync-actions{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.8rem 0}.sync-actions>*{margin-bottom:0}.sync-actions input{max-width:18rem}
-.conflict-card{border:1px solid var(--pico-muted-border-color);border-radius:.5rem;padding:1rem;margin:1rem 0}.conflict-card h3{font-size:1rem;overflow-wrap:anywhere}
-.conflict-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}.conflict-grid>div{min-width:0}.conflict-grid pre,#automaticChanges pre,#mergePreview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:22rem;overflow:auto;font-size:.8rem;padding:.7rem}
-.sync-page [hidden]{display:none!important}
-@media(max-width:75rem){.conflict-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-
-/* SKU 重名对照竖列表（issue #33） */
-.dup-list{border:1px solid var(--pico-muted-border-color);border-radius:.5rem;padding:.15rem .75rem;margin:.7rem 0 .2rem}
-.dup-row{display:flex;gap:.75rem;padding:.35rem 0;border-bottom:1px solid var(--pico-muted-border-color)}
-.dup-row:last-child{border-bottom:none}
-.dup-key{flex:0 0 6rem;color:var(--pico-muted-color)}
-.dup-val{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
-
-/* 有附属 SKU 的 SPU 行整行可点击展开/收起（见 inventory.js 的点击委托） */
-tr.spu-row:has(.tri-btn) { cursor: pointer; }
-
-/* ---------- 各列表页固定列宽（issue #56） ----------
-   与库存页同一口径：只给需要稳定的列定宽，名称、备注一类文本列不给宽度，
-   由 fixed 布局平分余量。窄容器下不再压缩，改为横向滚动（阈值见 .table-scroll table）。
-   页面用 body[data-page] 区分（见 base.html 的 data-page 块），限定在 .table-scroll 内，
-   以免命中弹窗结果框里的 .mini-table。
-   数值选的是各列内容宽度加内边距后的一个区间，不求穷尽最长值：定宽列里内容短、
-   不会换行，略宽一点即够，真正长的取值走 title 悬停展示。 */
-/* SPU 管理页：ID 5 + 名称(余) + SKU 数 5 + 更新时间 12 + 操作 9 */
-body[data-page="spus"] .table-scroll th:nth-child(1) { width: 5rem; }
-body[data-page="spus"] .table-scroll th:nth-child(3) { width: 5rem; }
-body[data-page="spus"] .table-scroll th:nth-child(4) { width: 12rem; }
-body[data-page="spus"] .table-scroll th:nth-child(5) { width: 9rem; }
-/* 单品页：ID 5 + 名称(余) + SPU 14 + 库存 6 + 自定义字段(余) + 操作 9 */
-body[data-page="items"] .table-scroll th:nth-child(1) { width: 5rem; }
-body[data-page="items"] .table-scroll th:nth-child(3) { width: 14rem; }
-body[data-page="items"] .table-scroll th:nth-child(4) { width: 6rem; }
-body[data-page="items"] .table-scroll th:last-child { width: 9rem; }
-/* 流水页有 13 列，容器宽度不够让每列都宽裕。这里只给放不下等份的「时间」定宽
-   （完整时间戳约 11rem），其余 12 列平分余量，避免给一堆数值列定宽后把批次、供应商、
-   渠道、客户这几列的余量挤到只剩两三个字。 */
-body[data-page="movements"] .table-scroll th:nth-child(2) { width: 11rem; }
-/* 字段页：标记 5 + ID 4 + 名称(余) + 类型 14 + 公式(余) + 允许负数 6 + 小数位 6 + 操作 15
-   类型列要容下最长取值（如「小数（2 位），允许负数」，12 个全角字符） */
-body[data-page="fields"] .table-scroll th:nth-child(1) { width: 5rem; }
-body[data-page="fields"] .table-scroll th:nth-child(2) { width: 4rem; }
-body[data-page="fields"] .table-scroll th:nth-child(4) { width: 14rem; }
-body[data-page="fields"] .table-scroll th:nth-child(6) { width: 6rem; }
-body[data-page="fields"] .table-scroll th:nth-child(7) { width: 6rem; }
-body[data-page="fields"] .table-scroll th:nth-child(8) { width: 15rem; }
-/* 概览页最近流水：只锁数值与时间 */
-body[data-page="overview"] .table-scroll th:nth-child(1) { width: 5rem; }
-body[data-page="overview"] .table-scroll th:nth-child(2) { width: 12rem; }
-body[data-page="overview"] .table-scroll th:nth-child(3) { width: 5rem; }
-body[data-page="overview"] .table-scroll th:nth-child(4) { width: 6rem; }
-body[data-page="overview"] .table-scroll th:nth-child(5) { width: 6rem; }
-
-/* ---------- 库存页：限高滚动容器（issue #54） ----------
-   #inventoryScroll 的 max-height 由 inventory.js 按视口与上方实际占位实时算出并写成内联样式：
-   CSS 只负责滚动方式与表头吸顶，避免用固定高度把少量数据也撑满。
-   最小高度 10rem（见脚本）保证窗口极矮时表格仍可操作，此时由页面整体滚动兜底。 */
-#inventoryScroll {
-  /* 双向滚动：横向保留宽表滚动，纵向在限高内滚动 */
-  overflow: auto;
-  /* 内部滚动容器禁用滚动锚定：定位与底部留白回收都是显式的，不希望浏览器再自动补偿 */
-  overflow-anchor: none;
-}
-/* 表头在容器内吸顶，沿用既有表头底色（仅库存页，不动全站规则） */
-#inventoryScroll thead th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
 }
 
 /* ---------- Pico 开关（role="switch"）改方形滑块 ----------
@@ -998,123 +660,3 @@ body[data-page="overview"] .table-scroll th:nth-child(5) { width: 6rem; }
 [type=checkbox][role=switch]::before {
   border-radius: 0;
 }
-
-/* ---------- 店铺管理页 ----------
-   卡片样式只作用于本页 .shop-list 内，不动其他页面的整体样式。
-   阴影与悬停浮起是本页特有需求，故对 const 流程里「全站无阴影」的兜底单独覆盖。 */
-.shops-toolbar {
-  display: flex;
-  align-items: center;
-  gap: .8rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-.shops-order-hint { margin: 0; flex: 1 1 14rem; }
-
-.shop-list { display: flex; flex-direction: column; gap: .6rem; }
-
-.shop-card {
-  display: flex;
-  align-items: stretch;
-  background: #fff;
-  border: 1px solid var(--line-light);
-  box-shadow: 0 1px 3px rgba(28, 39, 51, .10) !important;
-  transition: box-shadow .15s ease, transform .12s ease;
-}
-.shop-card:hover {
-  box-shadow: 0 4px 12px rgba(28, 39, 51, .16) !important;
-  transform: translateY(-2px);
-}
-.shop-card.is-current { border-color: var(--blue); }
-/* 左侧窄主题色区域 */
-.shop-card-accent {
-  flex: 0 0 .5rem;
-  background: var(--blue);
-}
-.shop-card-main {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 1rem 1.1rem;
-  display: flex;
-  flex-direction: column;
-  gap: .9rem;
-  justify-content: space-between;
-}
-.shop-card-name {
-  margin: 0;
-  font-size: 1.3rem;
-  color: var(--ink);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.shop-card-actions {
-  display: flex;
-  align-items: center;
-  gap: .5rem;
-  flex-wrap: wrap;
-}
-.shop-card-actions button { margin: 0; }
-/* 首个操作位固定宽度：切换按钮与「当前店铺」标签共用同一槽位，
-   两者宽度不同也不会让后面的「重命名」「删除」错位 */
-.shop-switch-slot { display: inline-flex; align-items: stretch; flex: 0 0 auto; width: 7.2rem; }
-.shop-switch-slot > button { width: 100%; }
-.shop-current-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  /* 内边距与 .btn-sm 对齐，标签与相邻按钮等高，不会显得矮一截 */
-  font-size: .78rem;
-  color: var(--blue-dark);
-  background: var(--blue-pale);
-  border: 1px solid var(--blue-pale-2);
-  padding: .25rem .7rem;
-}
-
-/* 六点拖动手柄：横向 2 点、纵向 3 点，靠近卡片右侧居中铺满卡片高度 */
-.shop-drag {
-  flex: 0 0 3.2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: grab;
-  color: var(--ink-soft);
-  user-select: none;
-  /* 手柄是纯拖拽热区，压掉浏览器对行内元素的默认外观 */
-  background: none;
-  border: 0;
-  padding: 0;
-  transition: background-color .15s ease, color .15s ease;
-}
-.shop-drag:hover { background: var(--blue-pale); color: var(--blue-dark); }
-.shop-drag > span {
-  width: 1.2rem;
-  height: 1.8rem;
-  background-image: radial-gradient(circle, currentColor .15rem, transparent .15rem);
-  background-size: .6rem .6rem;
-  background-position: 0 0;
-}
-.shop-drag:active { cursor: grabbing; }
-.shop-card.dragging { opacity: .5; }
-.shop-card.drop-before { box-shadow: inset 0 2px 0 var(--blue) !important; }
-.shop-card.drop-after { box-shadow: inset 0 -2px 0 var(--blue) !important; }
-
-/* 零店铺时的原文提示 */
-.shop-empty {
-  border: 1px dashed var(--line-deep);
-  background: #fff;
-  color: var(--ink-soft);
-  text-align: center;
-  padding: 2.5rem 1.5rem;
-}
-
-@media (max-width: 600px) {
-  .shop-card-main { padding: .8rem .9rem; }
-  .shop-card-name { font-size: 1.1rem; }
-  /* 窄屏下操作按钮换行时保留自然间距 */
-  .shop-card-actions { gap: .4rem; }
-}
-
-/* 拖动排序期间禁止选中卡片文字（手柄是唯一拖动起点） */
-.shop-list.is-dragging { user-select: none; }

@@ -3,6 +3,12 @@
    计算字段没有「转换」入口：公式、结果类型与显示位数走「编辑公式」端点。 */
 "use strict";
 
+import { XM } from "xm/api";
+import { UI, $, $$ } from "xm/ui";
+import { ShopContext } from "xm/shop-context";
+import { FormulaEditor } from "xm/components/formula-editor";
+import { DeleteFlow } from "xm/components/delete-flow";
+
 const TYPE_LABEL = {
   string: "文本", bool: "开关", int: "整数",
   decimal: "小数", percent: "百分比",
@@ -421,74 +427,77 @@ function renderReport(box, res, isPreview) {
 }
 
 // ---------- 新建字段表单联动 ----------
-window.PAGE_INIT = async function () {
-  if (!UI.requireShop()) return;
+export const page = {
+  shell: true, shopContext: "required", requireSyncReady: true, autoUpdatePrompt: true,
+  async init() {
+      if (ShopContext.currentId() === null) return;
 
-  const typeSel = $("#fldType"), scaleInp = $("#fldScale"), negChk = $("#fldNeg");
-  const scaleBox = $("#fldScaleBox"), negBox = $("#fldNegBox"), computedHint = $("#fldComputedHint");
-  const createBtn = $("#fCreateBtn");
-  const isComputed = () => typeSel.value === COMPUTED_VALUE;
+    const typeSel = $("#fldType"), scaleInp = $("#fldScale"), negChk = $("#fldNeg");
+    const scaleBox = $("#fldScaleBox"), negBox = $("#fldNegBox"), computedHint = $("#fldComputedHint");
+    const createBtn = $("#fCreateBtn");
+    const isComputed = () => typeSel.value === COMPUTED_VALUE;
 
-  // 计算字段用「打开公式编辑器」小窗创建（那里有公式面板与校验反馈），表单里不再重复一份；
-  // 入口按钮只负责打开编辑器，不创建字段，外侧已填写的名称会带入窗内
-  function openCreateComputed() {
-    if (!fieldCache.some((f) => !f.system)) {
-      UI.toast("该店铺还没有可引用的数值字段；公式仍可用数字常量与库存数量组成");
-    }
-    formulaDialog({
-      field: null,
-      initialName: $("#fldName").value.trim(),
-      onSaved: () => {
-        // 创建成功后清空外侧名称；取消或保存失败都不动它
-        $("#fldName").value = "";
-        loadFields();
-      },
-    });
-  }
-
-  const syncType = () => {
-    const t = typeSel.value;
-    const computed = isComputed();
-    // 计算字段的名称、公式与结果格式都在小窗里填，表单里对应的控件一并收起；
-    // 「创建」按钮随后打开公式小窗，因此表单自身不再做「必须填名称」的拦截
-    scaleBox.hidden = computed;
-    negBox.hidden = computed;
-    computedHint.hidden = !computed;
-    // 入口按钮的文案随类型切换：数学计算是「打开公式编辑器」，其余仍是「创建」
-    createBtn.textContent = computed ? "打开公式编辑器" : "创建";
-    scaleInp.disabled = t !== "decimal";
-    negChk.disabled = t === "string" || t === "bool";
-    if (negChk.disabled) negChk.checked = false;
-  };
-  typeSel.addEventListener("change", syncType);
-  syncType();
-
-  $("#fCreate").addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    if (isComputed()) { openCreateComputed(); return; }
-    const btn = ev.target.querySelector("button[type=submit]");
-    const name = $("#fldName").value.trim();
-    if (!name) { UI.fail("请填写字段名称"); return; }
-    const body = {
-      name, type: typeSel.value,
-      allow_negative: negChk.checked && !negChk.disabled,
-    };
-    if (typeSel.value === "decimal" && scaleInp.value !== "") {
-      body.scale = Number(scaleInp.value);
-    }
-    UI.withBusy(btn, async () => {
-      try {
-        const f = await XM.post("/fields", body);
-        UI.resultBox("#createResult", {
-          html: UI.okHtml(`「${f.name}」（${typeText(f)}）已创建`),
-        });
-        $("#fldName").value = "";
-        loadFields();
-      } catch (e) {
-        UI.resultBox("#createResult", { error: true, html: UI.apiFailHtml(e) });
+    // 计算字段用「打开公式编辑器」小窗创建（那里有公式面板与校验反馈），表单里不再重复一份；
+    // 入口按钮只负责打开编辑器，不创建字段，外侧已填写的名称会带入窗内
+    function openCreateComputed() {
+      if (!fieldCache.some((f) => !f.system)) {
+        UI.toast("该店铺还没有可引用的数值字段；公式仍可用数字常量与库存数量组成");
       }
-    });
-  });
+      formulaDialog({
+        field: null,
+        initialName: $("#fldName").value.trim(),
+        onSaved: () => {
+          // 创建成功后清空外侧名称；取消或保存失败都不动它
+          $("#fldName").value = "";
+          loadFields();
+        },
+      });
+    }
 
-  await loadFields();
+    const syncType = () => {
+      const t = typeSel.value;
+      const computed = isComputed();
+      // 计算字段的名称、公式与结果格式都在小窗里填，表单里对应的控件一并收起；
+      // 「创建」按钮随后打开公式小窗，因此表单自身不再做「必须填名称」的拦截
+      scaleBox.hidden = computed;
+      negBox.hidden = computed;
+      computedHint.hidden = !computed;
+      // 入口按钮的文案随类型切换：数学计算是「打开公式编辑器」，其余仍是「创建」
+      createBtn.textContent = computed ? "打开公式编辑器" : "创建";
+      scaleInp.disabled = t !== "decimal";
+      negChk.disabled = t === "string" || t === "bool";
+      if (negChk.disabled) negChk.checked = false;
+    };
+    typeSel.addEventListener("change", syncType);
+    syncType();
+
+    $("#fCreate").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      if (isComputed()) { openCreateComputed(); return; }
+      const btn = ev.target.querySelector("button[type=submit]");
+      const name = $("#fldName").value.trim();
+      if (!name) { UI.fail("请填写字段名称"); return; }
+      const body = {
+        name, type: typeSel.value,
+        allow_negative: negChk.checked && !negChk.disabled,
+      };
+      if (typeSel.value === "decimal" && scaleInp.value !== "") {
+        body.scale = Number(scaleInp.value);
+      }
+      UI.withBusy(btn, async () => {
+        try {
+          const f = await XM.post("/fields", body);
+          UI.resultBox("#createResult", {
+            html: UI.okHtml(`「${f.name}」（${typeText(f)}）已创建`),
+          });
+          $("#fldName").value = "";
+          loadFields();
+        } catch (e) {
+          UI.resultBox("#createResult", { error: true, html: UI.apiFailHtml(e) });
+        }
+      });
+    });
+
+    await loadFields();
+  },
 };

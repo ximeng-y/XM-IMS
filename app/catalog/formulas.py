@@ -19,7 +19,7 @@ from collections import defaultdict
 from decimal import Decimal, DecimalException, ROUND_HALF_UP, localcontext
 
 from . import fieldtypes
-from .errors import ApiError
+from ..errors import ApiError
 
 # 公式对象版本；本次固定为 1
 VERSION = 1

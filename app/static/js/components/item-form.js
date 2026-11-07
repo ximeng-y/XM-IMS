@@ -6,6 +6,9 @@
    编辑对话框与列表只读呈现计算结果（calculations 给出格式化文本与单元格错误）。 */
 "use strict";
 
+import { XM } from "xm/api";
+import { UI } from "xm/ui";
+
 const ItemForm = (() => {
   const esc = UI.esc;
 
@@ -105,9 +108,12 @@ const ItemForm = (() => {
   }
 
   // ---------- SPU 可搜索组合框 ----------
-  // 在容器内构建「输入框 + 下拉」；提供选择、名称匹配与销毁方法
+  // 在容器内构建「输入框 + 下拉」；提供选择、名称匹配与销毁方法。
+  // 列表是组件自己的副本：新增 SPU 只改本地列表，再用 onSpusChanged(最新完整列表) 通知调用方
   // initialId 非空时预选该 SPU（库存页右键 SPU 行「在此 SPU 下新建单品」用）
-  function buildSpuCombo(spus, { onSpuCreated, initialId = null } = {}) {
+  function buildSpuCombo(initialSpus, { onSpuCreated, onSpusChanged, initialId = null } = {}) {
+    let spus = initialSpus.slice();
+    const notify = () => { if (onSpusChanged) onSpusChanged(spus.slice()); };
     const wrap = document.createElement("div");
     wrap.className = "spu-combo";
     wrap.innerHTML = `<input placeholder="点击展开全部 SPU，或输入名称即时过滤" autocomplete="off">
@@ -151,8 +157,9 @@ const ItemForm = (() => {
     async function newSpuDialog() {
       const spu = await openCreateSpu({ initialName: input.value.trim() });
       if (!spu) return;
-      spus.push(spu);
+      spus = spus.concat([spu]);
       if (onSpuCreated) onSpuCreated(spu);
+      notify();
       choose(spu);
     }
 
@@ -186,6 +193,7 @@ const ItemForm = (() => {
       getSelected: () => selected,
       getTypedName: () => input.value.trim(),
       matchByName, choose,
+      replaceSpus: (next) => { spus = next.slice(); },
       destroy: () => document.removeEventListener("click", onDocClick),
     };
   }
@@ -194,7 +202,8 @@ const ItemForm = (() => {
   // PATCH：改名 / 换挂 SPU / 改值（null = 清除）。单品页与库存页（重名提示里的
   // 「编辑这个当前已有的 SKU」）共用同一实现，避免两处各写一份。
   // onSaved(updated)：保存成功后回调；onSpuCreated()：需要刷新调用方 SPU 列表时回调
-  function openEditItem({ item, fields = [], spus = [], onSaved, onSpuCreated } = {}) {
+  // onSpusChanged(nextSpus)：换挂到新名称的 SPU 后，交回最新完整列表（仅字符串 SPU 会新建）
+  function openEditItem({ item, fields = [], spus = [], onSaved, onSpuCreated, onSpusChanged } = {}) {
     const valStr = (v) => v === true ? "yes" : v === false ? "no" : (v ?? "");
     const wrap = document.createElement("div");
     wrap.innerHTML = `
@@ -272,6 +281,13 @@ const ItemForm = (() => {
         UI.ok(`单品 ${item.id} 已更新` + (refChanged ? `，编号变为 ${updated.id}` : ""));
         dlg.close();
         if (onSpuCreated) onSpuCreated();
+        if (onSpusChanged) {
+          // 只有按名称提交时才可能新建 SPU；保持原列表，避免凭空删除调用方已知项
+          const known = spus.some((s) => s.id === updated.spu_id);
+          const next = known ? spus.slice()
+            : spus.concat([{ id: updated.spu_id, name: updated.spu_name }]);
+          onSpusChanged(next);
+        }
         if (onSaved) onSaved(updated);
       } catch (e) { UI.apiFail(e, "保存失败"); }
     });
@@ -281,9 +297,11 @@ const ItemForm = (() => {
   }
 
   // ---------- 新建单品（SKU）小窗 ----------
-  // fields：自定义字段定义数组；spus：SPU 数组（引用共享）
+  // fields：自定义字段定义数组；spus：调用方的 SPU 数组（只读，组件内部持有副本）
   // onCreated(item)：创建成功后回调；onSpuCreated(spu)：快捷新建或单品创建后刷新 SPU 时回调
-  function openCreateItem({ fields = [], spus = [], onCreated, onSpuCreated, onEditExisting, initialSpuId = null } = {}) {
+  // onSpusChanged(nextSpus)：列表有变化时交回最新完整列表，由调用方替换自己的数组
+  function openCreateItem({ fields = [], spus = [], onCreated, onSpuCreated, onSpusChanged,
+                            onEditExisting, initialSpuId = null } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "dlg-form dlg-form-wide";
     wrap.innerHTML = `
@@ -312,7 +330,11 @@ const ItemForm = (() => {
     const valueGrid = wrap.querySelector("[data-values]");
     const resultBox = wrap.querySelector("[data-result]");
     valueGrid.innerHTML = fieldsGridHtml(fields);
-    const combo = buildSpuCombo(spus, { onSpuCreated, initialId: initialSpuId });
+    const combo = buildSpuCombo(spus, {
+      onSpuCreated,
+      onSpusChanged: (next) => { spus = next; if (onSpusChanged) onSpusChanged(next); },
+      initialId: initialSpuId,
+    });
     wrap.querySelector("[data-combo]").appendChild(combo.wrap);
 
     let done = false;
@@ -324,8 +346,10 @@ const ItemForm = (() => {
 
     async function refreshSpus() {
       const data = await XM.get("/spus");
-      // 保留共享数组引用，让组合框与调用页同时获得最新列表。
-      spus.splice(0, spus.length, ...data.spus);
+      // 组件内副本与调用页同时获得最新列表；调用页自行替换自己的数组。
+      spus = data.spus;
+      combo.replaceSpus(spus);
+      if (onSpusChanged) onSpusChanged(spus.slice());
     }
 
     // 已选中直接用；按名称提交时先刷新列表，避免过期缓存漏掉已有 SPU 的 SKU 查重。
@@ -464,3 +488,5 @@ const ItemForm = (() => {
   return { fieldInputHtml, readFieldInput, fieldsGridHtml, calcHtml, computedRowHtml,
            isComputed, openCreateSpu, openCreateItem, openEditItem };
 })();
+
+export { ItemForm };

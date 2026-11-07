@@ -33,6 +33,17 @@ def internal_access():
         _internal.allowed = previous
 
 
+@contextlib.contextmanager
+def coordinated_access():
+    """取得数据库代次协调锁。
+
+    只表达“在整套代次切换期间保持访问一致性”：不放开门禁、不开事务、
+    不切代次，也不另开一把锁。业务事务仍由调用方使用连接的 lock/conn。
+    """
+    with _coordinator:
+        yield
+
+
 def set_ready(ready):
     global business_ready
     with _coordinator:

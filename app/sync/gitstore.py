@@ -8,7 +8,8 @@ import tarfile
 import threading
 from pathlib import Path
 from urllib.parse import urlsplit
-from .common import fail, remove_tree, replace_path
+from .common import fail
+from ..storage.files import remove_tree, replace_path
 
 
 # ---------- Git / GCM 定位 ----------
