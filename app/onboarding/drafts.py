@@ -2,9 +2,17 @@
 
 不联网、不开库、不读取环境；错误码与提示保持原样。
 """
+from ..sync import settings as sync_settings
 from ..sync.common import fail
 from ..sync.gitstore import GitStore
 from .github import REPO_NAME_PATTERN, GitHub
+
+
+def _auto_values(payload, settings):
+    """两个自动开关：与同步管理器共用同一条旧客户端兼容规则。"""
+    submitted = {key: payload[key] for key in ("auto", "local_auto") if key in payload}
+    merged = sync_settings.merge(settings, submitted)
+    return merged["auto"], merged["local_auto"]
 
 
 def build_draft(payload, settings, allow_file) -> dict:
@@ -16,8 +24,8 @@ def build_draft(payload, settings, allow_file) -> dict:
              user_hint="请回到「选择备份方式」重新选择")
     device = payload.get("device", settings["device"])
     interval = payload.get("interval", settings["interval"])
-    auto = payload.get("auto", settings["auto"])
-    if type(interval) is not int or interval < 1 or type(auto) is not bool:
+    auto, local_auto = _auto_values(payload, settings)
+    if type(interval) is not int or interval < 1 or type(auto) is not bool or type(local_auto) is not bool:
         fail("SETTINGS_INVALID", "自动同步间隔必须是至少 1 分钟的整数",
              user_message="自动同步间隔至少为 1 分钟",
              user_hint="请填写一个不小于 1 的整数")
@@ -30,7 +38,8 @@ def build_draft(payload, settings, allow_file) -> dict:
         fail("ONBOARDING_INVALID", "github_account 必须是不超过 100 字符的文本",
              user_message="GitHub 账号填写有误",
              user_hint="请回到「登录 GitHub」步骤重新选择账号")
-    draft = {"mode": mode, "device": device.strip(), "interval": interval, "auto": auto,
+    draft = {"mode": mode, "device": device.strip(), "interval": interval,
+             "auto": auto, "local_auto": local_auto,
              "github_account": github_account, "remote": "", "branch": "main", "repository": None}
     if mode == "existing":
         remote = payload.get("remote", "")

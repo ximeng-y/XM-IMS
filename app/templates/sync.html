@@ -15,12 +15,30 @@
       <a id="enterApp" href="/inventory" role="button" class="btn-outline" hidden>进入应用</a>
     </div>
   </article>
-  <details id="settingsPanel"><summary>高级维护</summary>
+  <article>
+    <h2>自动备份</h2>
+    <form id="autoSettings">
+      <div class="sync-switches">
+        <label><input type="checkbox" id="localAuto" role="switch" checked>本地自动备份</label>
+        <label><input type="checkbox" id="autoSync" role="switch" checked>自动将备份同步到云端</label>
+      </div>
+      <p class="muted">本地备份不需要联网或仓库地址；自动上云只上传已经保存到本机的备份。</p>
+      <div class="sync-actions"><button type="submit">保存自动设置</button></div>
+    </form>
+  </article>
+  <article id="localBackupPanel">
+    <h2>本地备份</h2>
+    <p class="muted">备份保存在本机，可在没有网络时还原。</p>
+    <div class="sync-actions"><button id="backupNow" type="button">立即备份</button></div>
+    <div id="localBackupList"></div>
+    <div id="localBackupPager" class="sync-pager"></div>
+  </article>
+  <article id="settingsPanel">
+    <h2>高级维护</h2>
     <form id="syncSettings">
       <label>私有数据仓库地址<input id="remoteUrl" placeholder="https://github.com/用户名/私有数据仓库.git" autocomplete="off"></label>
       <p class="muted">请填写独立的私有仓库地址。HTTPS 使用本机已保存的登录信息，SSH 使用本机密钥。</p>
       <div class="grid"><label>数据分支<input id="dataBranch" value="main" required></label><label>本机名称<input id="deviceName" maxlength="80" required></label><label>间隔（分钟）<input id="syncInterval" type="number" min="1" step="1" value="10" required></label></div>
-      <label><input type="checkbox" id="autoSync" role="switch" checked>自动检查、提交和推送</label>
       <div class="sync-actions"><button type="submit">保存设置</button><button type="button" id="testConnection" class="btn-outline">测试已保存连接</button><button type="button" id="restartOnboarding" class="btn-outline">重新绑定／替换数据</button></div>
       <p id="connectionSaveHint" class="muted" aria-live="polite"></p>
       <p class="muted">需要登录 GitHub 时，可在重新绑定向导中登录。其他仓库使用本机已有的登录信息或密钥。</p>
@@ -31,7 +49,7 @@
       <button id="useLocal" class="btn-outline">使用本机数据／新建数据集</button>
       <button id="useRemote" class="btn-outline">从远端恢复</button>
     </div>
-  </details>
+  </article>
   <article id="conflictPanel" hidden>
     <h2>处理数据冲突</h2>
     <p>选择会先保存为草稿。全部冲突处理并校验通过后，「确认总览并应用」才会替换现有数据。</p>

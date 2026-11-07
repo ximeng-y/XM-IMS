@@ -96,6 +96,7 @@ class Maintenance:
                 draft["remote"] = clone_url
             values = {"remote": draft["remote"], "branch": draft["branch"], "device": draft["device"],
                       "interval": draft["interval"], "auto": draft["auto"],
+                      "local_auto": draft["local_auto"],
                       "github_account": draft["github_account"]}
             try:
                 setup.configure(values)

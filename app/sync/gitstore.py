@@ -113,11 +113,15 @@ class GitStore:
     def __init__(self, root, remote, branch="main", device="本机", allow_file=False, github_account=""):
         self.root, self.remote, self.branch, self.device = Path(root), remote, branch, device
         self.allow_file = allow_file
-        self.validate_remote(remote, allow_file)
-        # 只对 GitHub HTTPS 远端附加账号提示；其他平台与 SSH 沿用系统凭证 / 密钥。
-        parts = urlsplit(remote)
-        self.github_user = str(github_account or "") if parts.scheme == "https" and parts.hostname == "github.com" else ""
-        self.validate_remote(remote, allow_file)
+        self.local_only = remote is None
+        if self.local_only:
+            # 本地历史仓库没有远端：不校验地址，也不设置 origin。
+            self.github_user = ""
+        else:
+            self.validate_remote(remote, allow_file)
+            # 只对 GitHub HTTPS 远端附加账号提示；其他平台与 SSH 沿用系统凭证 / 密钥。
+            parts = urlsplit(remote)
+            self.github_user = str(github_account or "") if parts.scheme == "https" and parts.hostname == "github.com" else ""
         self.root.mkdir(parents=True, exist_ok=True)
         if not (self.root / ".git").exists():
             self.run("init", "-b", branch)
@@ -128,10 +132,17 @@ class GitStore:
         self.run("config", "user.email", "xm-ims@localhost")
         self.run("config", "core.autocrlf", "false")
         self.run("config", "core.hooksPath", str(self.root / "disabled-hooks"))
+        if self.local_only:
+            return
         if self.run("remote", "get-url", "origin", check=False).returncode:
             self.run("remote", "add", "origin", remote)
         else:
             self.run("remote", "set-url", "origin", remote)
+
+    @classmethod
+    def local(cls, root, branch="history", device="本机"):
+        """无远端的本地历史仓库；fetch/push/compact 不适用于它。"""
+        return cls(root, None, branch, device)
 
     @staticmethod
     def validate_remote(value, allow_file=False):
@@ -193,7 +204,21 @@ class GitStore:
         result = self.run("rev-parse", "--verify", "HEAD", check=False)
         return result.stdout.decode().strip() if result.returncode == 0 else None
 
+    def has_commit(self, commit):
+        """本地历史按索引里的提交标识取版本前的存在性检查。"""
+        if not commit or not re.fullmatch(r"[0-9a-f]{40,64}", str(commit)):
+            return False
+        return self.run("cat-file", "-e", commit + "^{commit}", check=False).returncode == 0
+
+    def require_remote(self):
+        """本地模式下误用远端操作时明确失败，不静默跳过。"""
+        if self.local_only:
+            fail("GIT_LOCAL_ONLY", "本地历史仓库不支持远端操作",
+                 user_message="本地备份不能访问远端",
+                 user_hint="请重新点击「立即备份」；若持续出现，请反馈该问题")
+
     def fetch(self):
+        self.require_remote()
         result = self.text("ls-remote", "origin", "refs/heads/" + self.branch)
         if not result:
             if self.text("ls-remote", "origin"):
@@ -267,6 +292,7 @@ class GitStore:
         return commit
 
     def push(self, commit):
+        self.require_remote()
         self.run("push", "origin", commit + ":refs/heads/" + self.branch)
         actual = self.text("ls-remote", "origin", "refs/heads/" + self.branch)
         if not actual or actual.split()[0] != commit:
@@ -278,6 +304,7 @@ class GitStore:
         return bool(before and after and self.run("merge-base", "--is-ancestor", before, after, check=False).returncode == 0)
 
     def compact(self, confirmed):
+        self.require_remote()
         fresh = self.root.with_name("repo-new")
         old = self.root.with_name("repo-old")
         if fresh.exists():

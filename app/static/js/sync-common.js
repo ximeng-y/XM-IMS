@@ -25,8 +25,15 @@ async function api(method, endpoint, body) {
   return data;
 }
 function label(s) {
-  if (s.business_ready && !s.configured) return '已保存在本机';
-  return s.dirty && s.business_ready ? (s.state === 'behind' || s.state === 'conflict' ? names[s.state] + ' · 本地有修改' : '已保存本地 · 待同步') : names[s.state] || '同步需要处理';
+  const backup = s.local_backup || {};
+  const saved = backup.latest ? '已备份本地' : '尚未备份本地';
+  if (s.business_ready && !s.configured) return backup.latest ? '本地备份已保存' : '尚未备份本地';
+  if (backup.pending_upload) return saved + ' · 备份待上传';
+  if (s.dirty && s.business_ready) {
+    if (s.state === 'behind' || s.state === 'conflict') return names[s.state] + ' · 本地有修改';
+    return backup.current_backed_up === false ? '有修改待备份' : saved + ' · 待同步';
+  }
+  return names[s.state] || '同步需要处理';
 }
 function render(s) {
   if (!local) {localOnly(); return;}
