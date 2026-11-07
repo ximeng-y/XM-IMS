@@ -59,7 +59,8 @@ export function mountLocalBackups({ list, pager, backupButton, request, onChange
         keys.delete("backup");
         UI.ok(result.created ? "已保存一份本地备份。" : "数据没有变化，已保留最近的备份版本。");
         offset = 0;
-        await load();
+        // 备份已经成功，列表刷新失败不应把它显示成备份失败；下一次刷新会恢复列表。
+        await load().catch(() => {});
         await onChanged();
       } catch (error) {
         UI.fail(error.user_message || "本地备份暂未完成",
