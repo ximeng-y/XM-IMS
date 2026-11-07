@@ -117,7 +117,8 @@ class SyncManager:
             # 先保存当前版本，保证启动采用远端数据前已有本地保护。
             self._automatic_local_backup("scheduled")
         if self.settings["remote"]:
-            self.run(startup=True, synchronize=True)
+            # 启动只做检查：可以临时捕获当前数据用于比较，但不代替用户执行显式同步。
+            self.run(startup=True)
         else:
             self.status_name = "local" if self.active else "setup"
             db.set_ready(bool(self.active))
@@ -499,29 +500,40 @@ class SyncManager:
             self.save()
             return {"read_verified": True, "write_verified": bool(self.state.get("write_verified"))}
 
-    def run(self, startup=False, synchronize=False, automatic=False):
-        """执行一次同步检查；automatic=True 表示后台自动上云，只能用已保存的本地备份上传。"""
-        with self.operation():
-            return self._run_locked(startup=startup, synchronize=synchronize, automatic=automatic)
+    def run(self, startup=False, synchronize=False):
+        """执行一次同步检查。
 
-    def _run_locked(self, startup=False, synchronize=False, automatic=False):
+        synchronize=True 是用户显式同步：先把当前数据保存为本地备份，再上传该备份。
+        其余情况（启动检查、后台自动上云、手动检查远端）只做比较，上传内容只能是
+        已保存的本地备份，不代替用户上传尚未备份的编辑。
+        """
+        with self.operation():
+            return self._run_locked(startup=startup, synchronize=synchronize)
+
+    def _run_locked(self, startup=False, synchronize=False):
         was_ready = db.business_ready
         self.error = None
         if synchronize:
             db.set_ready(False)
         try:
             if not self.settings["remote"]:
-                if not startup and self.active:
+                if synchronize and self.active:
                     # 未配置远端也能显式操作本地历史；失败只记录本地错误。
                     self._save_current("sync")
                 self.status_name = "local" if self.active else "setup"
                 db.set_ready(bool(self.active))
                 return self.status()
             git = self.git()
-            if synchronize and self.active:
-                # 显式同步处理当前数据，先把它保存到本地历史，形成可上传候选。
-                self._save_current("sync")
+            saved = self._save_current("sync") if synchronize and self.active else None
+            if synchronize and self.active and saved is None:
+                # 显式同步要先保存当前数据；保存失败时不上传，也不改动远端。
+                self.status_name = "local"
+                db.set_ready(was_ready)
+                return self.status()
             local = self.capture()
+            # 上传内容与当前数据库分开判断：显式同步上传刚保存的备份，其余情况只上传
+            # 已保存的本地备份；尚未备份的新编辑不会被任何自动路径带走。候选只在
+            # 需要上传的分支取出，普通状态检查不额外解包历史仓库。
             try:
                 tip = git.fetch()
             except ApiError:
@@ -573,45 +585,81 @@ class SyncManager:
                     self.mark_synced(local, tip)
                 db.set_ready(True)
             elif remote == baseline:
-                if automatic and not self.backups.backed_up(local):
-                    # 后台自动上云只发送已保存的本地备份，不把尚未备份的新编辑代为上传。
+                upload = self._upload_digest(synchronize, saved)
+                if not upload:
+                    # 没有已保存的备份：只报告本地状态，不代替用户上传当前编辑。
                     self.status_name = "local"
-                    db.set_ready(was_ready)
+                    db.set_ready(was_ready or startup)
                 else:
-                    commit = self.local_commit(git, local)
+                    commit = self.local_commit(git, upload)
                     if not git.is_ancestor(tip, commit):
-                        commit = git.commit(self.object(local), "保留双方版本历史", [tip, commit])
-                    self.publish(git, local, commit, apply=False)
-                    self._confirm_uploaded(local)
+                        commit = git.commit(self.object(upload), "保留双方版本历史", [tip, commit])
+                    self.publish(git, upload, commit, apply=False)
+                    self._confirm_uploaded(upload)
+                    if upload != local:
+                        # 已保存的备份已上传，当前数据库可能还有更新的未备份编辑。
+                        self.status_name = "local"
                     db.set_ready(True)
             elif local == baseline:
                 self.status_name = "behind"
                 if startup or synchronize:
                     db.set_ready(False)
+                    # 采用远端会覆盖当前数据：先存一份保护备份，不受本地自动备份开关
+                    # 限制；保存失败时保留当前数据不动。
+                    if self.active and not self.backups.backed_up(local):
+                        try:
+                            self._persist_backup("protect")
+                        except ApiError as exc:
+                            self.record_local_error(exc)
+                            db.set_ready(was_ready)
+                            return self.status()
                     if self.state.get("pending"):
                         commit = git.commit(self.object(remote), "采用远端并保留离线中间历史", [tip, git.head()])
                         self.publish(git, remote, commit, apply=True)
                     else:
                         self.apply_snapshot(remote)
                         self.mark_synced(remote, tip)
-                    self._confirm_uploaded(remote)
+                    # 采用远端后旧候选不再代表当前数据，不能留作后续自动上传内容。
+                    self.backups.invalidate_candidate()
                     db.set_ready(True)
                 else:
                     db.set_ready(was_ready)
             else:
-                commit = self.local_commit(git, local)
-                if git.is_ancestor(tip, commit):
-                    self.publish(git, local, commit, apply=False)
-                    self._confirm_uploaded(local)
-                    db.set_ready(True)
-                else:
-                    self.status_name = "conflict"
-                    self.state["requires_resolution"] = True
-                    if startup or synchronize:
-                        db.set_ready(False)
-                        self.begin_session(baseline, local, remote, tip, commit)
+                # 双方都有变化：自动上传只能用已保存的本地备份，绝不带走当前未备份的编辑。
+                upload = self._upload_digest(synchronize, saved)
+                if upload and upload == local:
+                    # 要上传的就是当前数据：与远端历史能快进才上传，否则进入冲突处理。
+                    commit = self.local_commit(git, local)
+                    if git.is_ancestor(tip, commit):
+                        self.publish(git, local, commit, apply=False)
+                        self._confirm_uploaded(local)
+                        db.set_ready(True)
                     else:
-                        db.set_ready(was_ready)
+                        self._enter_conflict(baseline, local, remote, tip, commit,
+                                             startup, synchronize, was_ready)
+                elif upload:
+                    # 上传持久候选：与远端历史合成一次提交，当前编辑留在运行库等待备份。
+                    commit = self.local_commit(git, upload)
+                    if git.is_ancestor(commit, tip):
+                        # 该备份内容已在远端历史中，只需确认上传状态。
+                        self._confirm_uploaded(upload)
+                    else:
+                        if not git.is_ancestor(tip, commit):
+                            commit = git.commit(self.object(upload), "保留双方版本历史", [tip, commit])
+                        self.publish(git, upload, commit, apply=False)
+                        self._confirm_uploaded(upload)
+                    # 当前数据库可能还有更新的未备份编辑，不能标记为全部已同步。
+                    self.status_name = "local"
+                    db.set_ready(True)
+                elif startup or synchronize:
+                    # 没有可上传的备份：不能代替用户上传当前编辑，需要用户确认处理方式。
+                    self._enter_conflict(baseline, local, remote, tip,
+                                         self.local_commit(git, local),
+                                         startup, synchronize, was_ready)
+                else:
+                    # 后台检查：只提示远端有更新，不建立冲突会话，也不覆盖数据。
+                    self.status_name = "behind"
+                    db.set_ready(was_ready)
             self.save()
             return self.status()
         except ApiError as exc:
@@ -667,6 +715,42 @@ class SyncManager:
         """上传成功后只确认对应候选；当前数据库可能已有更新编辑，不推进捕获标记。"""
         self.backups.confirm_uploaded(digest)
 
+    def _upload_digest(self, synchronize, saved):
+        """本次运行允许上传的内容标识；显式同步用刚保存的备份，其余只用已有候选。"""
+        if synchronize:
+            return saved[0]["digest"] if saved else None
+        return self._candidate_digest()
+
+    def _candidate_digest(self):
+        """已保存为本地备份、允许自动上传的内容标识；没有可用候选时返回 None。
+
+        自动上传只能发送持久候选，不能发送当前尚未备份的编辑。候选来自本地历史
+        仓库，需要取出并纳入内容缓存后才能用于提交与远端比较。
+        """
+        record = self.backups.candidate()
+        if not record or not self.active or record["dataset"] != self.active["dataset"]:
+            return None
+        work = self.temporary("upload")
+        try:
+            _, source = self.backups.extract(record["id"], work)
+            return self.cache(source)
+        except ApiError as exc:
+            self.record_local_error(exc)
+            return None
+        finally:
+            remove_tree(work, self.directory)
+
+    def _enter_conflict(self, baseline, local, remote, tip, commit,
+                        startup, synchronize, was_ready):
+        """进入冲突处理：只有启动检查与用户显式同步才暂停业务并建立会话。"""
+        self.status_name = "conflict"
+        self.state["requires_resolution"] = True
+        if startup or synchronize:
+            db.set_ready(False)
+            self.begin_session(baseline, local, remote, tip, commit)
+        else:
+            db.set_ready(was_ready)
+
     def local_backup(self, dry_run=False, idempotency_key=None):
         """手动立即备份；内容没有变化时返回已有版本与 created=false。"""
         if not dry_run and not idempotency_key:
@@ -715,11 +799,13 @@ class SyncManager:
         record = self.backups.describe(backup_id)
         replay = self.backups.receipt(idempotency_key) if idempotency_key else None
         if replay and replay.get("kind") == "restore":
-            if replay.get("stage") != "done" and self.active \
-                    and self.active["generation"] == replay.get("candidate_generation"):
+            if replay.get("stage") == "done":
+                return self._restore_receipt_view(replay, idempotent_replay=True)
+            if self.active and self.active["generation"] == replay.get("candidate_generation"):
                 # 指针已切换到该候选，只是结果记录没写成：只补齐记录，不重复覆盖数据。
-                return self._finish_restore_record(replay, record)
-            return self._restore_receipt_view(replay, idempotent_replay=True)
+                return self._finish_restore_record(replay, self.backups.describe(replay["target"]))
+            # 指针尚未切换：本次还原没有生效，继续执行并覆盖未完成的回执。
+            # 只有已完成（stage=done）的回执才按幂等重放直接返回。
         if self.state.get("session") or self.state.get("requires_resolution"):
             fail("SYNC_PENDING", "存在未解决的冲突，不能执行本地还原",
                  user_message="还有未处理的冲突",

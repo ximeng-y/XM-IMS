@@ -183,6 +183,10 @@ class SyncSetup:
         settings = self.manager.settings
         values = {key: draft[key] for key in ("device", "interval", "auto", "local_auto")
                   if draft[key] != settings[key]}
+        if "auto" in values:
+            # 旧设置把本地备份隐含在 auto 中：改动 auto 时一并带上草稿里的本地开关，
+            # 避免保存后把仍勾选的本地自动备份关掉。
+            values["local_auto"] = draft["local_auto"]
         if draft["github_account"] != settings.get("github_account", ""):
             values["github_account"] = draft["github_account"]
         if values:

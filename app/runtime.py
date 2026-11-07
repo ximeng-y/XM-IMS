@@ -64,7 +64,7 @@ async def lifespan(app):
                             user_hint="请进入数据同步页面点击「立即备份」重试"))
                 if runnable and window["auto"] and window["remote"]:
                     try:
-                        await asyncio.to_thread(manager.run, automatic=True)
+                        await asyncio.to_thread(manager.run)
                     except ApiError as exc:
                         manager.record_background_error(exc)
                     except Exception:

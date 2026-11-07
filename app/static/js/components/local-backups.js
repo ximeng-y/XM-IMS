@@ -59,6 +59,7 @@ export function mountLocalBackups({ list, pager, backupButton, request, onChange
         keys.delete("backup");
         UI.ok(result.created ? "已保存一份本地备份。" : "数据没有变化，已保留最近的备份版本。");
         offset = 0;
+        await load();
         await onChanged();
       } catch (error) {
         UI.fail(error.user_message || "本地备份暂未完成",
@@ -81,8 +82,19 @@ export function mountLocalBackups({ list, pager, backupButton, request, onChange
       try {
         const result = await request("POST", "/backups/" + encodeURIComponent(record.id) + "/restore",
           { confirm: true, idempotency_key: key("restore-" + record.id) });
+        if (result.dry_run) {
+          keys.delete("restore-" + record.id);
+          UI.ok("已确认这份备份可以还原。");
+          return;
+        }
+        if (result.restored !== true) {
+          // 还原尚未生效：保留幂等键，用户重试时会继续完成同一次还原。
+          UI.fail("还原还没有完成",
+            { title: "还原还没有完成", hint: "请稍后重试；未完成前数据保持不变" });
+          return;
+        }
         keys.delete("restore-" + record.id);
-        UI.ok(result.dry_run ? "已确认这份备份可以还原。" : "数据已还原到所选备份。");
+        UI.ok("数据已还原到所选备份。");
         await onRestored(result);
       } catch (error) {
         UI.fail(error.user_message || "还原暂未完成",
