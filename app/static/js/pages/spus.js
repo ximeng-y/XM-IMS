@@ -5,13 +5,14 @@ import { XM } from "xm/api";
 import { UI, $, $$ } from "xm/ui";
 import { ShopContext } from "xm/shop-context";
 import { DeleteFlow } from "xm/components/delete-flow";
+import { ItemForm } from "xm/components/item-form";
 
 async function loadSpus() {
   const tbody = $("#spuRows");
   try {
     const data = await XM.get("/spus");
     if (!data.spus.length) {
-      tbody.innerHTML = `<tr><td colspan="5" class="t-empty">还没有 SPU；可在「库存总览」页用「新建 SPU」创建，或在新建单品时按名称自动创建</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="t-empty">还没有 SPU；可点击「＋ 新建 SPU」创建，或在新建单品时按名称自动创建</td></tr>`;
       return;
     }
     tbody.innerHTML = data.spus.map((s) => `
@@ -86,23 +87,9 @@ export const page = {
       location.href = `/inventory?spu_id=${row.dataset.spu}`;
     });
 
-    $("#fCreate").addEventListener("submit", (ev) => {
-      ev.preventDefault();
-      const btn = ev.target.querySelector("button[type=submit]");
-      const name = $("#spuName").value.trim();
-      if (!name) { UI.fail("请填写 SPU 名称"); return; }
-      UI.withBusy(btn, async () => {
-        try {
-          const spu = await XM.post("/spus", { name });
-          UI.resultBox("#createResult", {
-            html: UI.okHtml(`SPU「${spu.name}」已创建（#${spu.id}）`),
-          });
-          $("#spuName").value = "";
-          loadSpus();
-        } catch (e) {
-          UI.resultBox("#createResult", { error: true, html: UI.apiFailHtml(e) });
-        }
-      });
+    // 新建入口复用共享组件：成功提示由组件给出，这里只按返回值决定是否刷新列表
+    $("#btnNewSpu").addEventListener("click", async () => {
+      if (await ItemForm.openCreateSpu()) loadSpus();
     });
 
     await loadSpus();
