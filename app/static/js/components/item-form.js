@@ -93,18 +93,69 @@ const ItemForm = (() => {
   }
 
   // ---------- 新建 SPU 小窗 ----------
-  // 成功返回 SPU 对象，取消或失败返回 null
-  async function openCreateSpu({ initialName = "" } = {}) {
-    const name = await UI.promptDialog({
-      title: "新建 SPU", label: "SPU 名称", value: initialName,
-      submitText: "创建", placeholder: "如：纯棉 T 恤", maxLength: 200,
+  // 成功返回 SPU 对象；未提交就关闭（取消 / Esc）返回 null。
+  // 提交失败时保留窗口与输入，用户可修正后重试，不把 Promise 结算成失败。
+  // 请求进行中关闭窗口不撤销已发出的写入：仍等待结果，成功照常提示并返回 SPU 对象
+  // （调用方据此刷新），失败返回 null，也不重新打开已关闭的窗口。
+  function openCreateSpu({ initialName = "" } = {}) {
+    return new Promise((resolve) => {
+      const wrap = document.createElement("div");
+      wrap.className = "dlg-form";
+      wrap.innerHTML = `
+        <label for="spuNewName">SPU 名称 <span class="fieldreq">*</span></label>
+        <input id="spuNewName" maxlength="200" placeholder="如：纯棉 T 恤" autocomplete="off">
+        <div class="hint">SPU 名称在当前店铺内唯一。创建单品时填写已有 SPU 名称，会直接使用该 SPU。</div>
+        <div data-result></div>`;
+      const { dlg, foot } = UI.baseDialog("新建 SPU", wrap);
+      const input = wrap.querySelector("#spuNewName");
+      const resultBox = wrap.querySelector("[data-result]");
+      input.value = initialName;
+
+      let closed = false;   // 用户已关闭窗口（取消 / Esc）
+      let inFlight = false; // 请求已发出且尚未结算
+      let resolved = false;
+      const finish = (v) => { if (!resolved) { resolved = true; resolve(v); } };
+      // 关闭时若没有在途请求，本次创建就此作废；有在途请求则等它结算
+      const finishIfIdle = () => { if (closed && !inFlight) finish(null); };
+      dlg.addEventListener("close", () => { closed = true; dlg.remove(); finishIfIdle(); });
+
+      const cancel = UI.mkBtn("取消", "btn-outline"), submit = UI.mkBtn("创建");
+      cancel.type = submit.type = "button";
+      foot.append(cancel, submit);
+      cancel.onclick = () => { dlg.close(); };
+
+      const doSubmit = () => UI.withBusy(submit, async () => {
+        if (closed) return;
+        const name = input.value.trim();
+        if (!name) { UI.fail("请填写 SPU 名称"); input.focus(); return; }
+        inFlight = true;
+        resultBox.innerHTML = "";
+        let spu;
+        try {
+          spu = await XM.post("/spus", { name });
+        } catch (e) {
+          inFlight = false;
+          if (closed) { finish(null); return; }
+          resultBox.innerHTML = UI.apiFailHtml(e);
+          return;
+        }
+        inFlight = false;
+        // 先结算成功对象再关闭：关闭回调只负责清理，不会把结果覆盖成 null
+        finish(spu);
+        dlg.close();
+        UI.ok(`SPU「${spu.name}」已创建（#${spu.id}）`);
+      });
+      submit.onclick = doSubmit;
+      // 名称框内回车提交当前 SPU 表单；外层单品表单不在本弹窗内，不会被一并提交
+      input.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        doSubmit();
+      });
+
+      dlg.showModal();
+      setTimeout(() => { input.focus(); if (input.value) input.select(); }, 50);
     });
-    if (name === null) return null;
-    try {
-      const spu = await XM.post("/spus", { name });
-      UI.ok(`SPU「${name}」已创建（#${spu.id}）`);
-      return spu;
-    } catch (e) { UI.apiFail(e, "创建 SPU 失败"); return null; }
   }
 
   // ---------- SPU 可搜索组合框 ----------
