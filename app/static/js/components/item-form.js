@@ -89,7 +89,7 @@ const ItemForm = (() => {
     const plain = fields.filter((f) => !isComputed(f));
     return plain.length
       ? plain.map((f) => fieldInputHtml(f, undefined)).join("")
-      : `<div class="hint">该店铺还没有可填写的自定义字段；可先到「字段」页创建（如：成本 / 售价）</div>`;
+      : `<div class="hint">该店铺还没有可填写的自定义属性；可先到「自定义属性」页创建（如：成本 / 售价）</div>`;
   }
 
   // ---------- 新建 SPU 小窗 ----------
@@ -223,14 +223,14 @@ const ItemForm = (() => {
         <div id="edSpuNameBox" style="display:none"><label>SPU 名称（新）</label>
           <input id="edSpuName" maxlength="200"></div>
       </div>
-      <div class="hint" style="margin:.9rem 0 .4rem">自定义字段值（勾选「清除」= 提交 null 清除该值）</div>
+      <div class="hint" style="margin:.9rem 0 .4rem">自定义属性值（勾选「清除」= 提交 null 清除该值）</div>
       <div class="form-grid">
         ${fields.filter((f) => !isComputed(f))
             .map((f) => fieldInputHtml(f, item.values[f.name], { withClear: true })).join("") ||
-          `<div class="hint">该店铺还没有可填写的自定义字段</div>`}
+          `<div class="hint">该店铺还没有可填写的自定义属性</div>`}
       </div>
       ${fields.some(isComputed) ? `
-        <div class="hint" style="margin:.9rem 0 .4rem">计算字段（值由公式自动算出，不可手填或清除）</div>
+        <div class="hint" style="margin:.9rem 0 .4rem">计算属性（值由公式自动算出，不可手填或清除）</div>
         <div class="form-grid">
           ${fields.filter(isComputed)
               .map((f) => computedRowHtml(f, item.calculations?.[f.name])).join("")}
@@ -271,7 +271,7 @@ const ItemForm = (() => {
         if (v === null) { bad = true; return; }
         if (v !== undefined && el.value.trim() !== origStr) values[f.name] = v;
       });
-      if (bad) { UI.fail("字段值格式不正确"); return; }
+      if (bad) { UI.fail("属性值格式不正确"); return; }
       if (Object.keys(values).length) body.values = values;
       if (!Object.keys(body).length) { UI.toast("没有任何修改"); dlg.close(); return; }
       // 改名或换挂会让名称落到另一个 SPU 组内，先在界面口径上查一次重名
@@ -350,8 +350,8 @@ const ItemForm = (() => {
         </div>
       </div>
       <div class="form-grid" style="margin-top:.9rem" data-values></div>
-      <div class="hint">留空的字段值不会提交${fields.some(isComputed)
-        ? "；计算字段的值由公式自动算出，此处无需填写" : ""}</div>
+      <div class="hint">留空的属性值不会提交${fields.some(isComputed)
+        ? "；计算属性的值由公式自动算出，此处无需填写" : ""}</div>
       <div data-result></div>`;
     const { dlg, foot } = UI.baseDialog("新建单品", wrap);
 
@@ -477,7 +477,7 @@ const ItemForm = (() => {
         if (v === null) bad = true;
         else if (v !== undefined) body.values[f.name] = v;
       });
-      if (bad) { UI.fail("字段值格式不正确"); return; }
+      if (bad) { UI.fail("属性值格式不正确"); return; }
       const spu = await resolveSpu();
       if (!spu || done) return;
       if (spu.id !== undefined) {
@@ -494,15 +494,10 @@ const ItemForm = (() => {
         resultBox.innerHTML = UI.apiFailHtml(e);
         return;
       }
-      resultBox.className = "result-box";
-      resultBox.innerHTML = UI.okHtml(
-        `${it.spu_name}-${it.name} 已创建，当前库存 ${it.qty}`);
-      // 使用写入响应中的真实 ID，刷新失败时连续录入仍能走已有 SPU 的查重。
-      combo.choose({ id: it.spu_id, name: it.spu_name });
-      nameEl.value = "";
-      qtyEl.value = "";
-      valueGrid.innerHTML = fieldsGridHtml(fields);
-      if (!done) nameEl.focus();
+      // 写入成功即结束本次创建：关闭小窗，结果改在页面提示。
+      // 失败时保留窗口与输入，供用户修正后重试。
+      dlg.close();
+      UI.ok(`${it.spu_name}-${it.name} 已创建，当前库存 ${it.qty}`);
       // 写入已成功，列表刷新失败不能再显示成创建失败。
       try {
         await refreshSpus();

@@ -39,13 +39,13 @@ const FormulaEditor = (() => {
       </div>
       <div class="fx-palette">
         <div class="fx-pane">
-          <div class="fx-pane-title">可引用字段</div>
+          <div class="fx-pane-title">可引用属性</div>
           <div class="fx-chips" data-fx-fields>
             ${pickable.map((f) => `<button type="button" class="fx-chip" data-fx-field="${esc(f.uid)}">` +
               `${esc(f.name)}${f.computed ? ` <span class="fx-tag">计算</span>` : ""}</button>`).join("") ||
-              `<div class="hint">该店铺还没有可引用的数值字段；请先创建整数／小数／百分比字段</div>`}
+              `<div class="hint">该店铺还没有可引用的数值属性；请先创建整数／小数／百分比属性</div>`}
           </div>
-          <div class="fx-pane-title" style="margin-top:.6rem">系统字段</div>
+          <div class="fx-pane-title" style="margin-top:.6rem">系统属性</div>
           <div class="fx-chips">
             ${SYSTEM.map(([k, n]) => `<button type="button" class="fx-chip" data-fx-sys="${k}">${esc(n)}</button>`).join("")}
           </div>
@@ -74,7 +74,7 @@ const FormulaEditor = (() => {
     // 人类可读的公式文本：取字段/系统字段/运算符的中文呈现，不出现内部标识
     function labelOf(t) {
       if (t.kind === "number") return t.value;
-      if (t.kind === "field") return nameOf[t.uid] || "已失效的字段";
+      if (t.kind === "field") return nameOf[t.uid] || "已失效的属性";
       if (t.kind === "system") return sysName[t.key] || t.key;
       return SYMBOL_TEXT[t.value] || t.value;
     }
@@ -86,7 +86,7 @@ const FormulaEditor = (() => {
     // 的地板压住」——容器只按块分配行内空间，× 仍定位于块本身
     function renderPreview() {
       if (!state.length) {
-        preview.innerHTML = `<span class="muted">（尚未加入任何内容：请从下方选择字段、系统字段、运算符或数字常量）</span>`;
+        preview.innerHTML = `<span class="muted">（尚未加入任何内容：请从下方选择属性、系统属性、运算符或数字常量）</span>`;
         return;
       }
       preview.innerHTML = state.map((t, i) =>
