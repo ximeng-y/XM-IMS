@@ -107,11 +107,33 @@ export const page = {
     $s('syncSettings').oninput=updateConnectionState;
     $s('syncSettings').onchange=updateConnectionState;
     $s('syncSettings').onsubmit=e=>{e.preventDefault();action(e.submitter,async()=>{savedSettings=await Sync.api('PATCH','/settings',settingsValues());UI.ok('设置已保存');});};
-    // 两个自动开关独立保存，只写这两项，仓库输入未填不会妨碍本地备份。
-    $s('autoSettings').onsubmit=e=>{e.preventDefault();const values=autoValues();UI.withBusy(e.submitter,async()=>{
-      try{const saved=await Sync.api('PATCH','/settings',values);savedSettings={...savedSettings,...saved};UI.ok('自动设置已保存');}
-      catch(error){UI.fail(error.user_message||'自动设置暂未保存',{title:UI.codeTitle(error.code)||'自动设置暂未保存',hint:error.user_hint||''});}
-      await refresh().catch(showRefreshError);});};
+    // 两个自动开关改变即保存：一次提交两项，避免只提交 auto 时联动 local_auto。
+    // 保存期间禁用两个开关；失败回退到最近一次确认保存的状态。
+    let autoSaving=false;
+    async function saveAuto(){
+      if(autoSaving||!settingsLoaded||!Sync.local)return;
+      autoSaving=true;
+      const switches=[$s('localAuto'),$s('autoSync')];
+      const confirmed=savedSettings;
+      switches.forEach(el=>{el.disabled=true;});
+      try{
+        const saved=await Sync.api('PATCH','/settings',autoValues());
+        savedSettings={...savedSettings,...saved};
+        $s('localAuto').checked=!!savedSettings.local_auto;$s('autoSync').checked=!!savedSettings.auto;
+        UI.ok('自动设置已保存');
+      }catch(error){
+        $s('localAuto').checked=!!confirmed?.local_auto;$s('autoSync').checked=!!confirmed?.auto;
+        UI.fail(error.user_message||'自动设置暂未保存',{title:UI.codeTitle(error.code)||'自动设置暂未保存',hint:error.user_hint||''});
+      }finally{
+        autoSaving=false;
+        // 初始设置未加载成功或非本机访问时保持禁用
+        const enabled=settingsLoaded&&Sync.local;
+        switches.forEach(el=>{el.disabled=!enabled;});
+      }
+      await refresh().catch(showRefreshError);
+    }
+    $s('localAuto').onchange=saveAuto;
+    $s('autoSync').onchange=saveAuto;
     backups=mountLocalBackups({list:$s('localBackupList'),pager:$s('localBackupPager'),backupButton:$s('backupNow'),
       request:Sync.api,onChanged:()=>refresh().catch(showRefreshError),
       onRestored:()=>location.reload()});

@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block title %}字段{% endblock %}
+{% block title %}属性{% endblock %}
 {% block nav %}fields{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
-    <h1>自定义字段</h1>
+    <h1>自定义属性</h1>
   </div>
 </div>
 
 <div class="panel">
-  <h2>新建字段</h2>
+  <h2>新建属性</h2>
   <form novalidate id="fCreate">
     <div class="form-grid">
       <div>
-        <label for="fldName">字段名称 <span class="fieldreq">*</span></label>
+        <label for="fldName">属性名称 <span class="fieldreq">*</span></label>
         <input id="fldName" maxlength="50" placeholder="如：成本 / 售价 / 供应商" autocomplete="off">
       </div>
       <div>
@@ -33,14 +33,14 @@
       </div>
     </div>
     <div class="form-check" id="fldNegBox" style="margin-top:.8rem"><input id="fldNeg" type="checkbox"><label for="fldNeg" style="margin:0">允许负数（仅数值类）</label></div>
-    <div class="hint" id="fldComputedHint" hidden>计算字段的名称会带入公式编辑器；公式与结果格式也在编辑器里设置。点击「打开公式编辑器」填写。</div>
+    <div class="hint" id="fldComputedHint" hidden>计算属性的名称会带入公式编辑器；公式与结果格式也在编辑器里设置。点击「打开公式编辑器」填写。</div>
     <div style="margin-top:.8rem"><button type="submit" class="btn-sm" id="fCreateBtn">创建</button></div>
   </form>
   <div id="createResult"></div>
 </div>
 
 <div class="panel">
-  <h2>字段列表</h2>
+  <h2>属性列表</h2>
   <div class="table-scroll">
     <table>
       <thead><tr>

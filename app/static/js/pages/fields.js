@@ -40,7 +40,7 @@ function formulaText(f) {
     if (t.kind === "system") return { qty: "库存数量" }[t.key] || t.key;
     if (t.kind === "field") {
       const ref = defs.find((x) => x.uid === t.uid);
-      return ref ? ref.name : "已失效的字段";
+      return ref ? ref.name : "已失效的属性";
     }
     return FormulaEditor.SYMBOL_TEXT[t.value] || t.value;
   }).join(" ");
@@ -54,7 +54,7 @@ async function loadFields() {
     const data = await XM.get("/fields");
     fieldCache = data.fields;
     if (!data.fields.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="t-empty">字段列表为空，请刷新页面后重试</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="t-empty">属性列表为空，请刷新页面后重试</td></tr>`;
       return;
     }
     tbody.innerHTML = data.fields.map((f, i) => {
@@ -104,23 +104,23 @@ async function loadFields() {
 
 async function renameFlow(f) {
   const name = await UI.promptDialog({
-    title: `字段「${f.name}」改名`, label: "新名称（数据不动）",
+    title: `属性「${f.name}」改名`, label: "新名称（数据不动）",
     value: f.name, maxLength: 50,
   });
   if (name === null || name === f.name) return;
   try {
     await XM.patch(`/fields/${f.id}`, { name });
-    UI.ok(`字段已改名为「${name}」`);
+    UI.ok(`属性已改名为「${name}」`);
     loadFields();
   } catch (e) { UI.apiFail(e, "改名失败"); }
 }
 
 function deleteFlow(f) {
   return DeleteFlow.run({
-    title: `删除字段「${f.name}」`,
-    bodyHtml: `<p>将删除该字段（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">一并清空所有单品的该字段值</b>，操作不可恢复。</p>`,
+    title: `删除属性「${f.name}」`,
+    bodyHtml: `<p>将删除该属性（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">一并清空所有单品的该属性值</b>，操作不可恢复。</p>`,
     path: `/fields/${f.id}?confirm=true`,
-    okText: (res) => `字段「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个字段值`,
+    okText: (res) => `属性「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个属性值`,
     onDone: loadFields,
   });
 }
@@ -139,7 +139,7 @@ function formulaDialog({ field = null, initialName = "", onSaved }) {
   wrap.innerHTML = `
     <div class="form-grid">
       <div>
-        <label>字段名称 <span class="fieldreq">*</span></label>
+        <label>属性名称 <span class="fieldreq">*</span></label>
         <input data-fx-name maxlength="50" value="${UI.esc(field ? field.name : initialName)}"
                placeholder="如：毛利 / 毛利率" autocomplete="off">
       </div>
@@ -163,7 +163,7 @@ function formulaDialog({ field = null, initialName = "", onSaved }) {
     <div class="hint" style="margin:.7rem 0 .2rem">公式（点击下方按钮依次加入；保存时统一校验语法、引用与循环）</div>
     <div data-fx-editor></div>
     <div data-fx-result></div>`;
-  const { dlg, foot } = UI.baseDialog(creating ? "新建数学计算字段" : `编辑公式「${field.name}」`, wrap);
+  const { dlg, foot } = UI.baseDialog(creating ? "新建数学计算属性" : `编辑公式「${field.name}」`, wrap);
   dlg.classList.add("dlg-formula");
 
   // 结果格式控件：编辑时回填当前定义；显示位数对小数与百分比都生效
@@ -206,13 +206,13 @@ function formulaDialog({ field = null, initialName = "", onSaved }) {
     resultBox.innerHTML = "";
     const name = nameEl.value.trim();
     if (creating && !name) {
-      resultBox.innerHTML = UI.warnHtml("请填写字段名称", "字段名称用于在单品表与公式中标识该字段。");
+      resultBox.innerHTML = UI.warnHtml("请填写属性名称", "属性名称用于在单品表与公式中标识该属性。");
       nameEl.focus();
       return;
     }
     if (editor.isEmpty()) {
       resultBox.innerHTML = UI.warnHtml("公式还是空的",
-        "请加入字段、系统字段、运算符与数字常量，例如：售价 × 库存数量 − 成本。");
+        "请加入属性、系统属性、运算符与数字常量，例如：售价 × 库存数量 − 成本。");
       return;
     }
     const scale = scaleEl.value === "" ? 2 : Number(scaleEl.value);
@@ -234,8 +234,8 @@ function formulaDialog({ field = null, initialName = "", onSaved }) {
             type, scale: type === "int" ? 0 : scale, allow_negative: negEl.checked,
           });
       UI.ok(creating
-        ? `计算字段「${out.name}」已创建（${typeText(out)}）`
-        : `字段「${out.name}」的公式已更新（${typeText(out)}）`);
+        ? `计算属性「${out.name}」已创建（${typeText(out)}）`
+        : `属性「${out.name}」的公式已更新（${typeText(out)}）`);
       dlg.close();
       if (onSaved) onSaved(out);
     } catch (e) {
@@ -298,7 +298,7 @@ function convertFlow(f) {
     <div id="cvWarn"></div>
     <div id="cvReport"></div>
     <div id="cvError"></div>`;
-  const { dlg, foot } = UI.baseDialog(`转换字段「${f.name}」（${typeText(f)}）`, wrap);
+  const { dlg, foot } = UI.baseDialog(`转换属性「${f.name}」（${typeText(f)}）`, wrap);
 
   // 当前选项签名：任一选项变化都会重置「已警告」状态
   const opts = () => [$("#cvType", wrap).value, $("#cvScale", wrap).value,
@@ -354,7 +354,7 @@ function convertFlow(f) {
       }
       // 清空类转换：预览照常展示内容，仅在报告上方加一条警告带
       if (res.requires_clear) {
-        $("#cvWarn", wrap).innerHTML = UI.warnHtml("转换将清空该字段的全部值",
+        $("#cvWarn", wrap).innerHTML = UI.warnHtml("转换将清空该属性的全部值",
           `「${TYPE_LABEL[f.type] || f.type}」与目标类型不可互转，` +
           `${res.affected_items} 个值将被清空；确认无误后点击「执行转换」。`);
       }
@@ -373,7 +373,7 @@ function convertFlow(f) {
     const confirmed = clearAcked === opts();
     try {
       const res = await XM.post(`/fields/${f.id}/convert`, body(confirmed));
-      UI.ok(`字段「${f.name}」转换完成`, { title: "FIELD_CONVERTED" });
+      UI.ok(`属性「${f.name}」转换完成`, { title: "FIELD_CONVERTED" });
       done = true; dlg.close();
       loadFields();
     } catch (e) {
@@ -381,7 +381,7 @@ function convertFlow(f) {
         clearAcked = opts();
         $("#cvError", wrap).innerHTML =
           UI.warnHtml("确认清空并转换请再次点击「执行转换」",
-            "该操作会清空字段的全部值且不可恢复；如需核对将受影响的值，请先点击「预览」。");
+            "该操作会清空属性的全部值且不可恢复；如需核对将受影响的值，请先点击「预览」。");
       } else {
         $("#cvError", wrap).innerHTML = UI.apiFailHtml(e);
       }
@@ -420,7 +420,7 @@ function renderReport(box, res, isPreview) {
       html += `<div class="hint">仅展示前 ${res.samples.length} 条样例</div>`;
     }
   } else {
-    html += `<div class="hint">（该字段暂无值，仅更新结构定义）</div>`;
+    html += `<div class="hint">（该属性暂无值，仅更新结构定义）</div>`;
   }
   if (res.rounding) html += `<div class="hint">取整方式：${ROUND_LABEL[res.rounding]}</div>`;
   box.innerHTML = html + `</div>`;
@@ -441,7 +441,7 @@ export const page = {
     // 入口按钮只负责打开编辑器，不创建字段，外侧已填写的名称会带入窗内
     function openCreateComputed() {
       if (!fieldCache.some((f) => !f.system)) {
-        UI.toast("该店铺还没有可引用的数值字段；公式仍可用数字常量与库存数量组成");
+        UI.toast("该店铺还没有可引用的数值属性；公式仍可用数字常量与库存数量组成");
       }
       formulaDialog({
         field: null,
@@ -476,7 +476,7 @@ export const page = {
       if (isComputed()) { openCreateComputed(); return; }
       const btn = ev.target.querySelector("button[type=submit]");
       const name = $("#fldName").value.trim();
-      if (!name) { UI.fail("请填写字段名称"); return; }
+      if (!name) { UI.fail("请填写属性名称"); return; }
       const body = {
         name, type: typeSel.value,
         allow_negative: negChk.checked && !negChk.disabled,
