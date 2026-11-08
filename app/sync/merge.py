@@ -81,15 +81,23 @@ class Merger:
         self.choices = {}
         self.conflicts, self.changes, self.renumber = [], [], []
         self.detail_sets = {}
+        # 冲突项按 identity 定位：重名复查会再次登记同一条冲突，只能替换不能追加
+        self.conflict_pos = {}
 
-    def conflict(self, key, field, values, kind="field", editable=False, extra=None):
+    def conflict(self, key, field, values, kind="field", editable=False, extra=None, current=None):
         identity = key + "#" + field
         choice = self.choices.get(identity)
         resolved = choice is not None
         disabled = {source: "该版本没有此对象，请选择已有名称或输入新名称"
                     for source, value in zip(("base", "local", "remote"), values)
                     if kind == "name" and value is None}
-        value = next((v for v in values[1:] + values[:1] if v is not None), None) if kind == "name" else values[1]
+        if current is not None:
+            # 调用方已算出合并结果：未选择时保持它，不要退回某一侧的原名称
+            value = current
+        elif kind == "name":
+            value = next((v for v in values[1:] + values[:1] if v is not None), None)
+        else:
+            value = values[1]
         if choice:
             source = choice.get("source")
             if source in disabled:
@@ -110,17 +118,26 @@ class Merger:
             shown_result = {"definition": self.field_display(value["definition"]), "关联值数量": sum(x is not None for x in value["values"].values())}
         else:
             shown, shown_result = [display(v) for v in values], display(value)
-        self.conflicts.append({"label": self.describe(key), "id": identity, "key": key, "field": field, "kind": kind,
-                               "base": shown[0], "local": shown[1], "remote": shown[2],
-                               "result": shown_result, "resolved": resolved, "editable": editable, "disabled_sources": disabled, **(extra or {})})
+        record = {"label": self.describe(key), "id": identity, "key": key, "field": field, "kind": kind,
+                  "base": shown[0], "local": shown[1], "remote": shown[2],
+                  "result": shown_result, "resolved": resolved, "editable": editable, "disabled_sources": disabled, **(extra or {})}
         if kind == "value" and extra and "display_values" in extra:
             source = choice.get("source") if choice else "local"
-            self.conflicts[-1]["display_result"] = str(choice.get("value")) if source == "custom" else extra["display_values"][("base", "local", "remote").index(source)]
+            record["display_result"] = str(choice.get("value")) if source == "custom" else extra["display_values"][("base", "local", "remote").index(source)]
+        # 同一 identity 可能被重复登记：重名复查在用户选择后仍重名时会再走一遍，
+        # 这里原位替换，避免列表里出现同一冲突的两张卡片
+        position = self.conflict_pos.get(identity)
+        if position is None:
+            self.conflict_pos[identity] = len(self.conflicts)
+            self.conflicts.append(record)
+        else:
+            self.conflicts[position] = record
         return value
 
     def build(self, choices=None):
         self.choices = choices or {}
         self.conflicts, self.changes, self.renumber = [], [], []
+        self.conflict_pos = {}
         sides = [m["rows"] for m in self.models]
         keys = sorted(set().union(*(set(s) for s in sides)))
         result, grouped = {}, set()
@@ -416,22 +433,52 @@ class Merger:
             else:
                 result[parent] = copy.deepcopy(value)
 
-    def unique_names(self, result):
+    def name_groups(self, result):
+        """按唯一范围分组：店铺、自定义字段与 SPU 全店唯一，SKU 按所属 SPU 分组"""
         groups = defaultdict(list)
         for key, row in result.items():
             database, table, uid = key.split("/", 2)
-            if table in ("shops", "custom_fields"):
-                groups[(database, table, row["name"])].append(key)
-        for keys in groups.values():
-            if len(keys) > 1:
+            if table in ("shops", "custom_fields", "spus"):
+                groups[(database, table, "", row["name"])].append(key)
+            elif table == "items":
+                groups[(database, table, row["spu_id"], row["name"])].append(key)
+        return groups
+
+    def unique_names(self, result):
+        """重名消解：店铺与字段全店唯一，SPU 全店唯一，SKU 组内唯一（按所属 SPU 分组）
+
+        两侧各自在原 SPU 下建了同名单品、或各自建了同名 SPU 时，合并结果会落在同一
+        唯一范围内，必须让用户逐条改成不同名称，否则合并后的数据与本程序的创建规则冲突。
+
+        用户给出的名称本身也可能仍重名（同一组里都选「采用本地」，或改成与组外记录
+        同名），所以处理后再按结果分组复核一次；仍重名的冲突项退回未处理，不能凭
+        「已经选过」就让候选带着重名进入校验。
+        """
+        for _ in range(2):
+            duplicates = [keys for keys in self.name_groups(result).values() if len(keys) > 1]
+            if not duplicates:
+                return
+            for keys in duplicates:
                 for key in keys:
                     names = [model["rows"].get(key, {}).get("name") for model in self.models]
-                    name = self.conflict(key, "$unique_name", names, "name", True)
+                    name = self.conflict(key, "$unique_name", names, "name", True,
+                                         current=result[key]["name"])
                     if not isinstance(name, str) or not name.strip():
                         fail("NAME_INVALID", "名称不能为空",
                              user_message="名称不能为空",
                              user_hint="请为这条记录填写一个与其他记录不同的名称")
                     result[key]["name"] = name.strip()
+
+        for keys in self.name_groups(result).values():
+            if len(keys) < 2:
+                continue
+            for key in keys:
+                if key + "#$unique_name" not in self.conflict_pos:
+                    # 改名后新出现的撞名（与前两轮未涉及的另一条记录同名）
+                    self.conflict(key, "$unique_name",
+                                  [model["rows"].get(key, {}).get("name") for model in self.models],
+                                  "name", True, current=result[key]["name"])
+                self.conflicts[self.conflict_pos[key + "#$unique_name"]]["resolved"] = False
 
     def idempotency(self, result, sides):
         groups = defaultdict(list)

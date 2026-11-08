@@ -4,6 +4,21 @@ from ..config import now_iso
 from ..errors import ApiError
 
 
+def _ensure_name_free(conn, name: str, exclude_id: int | None = None) -> None:
+    """SPU 名称在店内唯一；改名时用 exclude_id 排除自身
+
+    比较口径为 SQLite 默认的二进制比较（区分大小写、不做全半角归一），
+    与前端按名称精确匹配选 SPU 的口径一致。
+    """
+    row = conn.execute("SELECT id FROM spus WHERE name = ? AND id IS NOT ?",
+                       (name, exclude_id)).fetchone()
+    if row is not None:
+        raise ApiError("SPU_NAME_EXISTS", f"SPU「{name}」已存在",
+                       hint="SPU 名称在店内唯一；请改用已有 SPU 或换一个名称", status=409,
+                       user_message=f"SPU「{name}」已存在",
+                       user_hint="请直接使用已有的这个 SPU，或换一个名称")
+
+
 def create_spu(shop_id: int, name: str) -> dict:
     name = name.strip()
     if not name:
@@ -11,6 +26,7 @@ def create_spu(shop_id: int, name: str) -> dict:
     d = db.shop_db(shop_id)
     ts = now_iso()
     with d.lock, d.conn:
+        _ensure_name_free(d.conn, name)
         cur = d.conn.execute(
             "INSERT INTO spus (sync_uid, name, created_at, updated_at) VALUES (?, ?, ?, ?)", (db.new_uid(), name, ts, ts))
         spu_id = cur.lastrowid
@@ -50,6 +66,7 @@ def rename_spu(shop_id: int, spu_id: int, name: str) -> dict:
                            user_message=f"SPU {spu_id} 不存在",
                            user_hint="该 SPU 可能已被删除，请刷新页面或改用「选择已有 SPU」")
         ts = now_iso()
+        _ensure_name_free(d.conn, name, exclude_id=spu_id)
         d.conn.execute("UPDATE spus SET name = ?, updated_at = ? WHERE id = ?", (name, ts, spu_id))
         db.write_audit(d.conn, "spu_rename", "spu", spu_id,
                        {"old": row["name"], "new": name})

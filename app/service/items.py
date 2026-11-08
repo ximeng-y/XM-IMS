@@ -26,6 +26,21 @@ from . import spus
 INITIAL_QTY_NOTE = "新建单品时的初始库存"
 
 
+def _ensure_name_free(conn, spu_id: int, name: str, exclude_id: int | None = None) -> None:
+    """同一 SPU 下的 SKU 名称唯一；改名与换挂时用 exclude_id 排除自身
+
+    比较口径为 SQLite 默认的二进制比较（区分大小写、不做全半角归一）。
+    """
+    row = conn.execute(
+        "SELECT id FROM items WHERE spu_id = ? AND name = ? AND id IS NOT ?",
+        (spu_id, name, exclude_id)).fetchone()
+    if row is not None:
+        raise ApiError("ITEM_NAME_EXISTS", f"该 SPU 下已有同名单品「{name}」",
+                       hint="同一 SPU 下的 SKU 名称唯一；请改用已有单品或换一个名称", status=409,
+                       user_message=f"该 SPU 下已有同名单品「{name}」",
+                       user_hint="请查看已有单品是否就是你要的；否则换一个名称")
+
+
 def _next_seq(conn, spu_id: int) -> int:
     """该 SPU 内的下一个序号。只取 max+1，不复用空位（流水里的旧编号不应指向新 SKU）"""
     row = conn.execute("SELECT MAX(seq) AS mx FROM items WHERE spu_id = ?",
@@ -65,6 +80,7 @@ def create_item(shop_id: int, payload: ItemCreate) -> dict:
     d = db.shop_db(shop_id)
     with d.lock, d.conn:
         spu_id, spu_created = spus.resolve_spu(d.conn, payload.spu_id, payload.spu_name)
+        _ensure_name_free(d.conn, spu_id, name)
         by_name = fields.resolve_value_fields(d.conn, payload.values)
         blocked = [k for k in payload.values if by_name[k]["formula_json"]]
         if blocked:
@@ -151,26 +167,35 @@ def patch_item(shop_id: int, item_ref: str, payload: ItemPatch) -> dict:
             new_name = new_name.strip()
             if not new_name:
                 raise ApiError("ITEM_NAME_INVALID", "单品名不能为空白", status=400)
-            if new_name != row["name"]:
-                d.conn.execute("UPDATE items SET name = ?, updated_at = ? WHERE id = ?",
-                               (new_name, now_iso(), item_id))
-                db.write_audit(d.conn, "item_rename", "item", item_id,
-                               {"old": row["name"], "new": new_name})
-                changed = True
 
+        new_spu = row["spu_id"]
         if body.get("spu_id") is not None or body.get("spu_name") is not None:
             new_spu, _ = spus.resolve_spu(d.conn, body.get("spu_id"), body.get("spu_name"))
-            if new_spu != row["spu_id"]:
-                # 换挂后落在目标 SPU 组内末尾，编号变为「新 SPU 号-新序号」
-                new_seq = _next_seq(d.conn, new_spu)
-                d.conn.execute(
-                    "UPDATE items SET spu_id = ?, seq = ?, updated_at = ? WHERE id = ?",
-                    (new_spu, new_seq, now_iso(), item_id))
-                db.write_audit(d.conn, "item_spu_relink", "item", item_id,
-                               {"old_spu_id": row["spu_id"], "new_spu_id": new_spu,
-                                "old_ref": format_item_ref(row["spu_id"], row["seq"]),
-                                "new_ref": format_item_ref(new_spu, new_seq)})
-                changed = True
+
+        # 改名与换挂可能同时提交：名称最终落在目标 SPU 下，按「目标 SPU + 最终名称」
+        # 校验一次，避免先改名后换挂时漏掉目标组内的同名单品
+        final_name = row["name"] if new_name is None else new_name
+        if final_name != row["name"] or new_spu != row["spu_id"]:
+            _ensure_name_free(d.conn, new_spu, final_name, exclude_id=item_id)
+
+        if new_name is not None and new_name != row["name"]:
+            d.conn.execute("UPDATE items SET name = ?, updated_at = ? WHERE id = ?",
+                           (new_name, now_iso(), item_id))
+            db.write_audit(d.conn, "item_rename", "item", item_id,
+                           {"old": row["name"], "new": new_name})
+            changed = True
+
+        if new_spu != row["spu_id"]:
+            # 换挂后落在目标 SPU 组内末尾，编号变为「新 SPU 号-新序号」
+            new_seq = _next_seq(d.conn, new_spu)
+            d.conn.execute(
+                "UPDATE items SET spu_id = ?, seq = ?, updated_at = ? WHERE id = ?",
+                (new_spu, new_seq, now_iso(), item_id))
+            db.write_audit(d.conn, "item_spu_relink", "item", item_id,
+                           {"old_spu_id": row["spu_id"], "new_spu_id": new_spu,
+                            "old_ref": format_item_ref(row["spu_id"], row["seq"]),
+                            "new_ref": format_item_ref(new_spu, new_seq)})
+            changed = True
 
         values = body.get("values")
         if values:

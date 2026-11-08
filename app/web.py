@@ -21,7 +21,7 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # 只改启动入口的版本不足以让浏览器更新已缓存的子模块。
 MODULES = {
     "xm/api": ("/static/js/api.js", 4),
-    "xm/ui": ("/static/js/ui.js", 19),
+    "xm/ui": ("/static/js/ui.js", 20),
     "xm/shop-context": ("/static/js/runtime/shop-context.js", 1),
     "xm/sync": ("/static/js/sync-common.js", 7),
     "xm/update": ("/static/js/update.js", 5),
@@ -31,7 +31,7 @@ MODULES = {
     "xm/components/local-backups": ("/static/js/components/local-backups.js", 2),
     "xm/components/delete-flow": ("/static/js/components/delete-flow.js", 2),
     "xm/components/formula-editor": ("/static/js/components/formula-editor.js", 4),
-    "xm/components/item-form": ("/static/js/components/item-form.js", 8),
+    "xm/components/item-form": ("/static/js/components/item-form.js", 9),
     "xm/components/item-picker": ("/static/js/components/item-picker.js", 1),
     "xm/components/ops-forms": ("/static/js/components/ops-forms.js", 9),
     "xm/pages/overview": ("/static/js/pages/overview.js", 7),
