@@ -46,14 +46,14 @@ def patch_settings(body: UpdateSettingsBody):
 
 @router.post("/install", summary="安装指定版本更新")
 def install(body: InstallBody, request: Request):
-    """tag 必须等于最近一次检查到的最新版本 tag，避免误装任意版本。"""
+    """tag 必须等于最近一次由源站确认的最新版本 tag，避免误装任意版本。"""
     manager = getattr(request.app.state, "sync", None)
     if manager is None or not manager.started:
         raise ApiError("UPDATE_NOT_READY", "本实例尚未取得独占访问权，不能安装更新", status=503)
     if manager.busy:
         raise ApiError("UPDATE_BUSY", "数据同步正在进行，请完成后再更新程序", status=409)
-    st = update.check_update()
-    if not st.get("checked") or not st.get("latest_tag"):
+    target = update.get_confirmed_update_target()
+    if not target or not target.get("tag"):
         raise ApiError(
             "UPDATE_NOT_READY",
             "更新检查尚未完成或未发现可用版本",
@@ -61,12 +61,12 @@ def install(body: InstallBody, request: Request):
             user_message="暂时无法确认是否有新版本",
             user_hint="请稍后重试",
         )
-    if body.tag != st["latest_tag"]:
+    if body.tag != target["tag"]:
         raise ApiError(
             "TAG_MISMATCH",
             "指定的 tag 不是当前最新版本",
-            hint=f"最近一次检查到的最新版本为 {st['latest_tag']}",
+            hint=f"最近一次检查到的最新版本为 {target['tag']}",
             user_message="要安装的版本与当前最新版本不一致",
-            user_hint=f"请重新检查更新后再安装（当前最新版本为 {st['latest_tag']}）",
+            user_hint=f"请重新检查更新后再安装（当前最新版本为 {target['tag']}）",
         )
-    return update.install_update(body.tag)
+    return update.install_update(body.tag, target["commit_sha"])
