@@ -1,9 +1,11 @@
 """自动更新：启动时检查远端 tag，发现新版本时供前端提示并一键更新
 
-更新源使用「系统 git + origin」（复用既有凭据）：本项目是私有仓库，
-匿名 GitHub API / raw / codeload 均取不到内容，而本地 git 凭据可正常
-访问 origin；镜像 git URL 作为 origin 不可用时的回退。更新内容通过
-`git fetch` + `git archive` 导出，不依赖匿名下载。
+更新检查只查询 GitHub 源站（系统 git + origin，复用既有凭据）：本项目是
+私有仓库，匿名 GitHub API / raw / codeload 均取不到内容，而本地 git 凭据
+可正常访问源站。源站确认的标签与提交 SHA 是可信目标；下载更新内容时
+origin 优先、镜像 git URL 回退，但镜像只传输内容，实际下载到的提交必须
+等于源站确认的 SHA。更新内容通过 `git fetch` + `git archive` 导出，不依赖
+匿名下载。
 """
 import json
 import os
@@ -38,6 +40,7 @@ _MIRROR_PREFIXES = (
 # 匹配 https://github.com/<owner>/<repo> 或 git@github.com:<owner>/<repo>
 _REPO_RE = re.compile(r"(?:https?://|git@)github\.com[/:]([^/]+)/([^/.]+?)(?:\.git)?/?$")
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{40,64}$")
 
 # 进程内缓存与后台检查状态（模块级，防多进程重复启动由各进程各自承担）
 _cache = None
@@ -46,6 +49,8 @@ _bg_started = False
 _bg_lock = threading.Lock()
 _install_lock = threading.Lock()
 _installed_tag = None
+# 最近一次由 GitHub 源站确认的最新目标（标签 + 提交 SHA）；进程重启后没有记录
+_confirmed_target = None
 _PROCESS_STARTED = time.time()
 _SKIPPED = {"data", ".git", ".venv", ".xmtemp", "backups", "exports", ".env"}
 
@@ -105,8 +110,23 @@ def _repo_url():
     return r.stdout.strip() or None
 
 
+def _check_url():
+    """检查只信任 GitHub 源站：origin 为 GitHub 仓库时返回可信查询 URL。
+
+    明文 HTTP 不能建立可信记录，统一改用 HTTPS；非 GitHub 的 origin 不参与检查。
+    """
+    origin = _repo_url()
+    if not origin:
+        return None
+    if not _REPO_RE.match(origin):
+        return None
+    if origin.startswith("http://"):
+        return "https://" + origin[len("http://"):]
+    return origin
+
+
 def _iter_sources():
-    """按优先级产出 (source, url)：origin 第一，镜像回退"""
+    """按优先级产出 (source, url)：origin 第一，镜像回退（仅用于下载内容）"""
     origin = _repo_url()
     if origin:
         yield "origin", origin
@@ -119,32 +139,50 @@ def _iter_sources():
 
 
 def _ls_remote_tags(url):
-    """git ls-remote --tags：解析 refs/tags/*，忽略带 ^{} 的重复行；失败返回 None"""
+    """git ls-remote --tags：返回 {tag: 目标 SHA}，失败返回 None。
+
+    同名 refs/tags/<tag> 与 refs/tags/<tag>^{} 同时出现时取剥离行，
+    注解标签的目标 SHA 是剥离标签对象后的那一行；轻量标签取 ref 指向的 SHA。
+    缺少或格式异常的 SHA 不进入结果。
+    """
     try:
         r = _git(["ls-remote", "--tags", url], LS_REMOTE_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return None
     if r.returncode != 0:
         return None
-    tags = []
+    peeled = {}
+    direct = {}
     for line in r.stdout.splitlines():
         if "\t" not in line:
             continue
-        ref = line.split("\t", 1)[1]
-        if ref.endswith("^{}"):
+        sha, ref = line.split("\t", 1)
+        if not ref.startswith("refs/tags/"):
             continue
-        if ref.startswith("refs/tags/"):
-            tags.append(ref[len("refs/tags/"):])
+        sha = sha.strip()
+        if not _SHA_RE.match(sha):
+            continue
+        if ref.endswith("^{}"):
+            peeled[ref[len("refs/tags/"):-3]] = sha
+        else:
+            direct[ref[len("refs/tags/"):]] = sha
+    tags = dict(direct)
+    tags.update(peeled)
     return tags
 
 
 def list_remote_tags():
-    """按 origin → 镜像顺序尝试，返回 (tags, source)；全部失败返回 (None, None)"""
-    for source, url in _iter_sources():
-        tags = _ls_remote_tags(url)
-        if tags is not None:
-            return tags, source
-    return None, None
+    """只查询 GitHub 源站，返回 ({tag: 目标 SHA}, source)；失败返回 (None, None)。
+
+    镜像不参与发布版本选择，也不能补充或覆盖源站的标签与 SHA。
+    """
+    url = _check_url()
+    if not url:
+        return None, None
+    tags = _ls_remote_tags(url)
+    if tags is None:
+        return None, None
+    return tags, "origin"
 
 
 def parse_version(tag):
@@ -166,7 +204,8 @@ def is_test_version(tag):
 
 
 def _do_check():
-    """执行一次真实检查（不读缓存）"""
+    """执行一次真实检查（不读缓存）；只有源站结果能形成可信目标"""
+    global _confirmed_target
     tags, source = list_remote_tags()
     result = {
         "checked": True,
@@ -181,22 +220,24 @@ def _do_check():
         result["error"] = "未获取到远端版本标签（远端无 tag 或网络不可用）"
         return result
     stable = []
-    for tag in tags:
+    for tag, sha in tags.items():
         ver = parse_version(tag)
         if ver is None:
             continue
         # 筛选最新版本的调用点保留 is_test_version；当前恒 False，不影响结果
         if is_test_version(tag):
             continue
-        stable.append((tag, ver))
+        stable.append((tag, ver, sha))
     if not stable:
         result["error"] = "远端没有符合 vX.Y.Z 格式的版本标签"
         return result
-    latest_tag, latest_ver = max(stable, key=lambda item: item[1])
+    latest_tag, latest_ver, latest_sha = max(stable, key=lambda item: item[1])
     result["latest_tag"] = latest_tag
     result["latest_version"] = ".".join(str(x) for x in latest_ver)
     current = parse_version(APP_VERSION)
     result["has_update"] = current is not None and latest_ver > current
+    # 用完整记录替换旧目标；检查失败不会执行到这里，此前确认的目标保持可用
+    _confirmed_target = {"tag": latest_tag, "commit_sha": latest_sha}
     return result
 
 
@@ -223,6 +264,13 @@ def check_update(force=False):
     _cache = result
     _cache_at = time.monotonic()
     return dict(result)
+
+
+def get_confirmed_update_target():
+    """返回最近一次由源站确认的最新目标副本；没有记录返回 None，不触发网络查询"""
+    if _confirmed_target is None:
+        return None
+    return dict(_confirmed_target)
 
 
 def start_background_check():
@@ -385,7 +433,7 @@ def _apply_update(src, tmp):
         raise RuntimeError("安装失败，已回滚本次替换，请排除文件占用或磁盘问题后重试") from exc
 
 
-def _install_update(tag):
+def _install_update(tag, expected_sha):
     tmp = None
     try:
         temp_root = _target(".XMTEMP")
@@ -417,10 +465,15 @@ def _install_update(tag):
         if revision.returncode != 0:
             return {"ok": False, "message": "该版本的更新包不可用，未改动程序文件",
                     "hint": "更新标签不是有效提交"}
+        actual_sha = revision.stdout.strip()
+        # 导出前核对实际提交与源站确认的 SHA；不一致立即停止，不导出也不替换源码
+        if not _SHA_RE.match(actual_sha) or actual_sha.lower() != expected_sha:
+            return {"ok": False, "message": "版本校验失败，未改动程序文件",
+                    "hint": "下载到的提交与源站确认的版本不一致，已停止安装；请重新检查更新后重试"}
         # 2) 用 git archive 导出该提交的内容为 zip
         zip_path = tmp / "update.zip"
         try:
-            r = _git(["archive", "--format=zip", "-o", str(zip_path), revision.stdout.strip()], ARCHIVE_TIMEOUT)
+            r = _git(["archive", "--format=zip", "-o", str(zip_path), actual_sha], ARCHIVE_TIMEOUT)
         except (OSError, subprocess.SubprocessError) as e:
             return {"ok": False, "message": "导出更新包失败", "hint": str(e)}
         if r.returncode != 0:
@@ -453,17 +506,21 @@ def _install_update(tag):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def install_update(tag):
-    """安装指定版本；只处理合法 tag，并拒绝并发安装或未重启的重复安装。"""
+def install_update(tag, expected_sha):
+    """安装指定版本；只处理合法 tag 与源站确认的 SHA，并拒绝并发安装或未重启的重复安装。"""
     global _installed_tag
     if parse_version(tag) is None:
         return {"ok": False, "message": "更新标签必须为 vX.Y.Z 格式"}
+    if not isinstance(expected_sha, str) or not _SHA_RE.match(expected_sha.strip()):
+        return {"ok": False, "message": "缺少可信的版本校验信息，未改动程序文件",
+                "hint": "请重新检查更新后再安装"}
+    expected_sha = expected_sha.strip().lower()
     if not _install_lock.acquire(blocking=False):
         return {"ok": False, "message": "已有更新正在安装，请等待完成，不要重复操作"}
     try:
         if _installed_tag is not None:
             return {"ok": True, "tag": _installed_tag, "message": f"已安装 {_installed_tag}，请先重新启动程序"}
-        result = _install_update(tag)
+        result = _install_update(tag, expected_sha)
         if result["ok"]:
             _installed_tag = tag
         return result

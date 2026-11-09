@@ -20,7 +20,7 @@ async function loadSpus() {
         <td class="num mono">${s.id}</td>
         <td title="${UI.esc(s.name)}">${UI.esc(s.name)}</td>
         <td class="num">${s.sku_count}</td>
-        <td class="muted">${UI.fmtTime(s.updated_at)}</td>
+        <td class="muted">${UI.esc(UI.fmtTime(s.updated_at))}</td>
         <td class="row-actions">
           <button type="button" class="btn-outline btn-sm" data-rename="${s.id}" data-name="${UI.esc(s.name)}">改名</button>
           <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${s.id}" data-name="${UI.esc(s.name)}" data-count="${s.sku_count}">删除</button>

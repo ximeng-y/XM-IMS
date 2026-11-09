@@ -40,7 +40,7 @@ export const page = {
     tbody.innerHTML = movs.movements.map((m) => `
       <tr>
         <td class="mono">${m.id}</td>
-        <td>${UI.fmtTimeShort(m.created_at)}</td>
+        <td>${UI.esc(UI.fmtTimeShort(m.created_at))}</td>
         <td>${typeBadge[m.type] || `<span class="muted">未知类型</span>`}</td>
         <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
         <td class="num">${UI.fmtMoney(m.unit_price)}</td>

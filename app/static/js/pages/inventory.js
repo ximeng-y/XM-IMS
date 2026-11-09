@@ -122,7 +122,7 @@ function renderOverview() {
       <td class="num">${spu.sku_count}</td>
       <td class="num">${spu.sku_count > 0 ? total : "—"}</td>
       ${fieldsMeta.map(() => `<td class="muted">—</td>`).join("")}
-      <td class="muted">${UI.fmtTime(spu.updated_at)}</td>
+      <td class="muted">${UI.esc(UI.fmtTime(spu.updated_at))}</td>
     </tr>`;
     if (open) row += skuGroupHtml(spu, shown, colCount);
     return row;
@@ -163,7 +163,7 @@ function skuGroupHtml(spu, shown, colCount) {
     <td class="muted">—</td>
     <td class="num">${it.qty}</td>
     ${extraCells(it)}
-    <td class="muted">${UI.fmtTime(it.updated_at)}</td>
+    <td class="muted">${UI.esc(UI.fmtTime(it.updated_at))}</td>
   </tr>`).join("");
 }
 

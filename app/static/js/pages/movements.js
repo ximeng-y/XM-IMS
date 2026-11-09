@@ -35,7 +35,7 @@ async function loadMovements() {
       tbody.innerHTML = data.movements.map((m) => `
         <tr>
           <td class="num mono">${m.id ?? "—"}</td>
-          <td class="muted" style="white-space:nowrap">${UI.fmtTime(m.created_at)}</td>
+          <td class="muted" style="white-space:nowrap">${UI.esc(UI.fmtTime(m.created_at))}</td>
           <td class="num mono">${UI.esc(m.item_id)}</td>
           <td>${TYPE_BADGE[m.type] || `<span class="muted">未知类型</span>`}</td>
           <td class="num">${UI.fmtDelta(m.qty_delta)}</td>
