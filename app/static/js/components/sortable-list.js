@@ -5,7 +5,8 @@
      被挤开的项用 FLIP 动画滑到新位置
    - 用 Pointer Events 而不是 HTML5 拖放：原生拖放的跟随图像由浏览器绘制，
      既不能参与布局也不会实时让位，触屏上更是不工作
-   - 指针靠近滚动区域上下边缘时自动滚动
+   - 指针靠近滚动区域上边缘时自动滚动；向下只在被拖项顶到下边缘后才滚，
+     且一次拖动最多往下多滚 5 个项的间距
    - 向上拖出列表上沿时带阻尼，最多再多探出一小段就停住
    - 配套样式见 css/components/sortable-list.css */
 "use strict";
@@ -16,6 +17,7 @@ const FLIP_MS = 180;                   // 让位与落位动画时长
 const FLIP_EASE = "cubic-bezier(.2,.8,.2,1)";
 const SLACK = 24;                      // 拖出列表上沿后仍可继续拖出的最大距离（px）
 const RESIST = 72;                     // 用尽这段余量所需的指针越界距离，越大越缓
+const DOWN_ITEMS = 5;                  // 一次拖动中向下自动滚动的上限，按项的间距计
 
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -149,10 +151,21 @@ function create(container, { handle, item, onEnd } = {}) {
       ? { top: 0, bottom: window.innerHeight }
       : scroller.getBoundingClientRect();
     const y = drag.pointerY;
-    const over = Math.max(view.top + EDGE - y, y - (view.bottom - EDGE));
-    if (over <= 0) return;
-    const step = Math.min(1, over / EDGE) * MAX_SPEED;
-    scroller.scrollBy(0, y < view.top + EDGE ? -step : step);
+    // 向上：指针进入上边缘即可滚
+    if (y < view.top + EDGE) {
+      scroller.scrollBy(0, -Math.min(1, (view.top + EDGE - y) / EDGE) * MAX_SPEED);
+      return;
+    }
+    if (y < view.bottom - EDGE) return;
+    // 向下：被拖项自己先顶到下边缘说明真有内容要往下看，
+    // 再按本次拖动的剩余额度滚，额度用完就停，列表不会被一直推走
+    const room = drag.maxDown - drag.scrolledDown;
+    if (room <= 0 || drag.el.getBoundingClientRect().bottom < view.bottom) return;
+    const step = Math.min(Math.min(1, (y - (view.bottom - EDGE)) / EDGE) * MAX_SPEED, room);
+    const from = scroller.scrollTop;
+    scroller.scrollBy(0, step);
+    // 只记实际滚动的距离：滚到文档底部时请求量大于真实位移，不该白扣额度
+    drag.scrolledDown += scroller.scrollTop - from;
   }
 
   // 拖动项所在的可滚动祖先；没有就滚整个页面
@@ -189,12 +202,16 @@ function create(container, { handle, item, onEnd } = {}) {
     // 容器内容区上沿相对边框的距离；项排到首位时顶边正好贴在这一条线上
     const box = getComputedStyle(container);
     const paddingTop = (parseFloat(box.paddingTop) || 0) + container.clientTop;
+    // 相邻两项的间距就是「再滚一个项」的距离；只有一项时退回该项自身高度
+    const all = items();
+    const pitch = all.length > 1 ? Math.abs(all[1].offsetTop - all[0].offsetTop) : el.offsetHeight;
     drag = {
       el, pointerId: e.pointerId, changed: false,
       startIndex: items().indexOf(el),
       startY: e.clientY, pointerY: e.clientY,
       startTop: el.getBoundingClientRect().top,
       ty: 0, raf: 0, paddingTop,
+      scrolledDown: 0, maxDown: Math.max(pitch, 1) * DOWN_ITEMS,
       scroller: scrollerOf(el),
     };
     window.addEventListener("keydown", onKey);

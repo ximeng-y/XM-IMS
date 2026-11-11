@@ -30,7 +30,7 @@ MODULES = {
     "xm/components/context-menu": ("/static/js/components/context-menu.js", 3),
     "xm/components/local-backups": ("/static/js/components/local-backups.js", 2),
     "xm/components/delete-flow": ("/static/js/components/delete-flow.js", 2),
-    "xm/components/sortable-list": ("/static/js/components/sortable-list.js", 2),
+    "xm/components/sortable-list": ("/static/js/components/sortable-list.js", 3),
     "xm/components/formula-editor": ("/static/js/components/formula-editor.js", 5),
     "xm/components/item-form": ("/static/js/components/item-form.js", 11),
     "xm/components/item-picker": ("/static/js/components/item-picker.js", 1),
