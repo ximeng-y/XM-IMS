@@ -59,7 +59,7 @@ STYLES = {
     "css/pages/inventory": ("/static/css/pages/inventory.css", 1),
     "css/pages/movements": ("/static/css/pages/movements.css", 1),
     "css/pages/overview": ("/static/css/pages/overview.css", 1),
-    "css/pages/shops": ("/static/css/pages/shops.css", 2),
+    "css/pages/shops": ("/static/css/pages/shops.css", 3),
     "css/pages/sync": ("/static/css/pages/sync.css", 2),
     "css/onboarding": ("/static/onboarding/onboarding.css", 4),
 }
