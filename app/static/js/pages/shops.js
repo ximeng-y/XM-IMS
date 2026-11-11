@@ -8,11 +8,12 @@ import { XM } from "xm/api";
 import { UI, $, $$ } from "xm/ui";
 import { ShopContext } from "xm/shop-context";
 import { createShopFlow, refreshShopChrome } from "xm/shell";
+import { SortableList } from "xm/components/sortable-list";
 
 const ShopsPage = (() => {
   const list = () => $("#shopList");
-  let dragging = null;          // 正在拖动的卡片
   let shops = [];               // 当前页面的店铺列表（已按本地顺序）
+  let sortable = null;          // 拖动排序组件；容器只在页面初始化时绑定一次
 
   const currentId = () => ShopContext.currentId();
 
@@ -39,7 +40,7 @@ const ShopsPage = (() => {
             <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${shop.id}">删除</button>
           </div>
         </div>
-        <span class="shop-drag" title="按住拖动调整顺序" aria-hidden="true">
+        <span class="shop-drag sortable-handle" title="按住拖动调整顺序" aria-hidden="true">
           <span></span>
         </span>
       </div>`;
@@ -60,67 +61,27 @@ const ShopsPage = (() => {
     $$("button[data-switch]", box).forEach((b) => b.addEventListener("click", switchShop));
     $$("button[data-rename]", box).forEach((b) => b.addEventListener("click", renameShop));
     $$("button[data-del]", box).forEach((b) => b.addEventListener("click", deleteShop));
-    $$(".shop-card", box).forEach((card) => {
-      // 拖动只从手柄开始：手柄按下才临时让卡片可拖，避免误拖按钮与文字选中。
-      // 拖动事件本身发在可拖元素（卡片）上，故监听挂在卡片上。
-      const handle = card.querySelector(".shop-drag");
-      if (!handle) return;
-      handle.addEventListener("mousedown", () => { card.draggable = true; });
-      handle.addEventListener("mouseup", () => { if (!dragging) card.draggable = false; });
-      card.addEventListener("dragstart", (ev) => startDrag(ev, card));
-      card.addEventListener("dragend", endDrag);
+  }
+
+  // 拖动排序：通用组件负责指针跟随与让位动画，本页只提供手柄、项选择器并负责落盘。
+  // 监听挂在列表容器上，卡片重渲染不需要重新绑定
+  function bindSorting() {
+    if (sortable) return;
+    sortable = SortableList.create(list(), {
+      handle: ".shop-drag",
+      item: ".shop-card",
+      onEnd: persistOrder,
     });
   }
 
-  // ---------- 拖动排序 ----------
-  // 原生 HTML5 拖动：手柄按下才让卡片可拖，避免误拖行内按钮与文字选中。
-  // 落点以「鼠标相对卡片中线」判断插到前还是后，拖动中实时移动 DOM，松手后落盘。
-  function startDrag(ev, card) {
-    dragging = card;
-    card.classList.add("dragging");
-    // 拖动期间禁止选中文字，避免拖拽过程中把卡片文字选蓝
-    list().classList.add("is-dragging");
-    ev.dataTransfer.effectAllowed = "move";
-    // 部分浏览器要求设置数据才会真正进入拖动
-    ev.dataTransfer.setData("text/plain", card.dataset.shop);
-  }
-
-  function endDrag() {
-    if (!dragging) return;
-    dragging.classList.remove("dragging");
-    dragging.draggable = false;
-    dragging = null;
-    list().classList.remove("is-dragging");
-    $$(".shop-card", list()).forEach((c) => c.classList.remove("drop-before", "drop-after"));
-    persistOrder();
-  }
-
-  function onDragOver(ev) {
-    if (!dragging) return;
-    ev.preventDefault();
-    ev.dataTransfer.dropEffect = "move";
-    const card = ev.target.closest(".shop-card");
-    if (!card) {
-      // 卡片之间的空隙 / 列表底部空白：落到末尾
-      $$(".shop-card", list()).forEach((c) => c.classList.remove("drop-before", "drop-after"));
-      list().append(dragging);
-      return;
-    }
-    if (card === dragging) return;
-    const after = ev.clientY > card.getBoundingClientRect().top + card.offsetHeight / 2;
-    $$(".shop-card", list()).forEach((c) => c.classList.remove("drop-before", "drop-after"));
-    card.classList.add(after ? "drop-after" : "drop-before");
-    if (after) card.after(dragging);
-    else card.before(dragging);
-  }
-
-  function persistOrder() {
-    const ids = $$(".shop-card", list()).map((c) => Number(c.dataset.shop));
+  function persistOrder(cards) {
+    const ids = cards.map((c) => Number(c.dataset.shop));
     // 落盘的是本次拖动产生的新顺序；不能再套用旧的本地偏好，
     // 否则页面暂时显示新顺序、刷新后回退
     ShopContext.reorder(ids);
+    // 卡片的 DOM 顺序已经是拖动结果，这里只刷新顶栏与内存中的列表，
+    // 不重渲染卡片，避免把正在播放的落位动画连同元素一起替换掉
     syncChrome();
-    render();
   }
 
   // ---------- 店铺操作 ----------
@@ -183,10 +144,11 @@ const ShopsPage = (() => {
     if (shops.length && !shops.some((s) => String(s.id) === saved)) {
       ShopContext.rememberSelection(shops[0].id);
     }
+    bindSorting();
     render();
   }
 
-  return { load, onDragOver };
+  return { load };
 })();
 
 export const page = {
@@ -196,10 +158,6 @@ export const page = {
     $("#btnCreateShop").addEventListener("click", async () => {
       await createShopFlow();
     });
-    const box = $("#shopList");
-    box.addEventListener("dragover", ShopsPage.onDragOver);
-    // 拖到列表空白处时阻止浏览器默认处理，保证落点稳定
-    box.addEventListener("drop", (ev) => ev.preventDefault());
     ShopsPage.load();
   },
 };
