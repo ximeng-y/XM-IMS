@@ -6,6 +6,7 @@
    - 用 Pointer Events 而不是 HTML5 拖放：原生拖放的跟随图像由浏览器绘制，
      既不能参与布局也不会实时让位，触屏上更是不工作
    - 指针靠近滚动区域上下边缘时自动滚动
+   - 向上拖出列表上沿时带阻尼，最多再多探出一小段就停住
    - 配套样式见 css/components/sortable-list.css */
 "use strict";
 
@@ -13,6 +14,8 @@ const EDGE = 56;                       // 触发自动滚动的边缘宽度（px
 const MAX_SPEED = 16;                  // 自动滚动每帧的最大像素
 const FLIP_MS = 180;                   // 让位与落位动画时长
 const FLIP_EASE = "cubic-bezier(.2,.8,.2,1)";
+const SLACK = 24;                      // 拖出列表上沿后仍可继续拖出的最大距离（px）
+const RESIST = 72;                     // 用尽这段余量所需的指针越界距离，越大越缓
 
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -122,11 +125,18 @@ function create(container, { handle, item, onEnd } = {}) {
     }
   }
 
+  // 上边界阻尼：越界越远，能挤出的余量增长越慢，再到一定距离就再也挤不动。
+  // 这样拖动项不会被卡死在上沿，也不会一路飞出列表
+  const rubber = (over) => SLACK * (1 - (1 - Math.min(over / RESIST, 1)) ** 2);
+
   // 跟随指针：用当前布局位置反推位移，页面滚动与 DOM 挪位都自动算进去
   function place() {
     const el = drag.el;
     const natural = el.getBoundingClientRect().top - drag.ty;
-    const ty = drag.startTop + (drag.pointerY - drag.startY) - natural;
+    // 本项排到首位时顶边所在的位置；比它更靠上属于越界，按阻尼折算余量
+    const limit = container.getBoundingClientRect().top + drag.paddingTop - natural;
+    let ty = drag.startTop + (drag.pointerY - drag.startY) - natural;
+    if (ty < limit) ty = limit - rubber(limit - ty);
     if (Math.abs(ty - drag.ty) < 0.1) return;
     drag.ty = ty;
     el.style.transform = `translateY(${ty}px)`;
@@ -176,12 +186,15 @@ function create(container, { handle, item, onEnd } = {}) {
     // 上一次落位动画可能还没播完，先撤掉，否则它的关键帧会盖住本次的跟随位移
     el.getAnimations().forEach((a) => a.cancel());
     el.style.transform = "translateY(0px)";
+    // 容器内容区上沿相对边框的距离；项排到首位时顶边正好贴在这一条线上
+    const box = getComputedStyle(container);
+    const paddingTop = (parseFloat(box.paddingTop) || 0) + container.clientTop;
     drag = {
       el, pointerId: e.pointerId, changed: false,
       startIndex: items().indexOf(el),
       startY: e.clientY, pointerY: e.clientY,
       startTop: el.getBoundingClientRect().top,
-      ty: 0, raf: 0,
+      ty: 0, raf: 0, paddingTop,
       scroller: scrollerOf(el),
     };
     window.addEventListener("keydown", onKey);
