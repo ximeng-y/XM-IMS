@@ -180,12 +180,16 @@ body.nav-open .nav-toggle-bars::after { transform: translateY(-5px) rotate(-45de
 }
 
 .layout {
+  /* 侧栏宽度：固定定位的侧栏不在流内，正文侧用等宽内边距补回，
+     两者的可用宽度与居中位置与侧栏在流内时完全一致 */
+  --sidenav-w: 10.5rem;
   display: flex;
   align-items: flex-start;
   min-height: calc(100vh - 3.5rem);
+  padding-left: var(--sidenav-w);
 }
 .sidenav {
-  width: 10.5rem;
+  width: var(--sidenav-w);
   flex: none;
   background: #fff;
   border-right: 1px solid var(--line);
@@ -196,11 +200,14 @@ body.nav-open .nav-toggle-bars::after { transform: translateY(-5px) rotate(-45de
      宽屏下间距可达 300px 以上，这里显式压回顶部对齐 */
   justify-content: flex-start;
   gap: 2px;
-  /* 侧栏独立于文档滚动：固定在顶栏下方，内容超长时自身滚动 */
-  position: sticky;
+  /* 与顶栏一样固定在视口内，正文滚动时不动；内容超长时自身滚动。
+     层级低于顶栏，顶栏展开的浮层可以盖住它 */
+  position: fixed;
+  left: 0;
   top: 3.5rem;
   height: calc(100vh - 3.5rem);
   overflow-y: auto;
+  z-index: 10;
 }
 .sidenav a {
   display: block;
@@ -539,6 +546,8 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
   .layout {
     flex-direction: column;
     align-items: stretch;
+    /* 窄屏侧栏是浮层，不再占正文宽度 */
+    padding-left: 0;
     /* 顶栏在窄屏下高度随内容变化（换行时更高），基准随之改成实测顶栏高度 */
     min-height: calc(100vh - var(--mobile-topbar-height, 3.5rem));
   }
@@ -568,9 +577,10 @@ dialog:has(> .dlg-body > .dlg-form-wide) { width: 32rem; }
   .sidenav {
     display: none;
     position: fixed;
+    /* 浮层要压住遮罩（18），但仍在顶栏（20）之下 */
+    z-index: 19;
     left: 0; right: 0;
     top: var(--mobile-topbar-height, 3.5rem);
-    z-index: 19;
     width: auto;
     height: auto;
     max-height: calc(100vh - var(--mobile-topbar-height, 3.5rem));

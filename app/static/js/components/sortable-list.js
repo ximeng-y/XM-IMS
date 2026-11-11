@@ -5,7 +5,7 @@
      被挤开的项用 FLIP 动画滑到新位置
    - 用 Pointer Events 而不是 HTML5 拖放：原生拖放的跟随图像由浏览器绘制，
      既不能参与布局也不会实时让位，触屏上更是不工作
-   - 指针靠近滚动区域上边缘时自动滚动；向下只在被拖项顶到下边缘后才滚，
+   - 指针靠近滚动区域上边缘时自动滚动；向下只在列表下沿越过可视下边界后才滚，
      且一次拖动最多往下多滚 5 个项的间距
    - 向上拖出列表上沿时带阻尼，最多再多探出一小段就停住
    - 配套样式见 css/components/sortable-list.css */
@@ -135,32 +135,44 @@ function create(container, { handle, item, onEnd } = {}) {
   function place() {
     const el = drag.el;
     const natural = el.getBoundingClientRect().top - drag.ty;
-    // 本项排到首位时顶边所在的位置；比它更靠上属于越界，按阻尼折算余量
-    const limit = container.getBoundingClientRect().top + drag.paddingTop - natural;
+    // 上边界：本项排到首位时顶边所在的位置；比它更靠上属于越界，按阻尼折算余量
+    const top = container.getBoundingClientRect().top + drag.paddingTop - natural;
+    // 下边界：可视区下沿，项底边触到就停住，不会被拖出可视范围
+    const bottom = viewBox().bottom - el.offsetHeight - natural;
     let ty = drag.startTop + (drag.pointerY - drag.startY) - natural;
-    if (ty < limit) ty = limit - rubber(limit - ty);
+    if (ty < top) ty = top - rubber(top - ty);
+    else if (ty > Math.max(bottom, top)) ty = Math.max(bottom, top);
     if (Math.abs(ty - drag.ty) < 0.1) return;
     drag.ty = ty;
     el.style.transform = `translateY(${ty}px)`;
   }
 
+  // 滚动区域的视口范围：整页滚动时就是窗口，其它滚动容器取自身矩形
+  function viewBox() {
+    return drag.scroller === document.scrollingElement
+      ? { top: 0, bottom: window.innerHeight }
+      : drag.scroller.getBoundingClientRect();
+  }
+
   // 指针进入滚动区域的上下边缘时持续滚动，越靠边越快
   function autoScroll() {
     const scroller = drag.scroller;
-    const view = scroller === document.scrollingElement
-      ? { top: 0, bottom: window.innerHeight }
-      : scroller.getBoundingClientRect();
+    const view = viewBox();
     const y = drag.pointerY;
-    // 向上：指针进入上边缘即可滚
+    // 向上：指针进入上边缘即可滚；滚回去的部分退还给向下额度，
+    // 来回拖动不会白白吃掉额度
     if (y < view.top + EDGE) {
+      const from = scroller.scrollTop;
       scroller.scrollBy(0, -Math.min(1, (view.top + EDGE - y) / EDGE) * MAX_SPEED);
+      drag.scrolledDown = Math.max(0, drag.scrolledDown - (from - scroller.scrollTop));
       return;
     }
     if (y < view.bottom - EDGE) return;
-    // 向下：被拖项自己先顶到下边缘说明真有内容要往下看，
-    // 再按本次拖动的剩余额度滚，额度用完就停，列表不会被一直推走
+    // 向下：列表下沿越过可视下边界，说明下面确实还有内容，才允许滚；
+    // 列表本来就没占满可视区时不滚，额度用完也停，列表不会被一直推走
+    if (container.getBoundingClientRect().bottom < view.bottom - 1) return;
     const room = drag.maxDown - drag.scrolledDown;
-    if (room <= 0 || drag.el.getBoundingClientRect().bottom < view.bottom) return;
+    if (room <= 0) return;
     const step = Math.min(Math.min(1, (y - (view.bottom - EDGE)) / EDGE) * MAX_SPEED, room);
     const from = scroller.scrollTop;
     scroller.scrollBy(0, step);
