@@ -1,0 +1,28 @@
+/* 通用拖拽排序组件的配套样式，与 sortable-list.js 成对使用。
+   页面样式清单里须排在页面样式之前引用本文件。
+
+   只包含拖动期间必须由组件负责的视觉与命中行为；浮起阴影、放大等
+   手感样式属于具体页面，由使用方按自己的视觉规范追加。
+
+   使用方注意：项的悬停位移会与跟随位移、让位动画互相干扰，
+   页面应把悬停样式限定在容器不带 .sortable-active 时生效，
+   例如 .list:not(.sortable-active) .item:hover { transform: translateY(-2px); } */
+
+/* 拖拽手柄的通用命中约定：使用方给手柄元素加上这个类即可。
+   触屏上按住手柄应立即进入拖动，不能被浏览器解释成页面滚动 */
+.sortable-handle { touch-action: none; }
+
+/* 被拖动项浮到相邻项之上；指针事件穿透，避免它挡住落点判定与手柄热区 */
+.sortable-lifted {
+  position: relative;
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* 拖动期间禁止选中列表文字，避免拖拽轨迹把卡片文字刷蓝 */
+.sortable-active { user-select: none; }
+
+/* 让位动画由 Web Animations 驱动，页面自带的 CSS 过渡会跟它抢同一个
+   transform：内联位移被过渡拉慢，撤销旧动画的瞬间又会被过渡补出一段滑动。
+   拖动期间统一压掉，结束后自动恢复。页面规则多在后加载，故需 !important */
+.sortable-active > * { transition: none !important; }

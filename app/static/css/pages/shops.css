@@ -20,7 +20,9 @@
   box-shadow: 0 1px 3px rgba(28, 39, 51, .10) !important;
   transition: box-shadow .15s ease, transform .12s ease;
 }
-.shop-card:hover {
+/* 悬停浮起只在非拖动状态下生效：拖动中指针会一路扫过其它卡片，
+   逐张浮起既分散注意，也会让让位动画的位移测量带上额外偏移 */
+.shop-list:not(.sortable-active) .shop-card:hover {
   box-shadow: 0 4px 12px rgba(28, 39, 51, .16) !important;
   transform: translateY(-2px);
 }
@@ -92,14 +94,21 @@
   /* 尺寸取节距的整数倍，边缘的点不会被裁掉一半 */
   width: 1rem;
   height: 2.5rem;
-  background-image: radial-gradient(circle, currentColor .12rem, transparent .12rem);
+  background-image: radial-gradient(circle, currentColor .14rem, transparent .14rem);
   background-size: .5rem .5rem;
   background-position: 0 0;
+  /* Pico 的 * 重置把 background-repeat 设成了 no-repeat，必须显式覆盖，
+     否则点阵只会画出左上角一颗点 */
+  background-repeat: repeat;
 }
 .shop-drag:active { cursor: grabbing; }
-.shop-card.dragging { opacity: .5; }
-.shop-card.drop-before { box-shadow: inset 0 2px 0 var(--blue) !important; }
-.shop-card.drop-after { box-shadow: inset 0 -2px 0 var(--blue) !important; }
+/* 拖动中被抬起的卡片：阴影加重表示离开原位。
+   位移与层级由 sortable-list 组件统一处理，这里只给本页的视觉反馈。 */
+.shop-card.sortable-lifted {
+  box-shadow: 0 10px 24px rgba(28, 39, 51, .22) !important;
+  border-color: var(--blue-pale-2);
+  cursor: grabbing;
+}
 
 /* 零店铺时的原文提示 */
 .shop-empty {
@@ -109,9 +118,6 @@
   text-align: center;
   padding: 2.5rem 1.5rem;
 }
-
-/* 拖动排序期间禁止选中卡片文字（手柄是唯一拖动起点） */
-.shop-list.is-dragging { user-select: none; }
 
 @media (max-width: 600px) {
   .shop-card-main { padding: .8rem .9rem; }
