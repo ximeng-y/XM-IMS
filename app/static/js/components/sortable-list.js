@@ -7,7 +7,7 @@
      既不能参与布局也不会实时让位，触屏上更是不工作
    - 指针靠近滚动区域上边缘时自动滚动；向下只在列表下沿越过可视下边界后才滚，
      且一次拖动最多往下多滚 5 个项的间距
-   - 向上拖出列表上沿时带阻尼，最多再多探出一小段就停住
+   - 向上拖出列表上沿、向下拖出可视区下沿时都带阻尼，最多再多探出一小段就停住
    - 配套样式见 css/components/sortable-list.css */
 "use strict";
 
@@ -127,8 +127,8 @@ function create(container, { handle, item, onEnd } = {}) {
     }
   }
 
-  // 上边界阻尼：越界越远，能挤出的余量增长越慢，再到一定距离就再也挤不动。
-  // 这样拖动项不会被卡死在上沿，也不会一路飞出列表
+  // 边界阻尼：越界越远，能挤出的余量增长越慢，再到一定距离就再也挤不动。
+  // 这样拖动项不会被卡死在边界上，也不会一路拖出可视范围
   const rubber = (over) => SLACK * (1 - (1 - Math.min(over / RESIST, 1)) ** 2);
 
   // 跟随指针：用当前布局位置反推位移，页面滚动与 DOM 挪位都自动算进去
@@ -137,11 +137,11 @@ function create(container, { handle, item, onEnd } = {}) {
     const natural = el.getBoundingClientRect().top - drag.ty;
     // 上边界：本项排到首位时顶边所在的位置；比它更靠上属于越界，按阻尼折算余量
     const top = container.getBoundingClientRect().top + drag.paddingTop - natural;
-    // 下边界：可视区下沿，项底边触到就停住，不会被拖出可视范围
-    const bottom = viewBox().bottom - el.offsetHeight - natural;
+    // 下边界：可视区下沿，项底边触到就进入阻尼；窗口比项还矮时不可越过上边界
+    const bottom = Math.max(viewBox().bottom - el.offsetHeight - natural, top);
     let ty = drag.startTop + (drag.pointerY - drag.startY) - natural;
     if (ty < top) ty = top - rubber(top - ty);
-    else if (ty > Math.max(bottom, top)) ty = Math.max(bottom, top);
+    else if (ty > bottom) ty = bottom + rubber(ty - bottom);
     if (Math.abs(ty - drag.ty) < 0.1) return;
     drag.ty = ty;
     el.style.transform = `translateY(${ty}px)`;
