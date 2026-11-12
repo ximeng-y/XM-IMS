@@ -1,0 +1,51 @@
+# 版本 tag 推送：检查、构建 Windows 安装包并挂到同 tag 的 Release。
+# Release 可先于构建完成发布，也可在构建完成后创建；本工作流不监听 Release 事件。
+name: Windows 安装包构建与 Release 挂包
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  build-and-publish:
+    name: 构建并挂包
+    runs-on: windows-2022
+    steps:
+      - name: 检出 tag 代码
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 准备 Python 3.12 x64
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.10"
+          architecture: x64
+      - name: 准备 Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: 创建项目内虚拟环境
+        run: python -m venv .XMTEMP/actions/venv
+      - name: 校验 tag 与 APP_VERSION
+        id: prepare
+        run: .XMTEMP/actions/venv/Scripts/python.exe -B .github/scripts/release.py prepare --tag "${{ github.ref_name }}"
+      - name: 安装检查依赖
+        run: .XMTEMP/actions/venv/Scripts/python.exe -m pip install --disable-pip-version-check -r requirements.txt
+      - name: 执行基础检查
+        run: .XMTEMP/actions/venv/Scripts/python.exe -B .github/scripts/basic_checks.py
+      - name: 构建安装包
+        run: .XMTEMP/actions/venv/Scripts/python.exe -B desktop/build.py
+      - name: 挂载安装包到同 tag Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .XMTEMP/actions/venv/Scripts/python.exe -B .github/scripts/release.py publish --tag "${{ github.ref_name }}" --repo "${{ github.repository }}" --asset "${{ steps.prepare.outputs.asset_path }}"
