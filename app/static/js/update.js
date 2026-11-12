@@ -110,10 +110,11 @@ async function check(tries) {
     return;
   }
   // 新版本存在但没有可安装的安装包时只作状态展示，不弹出无法执行的安装
+  // 去重键与可安装提示分开：缺包提醒不能占掉之后可安装提示的首次机会
   if (Desktop.available() && st && st.availability !== "available") {
     if (st.has_update && st.latest_tag &&
-        sessionStorage.getItem("xmims.updatePrompted") !== st.latest_tag) {
-      sessionStorage.setItem("xmims.updatePrompted", st.latest_tag);
+        sessionStorage.getItem("xmims.updateNoticed") !== st.latest_tag) {
+      sessionStorage.setItem("xmims.updateNoticed", st.latest_tag);
       UI.toast(desktopLabel(st) || "暂时无法获取版本信息", { title: "发现新版本" });
     }
     return;

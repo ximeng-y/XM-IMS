@@ -314,8 +314,7 @@ class Environment:
         """Git 可执行文件位于 <安装目录>\\cmd\\git.exe 或 <安装目录>\\bin\\git.exe。"""
         return Path(git_exe).parent.parent
 
-    @staticmethod
-    def _finish(component):
+    def _finish(self, component):
         """源码模式安装后重新定位并返回环境快照。"""
         gitstore.locate_git(refresh=True)
         gitstore.locate_gcm(refresh=True)

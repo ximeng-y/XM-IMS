@@ -37,6 +37,7 @@ Var UpdatePid
 Var UpdateDir
 Var ManifestHandle
 Var ManifestLine
+Var ManifestFailed
 Var TailChar
 
 ; ---------- 命令行参数 ----------
@@ -136,12 +137,18 @@ Function DeleteListedFile
   ${AndIf} $R4 != "\"
   ${AndIf} $R7 != "../"
   ${AndIf} $R7 != "%1"
+    ClearErrors
     Delete "$INSTDIR\$ManifestLine"
+    ${If} ${Errors}
+      ; 删除失败单独记账，不与读取结果混用
+      StrCpy $ManifestFailed "1"
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
 ; 逐行读取并删除登记的程序文件；清单自身不在登记列表内，边读边删不影响后续行
 Function DeleteManifestFiles
+  StrCpy $ManifestFailed "0"
   ${IfNot} ${FileExists} "$INSTDIR\${MANIFEST}"
     Return
   ${EndIf}
@@ -150,6 +157,8 @@ Function DeleteManifestFiles
     Return
   ${EndIf}
   ${Do}
+    ; 删除失败会留下错误标记，必须先清掉才能把每次读取的结果分开判断
+    ClearErrors
     FileReadUTF16LE $ManifestHandle $ManifestLine
     ${If} ${Errors}
       ${Break}
@@ -161,7 +170,9 @@ Function DeleteManifestFiles
     Call DeleteListedFile
   ${Loop}
   FileClose $ManifestHandle
-  Delete "$INSTDIR\${MANIFEST}"
+  ${If} $ManifestFailed == "0"
+    Delete "$INSTDIR\${MANIFEST}"
+  ${EndIf}
 FunctionEnd
 
 Function .onInstSuccess
@@ -190,6 +201,13 @@ UninstallIcon "${STAGE_DIR}\resources\icons\icon.ico"
 ; ---------- 安装 ----------
 Section "XM-IMS" SecMain
   Call WaitForPrevious
+  ; 手动重装 / 升级没有 /XM_PID，同样不能在程序运行时覆盖程序文件：
+  ; 托盘隐藏窗口后进程仍在，逐文件覆盖会失败并留下新旧混合的安装
+  Call CheckRunning
+  ${If} $R5 == "1"
+    MessageBox MB_ICONSTOP|MB_OK "XM-IMS 正在运行。请在托盘菜单中选择退出后重试。"
+    Abort
+  ${EndIf}
   ; 升级：先按上一份清单清掉旧程序文件，避免旧模块留在资源目录
   ${If} ${FileExists} "$INSTDIR\${MANIFEST}"
     Call DeleteManifestFiles
@@ -275,12 +293,17 @@ Function un.DeleteListedFile
   ${AndIf} $R4 != "\"
   ${AndIf} $R7 != "../"
   ${AndIf} $R7 != "%1"
+    ClearErrors
     Delete "$INSTDIR\$ManifestLine"
+    ${If} ${Errors}
+      StrCpy $ManifestFailed "1"
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
 ; 卸载同样只删除清单登记的程序文件；data、tools 与用户文件保留
 Function un.DeleteManifestFiles
+  StrCpy $ManifestFailed "0"
   ${IfNot} ${FileExists} "$INSTDIR\${MANIFEST}"
     Return
   ${EndIf}
@@ -289,6 +312,7 @@ Function un.DeleteManifestFiles
     Return
   ${EndIf}
   ${Do}
+    ClearErrors
     FileReadUTF16LE $ManifestHandle $ManifestLine
     ${If} ${Errors}
       ${Break}
@@ -300,5 +324,7 @@ Function un.DeleteManifestFiles
     Call un.DeleteListedFile
   ${Loop}
   FileClose $ManifestHandle
-  Delete "$INSTDIR\${MANIFEST}"
+  ${If} $ManifestFailed == "0"
+    Delete "$INSTDIR\${MANIFEST}"
+  ${EndIf}
 FunctionEnd
