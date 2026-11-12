@@ -145,7 +145,8 @@ def program_manifest(stage, version):
     for path in sorted(stage.rglob("*")):
         if not path.is_file():
             continue
-        relative = path.relative_to(stage).as_posix()
+        # 清单交给 NSIS 后直接拼进 Delete，必须使用 Windows 反斜杠分隔符
+        relative = str(path.relative_to(stage))
         if relative in ("installed-program-files.txt", "uninstall.exe"):
             continue
         lines.append(relative)

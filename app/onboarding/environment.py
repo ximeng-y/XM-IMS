@@ -120,7 +120,53 @@ class Environment:
             self._install_portable_git(target)
         else:
             self._install_local_gcm(target)
-        return self._finish(component, mode=selected, path=path)
+        return self._finish_desktop(component, selected, path, target)
+
+    def _finish_desktop(self, component, mode, path, target):
+        """局部 / 自选目标安装后的核验：按本次目标定位，成功才保存位置。
+
+        不能在保存前用 locations.mode() 的旧值定位——用户改选了 custom 时，
+        旧定位器仍指向原目标，会误判安装失败。系统安装走 _finish_global。
+        """
+        # 只认本次目标目录，不让系统里已有的组件顶替
+        git_exe = gitstore.locate_git_from(target["git_root"])
+        if component == "gcm":
+            gcm_ok = self._gcm_in_root(target["gcm_root"]) or bool(
+                git_exe and self._first_line([git_exe, "credential-manager", "--version"]))
+        else:
+            gcm_ok = True
+        if not git_exe:
+            fail("ONBOARDING_INSTALL_FAILED", "安装完成但 Git 未在目标目录找到",
+                 user_message="安装没有成功",
+                 user_hint="请重试一次，或从官网手动安装后点击「重新检测」")
+        if not gcm_ok:
+            fail("ONBOARDING_INSTALL_FAILED", "安装完成但登录组件不可用",
+                 user_message="安装没有成功",
+                 user_hint="请重试一次；若持续失败，请从官网手动安装后点击「重新检测」")
+        # 保存后统一缓存按新记录重新定位，后续业务使用同一位置
+        try:
+            locations.save(mode, path=path)
+        except ValueError:
+            pass  # 记录写入失败不影响本次已可用的组件
+        gitstore.locate_git(refresh=True)
+        gitstore.locate_gcm(refresh=True)
+        env = self.environment()
+        if not env[component]["available"]:
+            fail("ONBOARDING_INSTALL_FAILED", "安装完成但组件仍不可用",
+                 user_message="安装没有成功",
+                 user_hint="请重试一次，或从官网手动安装后点击「重新检测」")
+        return env
+
+    @classmethod
+    def _gcm_in_root(cls, root):
+        """目标目录里是否有可执行的独立登录组件。"""
+        if root is None:
+            return False
+        for name in ("git-credential-manager.exe", "git-credential-manager"):
+            exe = Path(root) / name
+            if exe.is_file() and cls._first_line([str(exe), "--version"]):
+                return True
+        return False
 
     def _install_portable_git(self, target):
         """局部 Git：PortableGit 自解压到目标 git 目录，由 SFX 执行自带 post-install。"""
@@ -131,7 +177,6 @@ class Environment:
                  user_hint="请重新选择安装位置后重试")
         if gitstore.locate_git_from(git_root):
             # 该目录已有可执行的 Git：直接复用，不重复下载安装
-            gitstore.locate_git(refresh=True)
             return
         if git_root.exists() and any(git_root.iterdir()):
             fail("ONBOARDING_TARGET_NOT_EMPTY", f"安装目录非空且不是可用的 Git：{git_root}",
@@ -157,13 +202,17 @@ class Environment:
 
     def _install_local_gcm(self, target):
         """局部 GCM：PortableGit 未带内置组件时，把官方 zip 解到目标 gcm 目录。"""
-        if gitstore.locate_gcm(refresh=True):
-            return
         gcm_root = target["gcm_root"]
         if gcm_root is None:
             fail("ONBOARDING_INSTALL_MODE", "缺少局部登录组件安装目录",
                  user_message="安装位置无法确定",
                  user_hint="请重新选择安装位置后重试")
+        # 只看本次目标：改选目录时旧的 GCM 位置不能当作已经装好
+        if self._gcm_in_root(gcm_root):
+            return
+        git_exe = gitstore.locate_git_from(target["git_root"])
+        if git_exe and self._first_line([git_exe, "credential-manager", "--version"]):
+            return  # 目标 Git 自带登录组件，无需单独解压
         url = self._asset_url(_GCM_RELEASES, _GCM_ZIP_PATTERN)
         work = self.workspace.work_dir("install")
         try:
@@ -196,16 +245,17 @@ class Environment:
                     shutil.copyfileobj(source, out)
 
     def _install_global(self, component):
-        """明确的系统安装：官方安装器 + UAC 提升；已存在可用 Git 时直接复用。"""
+        """明确的系统安装：官方安装器 + UAC 提升；已存在可用 Git 时直接复用。
+
+        系统安装的目标不在 locations 记录里（此时记录仍是 local/custom），
+        核验必须直接走系统候选，不能按旧记录定位。
+        """
         recorded = locations.global_git()
         if recorded and gitstore.locate_git_from(recorded):
-            gitstore.locate_git(refresh=True)
-            gitstore.locate_gcm(refresh=True)
-            return self._finish(component, mode=locations.MODE_GLOBAL, git_path=recorded)
-        if gitstore.locate_git(refresh=True):
-            system_git = self._system_git_dir()
-            if system_git:
-                return self._finish(component, mode=locations.MODE_GLOBAL, git_path=system_git)
+            return self._finish_global(component, recorded)
+        system_exe = self._system_git_exe()
+        if system_exe:
+            return self._finish_global(component, self._git_home(system_exe))
         if component == "gcm":
             # 系统安装只有 Git 需要提升；登录组件随 Git 自带
             fail("ONBOARDING_INSTALL_PRE", "系统安装已在 Git 步骤完成，登录组件应随 Git 提供",
@@ -229,39 +279,51 @@ class Environment:
             fail("ONBOARDING_INSTALL_FAILED", f"系统安装器未成功完成（退出码 {code}）",
                  user_message="安装没有成功",
                  user_hint="请重试一次；若系统策略阻止安装，请从官网手动安装后再点击「重新检测」")
-        # 系统安装结束后重新定位；不能依赖当前进程继承的旧 PATH
-        git_exe = gitstore.locate_git(refresh=True)
-        gitstore.locate_gcm(refresh=True)
-        if not git_exe:
+        # 双击安装器可能改了 PATH，但当前进程继承不到；直接重新扫描系统候选
+        system_exe = self._system_git_exe()
+        if not system_exe:
             fail("ONBOARDING_INSTALL_FAILED", "系统安装完成但 Git 仍不可用",
                  user_message="安装没有成功",
                  user_hint="请重启程序后点击「重新检测」；若仍不可用，请从官网手动安装")
-        git_path = Path(git_exe).parent.parent if git_exe != "git" else SYSTEM_GIT_DIR
-        return self._finish(component, mode=locations.MODE_GLOBAL, git_path=git_path)
+        return self._finish_global(component, self._git_home(system_exe))
+
+    def _finish_global(self, component, git_path):
+        """保存系统安装位置后再按新记录核验；失败不改动已记录的位置。"""
+        try:
+            locations.save(locations.MODE_GLOBAL, git_path=git_path)
+        except ValueError:
+            fail("ONBOARDING_INSTALL_FAILED", f"系统 Git 位置无法记录：{git_path}",
+                 user_message="安装没有成功",
+                 user_hint="请从官网手动安装后点击「重新检测」")
+        gitstore.locate_git(refresh=True)
+        gitstore.locate_gcm(refresh=True)
+        env = self.environment()
+        if not env[component]["available"]:
+            fail("ONBOARDING_INSTALL_FAILED", "系统安装完成但组件仍不可用",
+                 user_message="安装没有成功",
+                 user_hint="请重试一次，或从官网手动安装后点击「重新检测」")
+        return env
 
     @staticmethod
-    def _system_git_dir():
-        exe = gitstore.locate_git()
-        if not exe or exe == "git":
-            return None
-        # Git 可执行文件位于 <安装目录>\cmd\git.exe 或 <安装目录>\bin\git.exe
-        return Path(exe).parent.parent
+    def _system_git_exe():
+        """系统候选里第一个可执行的 Git；不看 locations 记录。"""
+        return gitstore.locate_system_git()
 
-    def _finish(self, component, mode=None, path=None, git_path=None):
-        """安装后重新定位并返回环境快照；只有组件真的可用才保存位置。"""
-        git_exe = gitstore.locate_git(refresh=True)
+    @staticmethod
+    def _git_home(git_exe):
+        """Git 可执行文件位于 <安装目录>\\cmd\\git.exe 或 <安装目录>\\bin\\git.exe。"""
+        return Path(git_exe).parent.parent
+
+    @staticmethod
+    def _finish(component):
+        """源码模式安装后重新定位并返回环境快照。"""
+        gitstore.locate_git(refresh=True)
         gitstore.locate_gcm(refresh=True)
         new_env = self.environment()
         if not new_env[component]["available"]:
             fail("ONBOARDING_INSTALL_FAILED", "安装完成但组件仍不可用",
                  user_message="安装没有成功",
                  user_hint="请重试一次，或从官网手动安装后点击「重新检测」")
-        if config.DESKTOP_MODE and mode:
-            try:
-                locations.save(mode, path=path, git_path=git_path or (git_exe if mode == locations.MODE_GLOBAL else None))
-            except ValueError:
-                pass  # 记录写入失败不影响本次已可用的组件
-            new_env["installation"] = locations.view()
         return new_env
 
     def _run_installer(self, url, args):

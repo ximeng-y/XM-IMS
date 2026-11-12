@@ -138,7 +138,8 @@ function registerIpc() {
     if (updateInFlight) return { ok: false, user_message: "更新正在准备中，请稍候" };
     updateInFlight = true;
     try {
-      const state = await updater.check(false);
+      // 安装是用户明确动作，强制取一次最新状态，避免用缓存里可能已下线的 tag
+      const state = await updater.check(true);
       if (!state || state.availability !== "available" || state.latest_tag !== tag) {
         return { ok: false, user_message: "暂时无法确认这个版本，请重新检查更新" };
       }

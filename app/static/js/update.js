@@ -94,8 +94,10 @@ async function check(tries) {
   } catch (_) { /* 读取失败时保持默认开启 */ }
   if (!auto) return;
   let st;
-  if (Desktop.available()) st = await Desktop.checkUpdate(true);
-  else {
+  if (Desktop.available()) {
+    // 自动检查走桌面外壳的缓存，避免每次页面导航都消耗匿名接口配额
+    st = await Desktop.checkUpdate(false);
+  } else {
     try {
       st = await XM.get("/update/status");
     } catch (e) {
@@ -105,6 +107,15 @@ async function check(tries) {
   }
   if (st && st.checked === false && tries < UPDATE_MAX_RETRY) {
     setTimeout(() => check(tries + 1), UPDATE_RETRY_MS);
+    return;
+  }
+  // 新版本存在但没有可安装的安装包时只作状态展示，不弹出无法执行的安装
+  if (Desktop.available() && st && st.availability !== "available") {
+    if (st.has_update && st.latest_tag &&
+        sessionStorage.getItem("xmims.updatePrompted") !== st.latest_tag) {
+      sessionStorage.setItem("xmims.updatePrompted", st.latest_tag);
+      UI.toast(desktopLabel(st) || "暂时无法获取版本信息", { title: "发现新版本" });
+    }
     return;
   }
   if (!st || !st.has_update || !st.latest_tag) return;

@@ -20,6 +20,11 @@ const MAX_REDIRECTS = 5;
 
 let currentVersion = "0.0.0";
 let confirmed = null;   // {tag, version, assetName, assetId, digest}
+// 检查结果缓存：页面每次完整加载都会自动检查，而 GitHub 匿名 REST 配额按出口 IP
+// 每小时 60 次；只有用户手动检查（force）才跳过缓存。
+let cached = null;      // {state, at}
+const CACHE_TTL = 10 * 60 * 1000;
+const ERROR_TTL = 60 * 1000;
 
 function setCurrentVersion(version) {
   currentVersion = String(version);
@@ -90,8 +95,20 @@ function baseState(extra) {
   };
 }
 
-/** 查询最新正式 Release；所有失败都折算成可展示的状态，不抛给 renderer。 */
-async function check() {
+/** 查询最新正式 Release；所有失败都折算成可展示的状态，不抛给 renderer。
+
+    force 为 false 时（页面自动检查、安装前的再次确认）优先复用未过期的结果。 */
+async function check(force = false) {
+  if (!force && cached) {
+    const ttl = cached.state.availability === "error" ? ERROR_TTL : CACHE_TTL;
+    if (Date.now() - cached.at < ttl) return cached.state;
+  }
+  const state = await fetchLatest();
+  cached = { state, at: Date.now() };
+  return state;
+}
+
+async function fetchLatest() {
   let result;
   try {
     result = await requestJson(API_LATEST);
@@ -182,18 +199,23 @@ function assetDownloadUrl(target) {
   return `https://github.com/${REPOSITORY}/releases/download/${encodeURIComponent(target.tag)}/${encodeURIComponent(target.assetName)}`;
 }
 
-/** 交接给安装程序：等待当前 Electron 退出后再替换程序文件。 */
+/** 交接给安装程序：等待当前 Electron 退出后再替换程序文件。
+
+    安装目录通过环境变量传递：NSIS 的内置 /D= 必须位于最后且会吞掉其后所有参数，
+    路径含空格时还会被整体加引号，两者都与自定义参数冲突。/XM_PID 让安装器等待
+    本进程退出后再覆盖程序文件。 */
 function launchInstaller(installerPath) {
-  return spawn(installerPath, [
-    "/S",
-    `/D=${paths.installRoot}`,
-    `/XM_PID=${process.pid}`,
-    `/XM_DIR=${paths.installRoot}`,
-  ], { detached: true, stdio: "ignore", windowsHide: false });
+  return spawn(installerPath, ["/S", `/XM_PID=${process.pid}`], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+    env: { ...process.env, XM_UPDATE_DIR: paths.installRoot },
+  });
 }
 
 function reset() {
   confirmed = null;
+  cached = null;
 }
 
 module.exports = { setCurrentVersion, check, download, launchInstaller, reset, parseVersion, compare };

@@ -26,9 +26,6 @@ BrandingText "XM-IMS ${APP_VERSION}"
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
-!include "StrFunc.nsh"
-${StrLoc}
-${UnStrLoc}
 !include "WinVer.nsh"
 !include "x64.nsh"
 
@@ -40,17 +37,22 @@ Var UpdatePid
 Var UpdateDir
 Var ManifestHandle
 Var ManifestLine
+Var TailChar
 
 ; ---------- 命令行参数 ----------
-; /S 静默安装（更新时使用）；/D=<目录> 为 NSIS 内置目录参数
+; /S 静默安装（更新时使用）
 ; /XM_PID=<pid> 等待该进程退出后再覆盖程序文件
-; /XM_DIR=<目录> 本次更新的安装位置（不静默改到默认目录）
+; 安装目录由调用方通过环境变量 XM_UPDATE_DIR 传入：NSIS 的 /D= 必须放在最后，
+; 且会吞掉其后所有参数；路径含空格时还会被整体加引号，无法与自定义参数共存。
 !macro ParseArgs
   ${GetParameters} $R9
   ${GetOptions} $R9 "/XM_PID=" $UpdatePid
-  ${GetOptions} $R9 "/XM_DIR=" $UpdateDir
   ${If} $UpdatePid != ""
     StrCpy $UpdateMode "1"
+  ${EndIf}
+  ; 更新由程序发起时用环境变量指定目标目录：用户手动安装不会设置这个变量
+  ReadEnvStr $UpdateDir "XM_UPDATE_DIR"
+  ${If} $UpdateDir != ""
     StrCpy $INSTDIR $UpdateDir
   ${EndIf}
 !macroend
@@ -65,29 +67,30 @@ Function .onInit
 FunctionEnd
 
 ; 等待传入的进程真正结束再覆盖程序文件；超时停止更新，不按进程名杀程序
+; System 插件的 .R1/.R2 写入 $R1/$R2，判断必须读同一组寄存器
 Function WaitForPrevious
   ${If} $UpdatePid == ""
     Return
   ${EndIf}
   ; SYNCHRONIZE 权限；进程已不存在时返回 0，直接继续
-  System::Call 'kernel32::OpenProcess(i 0x00100000, i 0, i $UpdatePid) p .r1'
-  ${If} $r1 == 0
+  System::Call 'kernel32::OpenProcess(i 0x00100000, i 0, i $UpdatePid) p .R1'
+  ${If} $R1 == 0
     Return
   ${EndIf}
   StrCpy $R8 0
   ${Do}
-    System::Call 'kernel32::WaitForSingleObject(p r1, i 1000) i .r2'
-    ${If} $r2 == 0
+    System::Call 'kernel32::WaitForSingleObject(p R1, i 1000) i .R2'
+    ${If} $R2 == 0
       ${Break}
     ${EndIf}
     IntOp $R8 $R8 + 1
     ${If} $R8 >= 120
-      System::Call 'kernel32::CloseHandle(p r1)'
+      System::Call 'kernel32::CloseHandle(p R1)'
       MessageBox MB_ICONSTOP|MB_OK "XM-IMS 仍在运行，已停止更新。请在托盘菜单中选择退出后重试。"
       Abort
     ${EndIf}
   ${Loop}
-  System::Call 'kernel32::CloseHandle(p r1)'
+  System::Call 'kernel32::CloseHandle(p R1)'
 FunctionEnd
 
 ; 程序是否被占用：以独占方式打开可执行文件判断，不按进程名结束任何进程
@@ -96,19 +99,48 @@ Function CheckRunning
   ${IfNot} ${FileExists} "$INSTDIR\xm-ims.exe"
     Return
   ${EndIf}
-  System::Call 'kernel32::CreateFileW(w "$INSTDIR\xm-ims.exe", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .r3'
+  System::Call 'kernel32::CreateFileW(w "$INSTDIR\xm-ims.exe", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .R3'
   ; INVALID_HANDLE_VALUE(-1) 表示文件仍被占用
-  ${If} $r3 == -1
+  ${If} $R3 == -1
     StrCpy $R5 "1"
   ${Else}
-    ${If} $r3 != 0
-      System::Call 'kernel32::CloseHandle(p r3)'
+    ${If} $R3 != 0
+      System::Call 'kernel32::CloseHandle(p R3)'
     ${EndIf}
   ${EndIf}
 FunctionEnd
 
-; 读取清单并删除登记的程序文件；只接受安装根下的相对路径
-; 先读完并关闭句柄，再逐项删除，避免边读边删导致后续行丢失
+; 去掉清单行尾的 CR / LF；写出的清单使用 CRLF
+Function TrimLineEnd
+  ${Do}
+    StrCpy $TailChar $ManifestLine 1 -1
+    ${If} $TailChar == "$\r"
+    ${OrIf} $TailChar == "$\n"
+      StrCpy $ManifestLine $ManifestLine -1
+    ${Else}
+      ${Break}
+    ${EndIf}
+  ${Loop}
+FunctionEnd
+
+; 删除清单里的一行；只接受安装根下的相对路径
+Function DeleteListedFile
+  ${If} $ManifestLine == ""
+    Return
+  ${EndIf}
+  ; 不含起始反斜杠、../ 上跳或盘符；清单自身与卸载程序单独处理
+  StrCpy $R4 $ManifestLine 1
+  StrCpy $R7 $ManifestLine 2
+  ${If} $ManifestLine != "${MANIFEST}"
+  ${AndIf} $ManifestLine != "uninstall.exe"
+  ${AndIf} $R4 != "\"
+  ${AndIf} $R7 != "../"
+  ${AndIf} $R7 != "%1"
+    Delete "$INSTDIR\$ManifestLine"
+  ${EndIf}
+FunctionEnd
+
+; 逐行读取并删除登记的程序文件；清单自身不在登记列表内，边读边删不影响后续行
 Function DeleteManifestFiles
   ${IfNot} ${FileExists} "$INSTDIR\${MANIFEST}"
     Return
@@ -117,15 +149,6 @@ Function DeleteManifestFiles
   ${If} $ManifestHandle == ""
     Return
   ${EndIf}
-  Call ReadManifestLines
-  FileClose $ManifestHandle
-  Call DeleteListedFiles
-  Delete "$INSTDIR\${MANIFEST}"
-FunctionEnd
-
-; 把清单逐行读进 $R6（以 CRLF 分隔），跳过清单自身与卸载程序
-Function ReadManifestLines
-  StrCpy $R6 ""
   ${Do}
     FileReadUTF16LE $ManifestHandle $ManifestLine
     ${If} ${Errors}
@@ -134,36 +157,11 @@ Function ReadManifestLines
     ${If} $ManifestLine == ""
       ${Break}
     ${EndIf}
-    StrCpy $R6 "$R6$ManifestLine$\r$\n"
+    Call TrimLineEnd
+    Call DeleteListedFile
   ${Loop}
-FunctionEnd
-
-; 逐行取出 $R6 中的相对路径并删除
-Function DeleteListedFiles
-  ${Do}
-    ${If} $R6 == ""
-      ${Break}
-    ${EndIf}
-    ${StrLoc} $R7 $R6 "$\r$\n" ">"
-    ${If} $R7 == ""
-      StrCpy $ManifestLine $R6
-      StrCpy $R6 ""
-    ${Else}
-      StrCpy $ManifestLine $R6 $R7
-      IntOp $R7 $R7 + 2
-      StrCpy $R6 $R6 "" $R7
-    ${EndIf}
-    ; 只接受安装根下的相对路径：不含起始反斜杠、../ 上跳或盘符
-    StrCpy $R4 $ManifestLine 1
-    StrCpy $R3 $ManifestLine 2
-    ${If} $ManifestLine != "${MANIFEST}"
-    ${AndIf} $ManifestLine != "uninstall.exe"
-    ${AndIf} $R4 != "\"
-    ${AndIf} $R3 != "../"
-    ${AndIf} $R3 != "%1"
-      Delete "$INSTDIR\$ManifestLine"
-    ${EndIf}
-  ${Loop}
+  FileClose $ManifestHandle
+  Delete "$INSTDIR\${MANIFEST}"
 FunctionEnd
 
 Function .onInstSuccess
@@ -227,8 +225,9 @@ Section "Uninstall"
   ${EndIf}
   Call un.DeleteManifestFiles
   Delete "$INSTDIR\uninstall.exe"
-  ; 只删除非递归空目录：data、tools 与用户文件保留
-  RMDir "$INSTDIR\resources"
+  ; 只有这两处完全属于程序文件，可以整体清理；data、tools 与用户文件一律保留
+  RMDir /r "$INSTDIR\resources"
+  RMDir /r "$INSTDIR\locales"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\XM-IMS\XM-IMS.lnk"
   RMDir "$SMPROGRAMS\XM-IMS"
@@ -243,13 +242,40 @@ Function un.CheckRunning
   ${IfNot} ${FileExists} "$INSTDIR\xm-ims.exe"
     Return
   ${EndIf}
-  System::Call 'kernel32::CreateFileW(w "$INSTDIR\xm-ims.exe", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .r3'
-  ${If} $r3 == -1
+  System::Call 'kernel32::CreateFileW(w "$INSTDIR\xm-ims.exe", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .R3'
+  ${If} $R3 == -1
     StrCpy $R5 "1"
   ${Else}
-    ${If} $r3 != 0
-      System::Call 'kernel32::CloseHandle(p r3)'
+    ${If} $R3 != 0
+      System::Call 'kernel32::CloseHandle(p R3)'
     ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+Function un.TrimLineEnd
+  ${Do}
+    StrCpy $TailChar $ManifestLine 1 -1
+    ${If} $TailChar == "$\r"
+    ${OrIf} $TailChar == "$\n"
+      StrCpy $ManifestLine $ManifestLine -1
+    ${Else}
+      ${Break}
+    ${EndIf}
+  ${Loop}
+FunctionEnd
+
+Function un.DeleteListedFile
+  ${If} $ManifestLine == ""
+    Return
+  ${EndIf}
+  StrCpy $R4 $ManifestLine 1
+  StrCpy $R7 $ManifestLine 2
+  ${If} $ManifestLine != "${MANIFEST}"
+  ${AndIf} $ManifestLine != "uninstall.exe"
+  ${AndIf} $R4 != "\"
+  ${AndIf} $R7 != "../"
+  ${AndIf} $R7 != "%1"
+    Delete "$INSTDIR\$ManifestLine"
   ${EndIf}
 FunctionEnd
 
@@ -262,14 +288,6 @@ Function un.DeleteManifestFiles
   ${If} $ManifestHandle == ""
     Return
   ${EndIf}
-  Call un.ReadManifestLines
-  FileClose $ManifestHandle
-  Call un.DeleteListedFiles
-  Delete "$INSTDIR\${MANIFEST}"
-FunctionEnd
-
-Function un.ReadManifestLines
-  StrCpy $R6 ""
   ${Do}
     FileReadUTF16LE $ManifestHandle $ManifestLine
     ${If} ${Errors}
@@ -278,33 +296,9 @@ Function un.ReadManifestLines
     ${If} $ManifestLine == ""
       ${Break}
     ${EndIf}
-    StrCpy $R6 "$R6$ManifestLine$\r$\n"
+    Call un.TrimLineEnd
+    Call un.DeleteListedFile
   ${Loop}
-FunctionEnd
-
-Function un.DeleteListedFiles
-  ${Do}
-    ${If} $R6 == ""
-      ${Break}
-    ${EndIf}
-    ${UnStrLoc} $R7 $R6 "$\r$\n" ">"
-    ${If} $R7 == ""
-      StrCpy $ManifestLine $R6
-      StrCpy $R6 ""
-    ${Else}
-      StrCpy $ManifestLine $R6 $R7
-      IntOp $R7 $R7 + 2
-      StrCpy $R6 $R6 "" $R7
-    ${EndIf}
-    ; 只接受安装根下的相对路径：不含起始反斜杠、../ 上跳或盘符
-    StrCpy $R4 $ManifestLine 1
-    StrCpy $R3 $ManifestLine 2
-    ${If} $ManifestLine != "${MANIFEST}"
-    ${AndIf} $ManifestLine != "uninstall.exe"
-    ${AndIf} $R4 != "\"
-    ${AndIf} $R3 != "../"
-    ${AndIf} $R3 != "%1"
-      Delete "$INSTDIR\$ManifestLine"
-    ${EndIf}
-  ${Loop}
+  FileClose $ManifestHandle
+  Delete "$INSTDIR\${MANIFEST}"
 FunctionEnd

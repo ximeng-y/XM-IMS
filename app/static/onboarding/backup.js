@@ -104,7 +104,9 @@ const BackupOnboarding = (() => {
     }
     // 安装走统一弹窗：桌面模式可选择其他文件夹或系统位置，源码模式只有「安装」。
     // 组件只通过回调通知向导，环境快照以安装返回值为准。
-    function installComponent(component, after) {
+    // 安装完成后本步骤可能因 needsGit 变化而从列表移除，必须用 go() 跳转，
+    // 只调用 render() 会让索引落到下一步却没有执行它的 enter()。
+    function installComponent(component, next) {
       DependencyInstall.open({
         component,
         installation: c.env?.installation,
@@ -114,7 +116,10 @@ const BackupOnboarding = (() => {
           if (component === "git") c.needsGit = !env.git.available;
           return env;
         },
-        onDone: async () => { await after?.(); wizard.render(); },
+        onDone: async () => {
+          if (next) await wizard.go(next);
+          else await wizard.enter();
+        },
       });
     }
     async function loadGithub() {
@@ -265,7 +270,8 @@ const BackupOnboarding = (() => {
         render(_, box) {
           if (c.env.git.available) { box.append(ok("备份工具已准备好。")); return; }
           box.append(note("安装 Git 后即可连接备份仓库。"));
-          if (c.env.one_click_install) box.append(button("安装 Git", async () => installComponent("git")));
+          if (c.env.one_click_install) box.append(button("安装 Git", async () =>
+            installComponent("git", needsGithub() ? "github-account" : "review")));
           box.append(note("安装包来自官方来源，下载和安装可能需要几分钟。"));
           const link = node("a", "打开 Git 官网下载页");
           link.href = "https://git-scm.com/downloads"; link.target = "_blank"; link.rel = "noopener";
@@ -287,7 +293,7 @@ const BackupOnboarding = (() => {
           if (!c.env?.gcm.available) {
             box.append(note("安装登录组件后，即可在系统浏览器中登录 GitHub。"));
             if (c.env?.one_click_install) box.append(button("安装登录组件", async () => {
-              installComponent("gcm", loadGithub);
+              installComponent("gcm", "github-account");
             }));
             const link = node("a", "打开登录组件官方安装说明");
             link.href = "https://github.com/git-ecosystem/git-credential-manager/blob/release/docs/install.md";

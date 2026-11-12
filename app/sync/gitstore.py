@@ -94,6 +94,11 @@ def locate_git_from(base):
     return next((c for c in _git_in_dir(base) if _exe_works([c, "--version"])), None)
 
 
+def locate_system_git():
+    """系统候选里第一个可执行的 Git；不看 locations 记录。"""
+    return next((c for c in _system_git_candidates() if _exe_works([c, "--version"])), None)
+
+
 def locate_gcm(refresh=False):
     """GCM 命令前缀：优先 Git 自带（git credential-manager），其次本实例选定的独立安装。"""
     global _gcm_prefix, _gcm_path_dir
