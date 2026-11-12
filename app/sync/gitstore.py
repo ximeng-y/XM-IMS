@@ -9,11 +9,14 @@ import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 from .common import fail
+from .. import config
+from ..platform_tools import locations
 from ..storage.files import remove_tree, replace_path
 
 
 # ---------- Git / GCM 定位 ----------
 # 进程继承的 PATH 可能不含新装组件；以实际执行 --version 成功为准定位，只补充子进程环境。
+# 桌面模式只使用 locations 记录的安装目标（全局模式才走系统候选），源码模式保持原顺序。
 
 # RLock：locate_gcm / gcm_path_dir 会在持锁状态下再进 locate_git，必须可重入。
 _locate_lock = threading.RLock()
@@ -32,14 +35,16 @@ def _exe_works(argv, timeout=15):
 
 
 def _git_in_dir(base):
+    if not base:
+        return
     for sub in ("cmd", "bin"):
         exe = Path(base) / sub / ("git.exe" if os.name == "nt" else "git")
         if exe.is_file():
             yield str(exe)
 
 
-def _git_candidates():
-    yield "git"
+def _system_git_candidates():
+    """系统级 Git 位置：注册表与标准安装目录；不遍历磁盘。"""
     if os.name != "nt":
         return
     import winreg
@@ -52,11 +57,27 @@ def _git_candidates():
             except OSError:
                 continue
             yield from _git_in_dir(install)
-    # 标准用户级 / 系统级安装位置；不遍历磁盘
+    # 标准用户级 / 系统级安装位置
     local = os.environ.get("LOCALAPPDATA")
     if local:
         yield from _git_in_dir(Path(local) / "Programs" / "Git")
     yield from _git_in_dir(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git")
+
+
+def _git_candidates():
+    if config.DESKTOP_MODE:
+        selected = locations.mode()
+        if selected == locations.MODE_GLOBAL:
+            recorded = locations.global_git()
+            if recorded:
+                yield from _git_in_dir(recorded)
+            yield from _system_git_candidates()
+        else:
+            # 局部 / 自选目标：只认这一处，不让系统里已装的 Git 顶替
+            yield from _git_in_dir(locations.git_root(selected))
+        return
+    yield "git"
+    yield from _system_git_candidates()
 
 
 def locate_git(refresh=False):
@@ -68,8 +89,18 @@ def locate_git(refresh=False):
         return _git_exe
 
 
+def locate_git_from(base):
+    """指定目录下是否有可执行的 Git；用于判断局部目标是否已完成安装。"""
+    return next((c for c in _git_in_dir(base) if _exe_works([c, "--version"])), None)
+
+
+def locate_system_git():
+    """系统候选里第一个可执行的 Git；不看 locations 记录。"""
+    return next((c for c in _system_git_candidates() if _exe_works([c, "--version"])), None)
+
+
 def locate_gcm(refresh=False):
-    """GCM 命令前缀：优先 Git 自带（git credential-manager），其次用户级独立安装。"""
+    """GCM 命令前缀：优先 Git 自带（git credential-manager），其次本实例选定的独立安装。"""
     global _gcm_prefix, _gcm_path_dir
     with _locate_lock:
         if refresh or _gcm_prefix is None:
@@ -78,12 +109,26 @@ def locate_gcm(refresh=False):
             if git_exe and _exe_works([git_exe, "credential-manager", "--version"]):
                 _gcm_prefix = [git_exe, "credential-manager"]
             elif os.name == "nt":
-                local = os.environ.get("LOCALAPPDATA")
-                if local:
-                    exe = Path(local) / "Programs" / "Git Credential Manager" / "git-credential-manager.exe"
+                for exe in _gcm_candidates():
                     if exe.is_file() and _exe_works([str(exe), "--version"]):
                         _gcm_prefix, _gcm_path_dir = [str(exe)], str(exe.parent)
+                        break
         return _gcm_prefix
+
+
+def _gcm_candidates():
+    """独立安装的 GCM 位置：桌面模式只看选定目标，源码模式保留用户级安装位置。"""
+    if config.DESKTOP_MODE:
+        selected = locations.mode()
+        if selected in (locations.MODE_LOCAL, locations.MODE_CUSTOM):
+            root = locations.gcm_root(selected)
+            if root:
+                yield root / "git-credential-manager.exe"
+        return
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        yield Path(local) / "Programs" / "Git Credential Manager" / "git-credential-manager.exe"
+
 
 
 def gcm_path_dir():

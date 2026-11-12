@@ -1,6 +1,7 @@
 /* 设置页：软件更新入口
    - 「检查更新」每次强制向远端查询，不受后台检查结果或缓存影响
    - 「启动时自动检查新版本」持久化在本机数据目录，关闭后启动不再自动检查
+   - 桌面安装版的检查与安装走桌面适配器；设置读写仍用原接口
    - 设置接口仅限本机使用，通过局域网访问时页面给出提示并停用控件 */
 "use strict";
 
@@ -8,6 +9,7 @@ import { XM } from "xm/api";
 import { UI, $ } from "xm/ui";
 import { Sync } from "xm/sync";
 import { UpdatePrompt } from "xm/update";
+import { Desktop } from "xm/runtime/desktop";
 
 export const page = {
   shell: true, shopContext: "none", requireSyncReady: false, autoUpdatePrompt: false,
@@ -45,13 +47,27 @@ export const page = {
       );
     }
 
+    // 还没有可安装的发布：既不是网络故障，也不能当作已是最新
+    function renderUnavailable(text) {
+      render(`<div class="headline"><span class="badge gray">暂无可安装版本</span> ${UI.esc(text)}</div>` +
+        `<div class="hint">发布 Windows 安装包后即可在这里检查到。</div>`);
+    }
+
     // 展示缓存中的检查结果；未检查过时只显示当前版本
     function showStatus(st) {
       versionEl.textContent = ver(st.current_version);
       if (!st.checked) return;
-      if (st.error) renderError();
+      const unavailable = st.availability && UpdatePrompt.desktopLabel(st);
+      if (unavailable) renderUnavailable(unavailable);
+      else if (st.availability === "error" || st.error) renderError();
       else if (st.has_update && st.latest_tag) renderUpdate(st);
       else renderLatest(st);
+    }
+
+    async function checkDesktop() {
+      const st = await Desktop.checkUpdate(true);
+      showStatus(st);
+      if (st?.has_update && st.latest_tag && st.availability === "available") UpdatePrompt.show(st);
     }
 
     autoEl.addEventListener("change", async () => {
@@ -69,6 +85,14 @@ export const page = {
     });
 
     btn.addEventListener("click", () => UI.withBusy(btn, async () => {
+      if (Desktop.available()) {
+        try {
+          await checkDesktop();
+        } catch (_) {
+          renderError();
+        }
+        return;
+      }
       try {
         const st = await XM.get("/update/status?force=true");
         showStatus(st);
@@ -87,6 +111,13 @@ export const page = {
     }
 
     try {
+      if (Desktop.available()) {
+        // 桌面安装版没有源码更新状态可读：只读取设置，再取桌面检查结果
+        const settings = await XM.get("/update/settings");
+        autoEl.checked = !!settings.auto_check;
+        showStatus(await Desktop.checkUpdate(false));
+        return;
+      }
       const [settings, st] = await Promise.all([
         XM.get("/update/settings"),
         XM.get("/update/status"),

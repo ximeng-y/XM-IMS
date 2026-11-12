@@ -1,0 +1,9 @@
+{
+  "name": "xm-ims",
+  "productName": "XM-IMS",
+  "version": "__VERSION__",
+  "description": "XM-IMS 进销存",
+  "main": "main.js",
+  "private": true,
+  "author": "XM-IMS"
+}

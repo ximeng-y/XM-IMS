@@ -104,13 +104,9 @@ body {
 }
 .topbar .brand .logo {
   width: 1.375rem; height: 1.375rem;
-  background: var(--blue);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: .8rem;
-  font-weight: 700;
+  /* 品牌图标按原始比例显示，不拉伸；尺寸沿用原大写字母图标 */
+  display: block;
+  object-fit: contain;
 }
 .topbar .spacer { flex: 1; }
 .topbar .shop-box {
