@@ -1,11 +1,13 @@
-"""自动更新：启动时检查远端 tag，发现新版本时供前端提示并一键更新
+"""源码模式的自动更新：启动时检查远端 tag，发现新版本时提示并一键更新
 
-更新检查只查询 GitHub 源站（系统 git + origin，复用既有凭据）：本项目是
-私有仓库，匿名 GitHub API / raw / codeload 均取不到内容，而本地 git 凭据
-可正常访问源站。源站确认的标签与提交 SHA 是可信目标；下载更新内容时
-origin 优先、镜像 git URL 回退，但镜像只传输内容，实际下载到的提交必须
-等于源站确认的 SHA。更新内容通过 `git fetch` + `git archive` 导出，不依赖
-匿名下载。
+适用对象是按源码运行并带有 .git 的检出目录（start.bat / launcher.py）。
+桌面安装版不经过本模块的检查与安装：它由 Electron 外壳直接读取 GitHub Release
+并下载完整安装包，本模块只继续负责更新设置文件。
+
+更新检查只查询 GitHub 源站（本机 git + origin，复用既有凭据）：源站确认的
+标签与提交 SHA 是可信目标；下载更新内容时 origin 优先、镜像 git URL 回退，
+但镜像只传输内容，实际下载到的提交必须等于源站确认的 SHA。更新内容通过
+`git fetch` + `git archive` 导出，不依赖匿名下载。
 """
 import json
 import os
@@ -20,7 +22,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .. import db
-from ..config import BASE_DIR, DATA_ROOT
+from ..config import BASE_DIR, DATA_ROOT, DESKTOP_MODE
 from ..errors import error_dict
 from ..storage.files import atomic_json, read_json
 from ..version import APP_VERSION
@@ -276,9 +278,12 @@ def get_confirmed_update_target():
 def start_background_check():
     """启动时的自动检查：用户关闭自动检查则不发起网络请求。
 
-    模块级标记只在真正启动线程后置位，用户开启自动检查后仍可补做一次。
+    桌面安装版没有源码检出可查，启动检查由 Electron 外壳完成，这里直接跳过，
+    避免两条更新通道同时工作。设置文件仍由本模块读写。
     """
     global _bg_started
+    if DESKTOP_MODE:
+        return
     if not load_settings()["auto_check"]:
         return
     with _bg_lock:

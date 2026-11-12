@@ -25,7 +25,13 @@ def onboarding_install(request: Request, body: dict = Body(...)):
                        user_message="请先确认安装操作",
                        user_hint="安装会从官方来源下载并运行安装包，需要明确确认")
     require_sync_manager(request)
-    return request.app.state.onboarding_backup.install(body.get("component"))
+    # mode / path 为可选增量：源码模式不传时保持原有安装实现。
+    # path 是原生窗口选中的父目录，仅 custom 模式使用，服务端再拼专用子目录。
+    mode, path = body.get("mode"), body.get("path")
+    return request.app.state.onboarding_backup.install(
+        body.get("component"),
+        mode=mode if isinstance(mode, str) else None,
+        path=path if isinstance(path, str) else None)
 
 
 @router.get("/github")

@@ -1,0 +1,14 @@
+{
+  "electron": {
+    "version": "45.3.0",
+    "url": "https://github.com/electron/electron/releases/download/v45.3.0/electron-v45.3.0-win32-x64.zip"
+  },
+  "python": {
+    "version": "3.12.10",
+    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
+  },
+  "nsis": {
+    "version": "3.13",
+    "url": "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13.zip"
+  }
+}

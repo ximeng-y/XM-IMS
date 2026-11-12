@@ -2,6 +2,7 @@
 "use strict";
 
 import { OnboardingWizard } from "xm/onboarding/wizard";
+import { DependencyInstall } from "xm/components/dependency-install";
 
 const BackupOnboarding = (() => {
   let activeDialog = null;
@@ -100,6 +101,21 @@ const BackupOnboarding = (() => {
       c.env = await request("GET", "/onboarding/environment");
       c.needsGit = !c.env.git.available;
       await wizard.go(c.needsGit ? "git-environment" : needsGithub() ? "github-account" : "review");
+    }
+    // 安装走统一弹窗：桌面模式可选择其他文件夹或系统位置，源码模式只有「安装」。
+    // 组件只通过回调通知向导，环境快照以安装返回值为准。
+    function installComponent(component, after) {
+      DependencyInstall.open({
+        component,
+        installation: c.env?.installation,
+        install: async (body) => {
+          const env = await request("POST", "/onboarding/install", { ...body, confirm: true });
+          c.env = env;
+          if (component === "git") c.needsGit = !env.git.available;
+          return env;
+        },
+        onDone: async () => { await after?.(); wizard.render(); },
+      });
     }
     async function loadGithub() {
       if (!c.env?.gcm.available) return;
@@ -249,9 +265,7 @@ const BackupOnboarding = (() => {
         render(_, box) {
           if (c.env.git.available) { box.append(ok("备份工具已准备好。")); return; }
           box.append(note("安装 Git 后即可连接备份仓库。"));
-          if (c.env.one_click_install) box.append(button("安装 Git", async () => {
-            c.env = await request("POST", "/onboarding/install", { component: "git", confirm: true }); wizard.render();
-          }));
+          if (c.env.one_click_install) box.append(button("安装 Git", async () => installComponent("git")));
           box.append(note("安装包来自官方来源，下载和安装可能需要几分钟。"));
           const link = node("a", "打开 Git 官网下载页");
           link.href = "https://git-scm.com/downloads"; link.target = "_blank"; link.rel = "noopener";
@@ -273,8 +287,7 @@ const BackupOnboarding = (() => {
           if (!c.env?.gcm.available) {
             box.append(note("安装登录组件后，即可在系统浏览器中登录 GitHub。"));
             if (c.env?.one_click_install) box.append(button("安装登录组件", async () => {
-              c.env = await request("POST", "/onboarding/install", { component: "gcm", confirm: true });
-              await loadGithub(); wizard.render();
+              installComponent("gcm", loadGithub);
             }));
             const link = node("a", "打开登录组件官方安装说明");
             link.href = "https://github.com/git-ecosystem/git-credential-manager/blob/release/docs/install.md";

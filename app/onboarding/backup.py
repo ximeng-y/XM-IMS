@@ -30,9 +30,9 @@ class BackupOnboarding:
     def environment(self):
         return self.environment_service.environment()
 
-    def install(self, component):
+    def install(self, component, mode=None, path=None):
         with self.setup.exclusive():
-            return self.environment_service.install(component)
+            return self.environment_service.install(component, mode=mode, path=path)
 
     # ---------- GitHub 账号 ----------
 
