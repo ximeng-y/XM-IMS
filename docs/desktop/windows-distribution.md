@@ -15,6 +15,8 @@
 - 输出：`.XMTEMP\electron-windows\dist\XM-IMS-<版本>-win-x64-Setup.exe`，版本取自 `app/version.py` 的 `APP_VERSION`。
 - 已有 NSIS 时可用 `--nsis <makensis.exe 所在目录>` 复用，脚本不会扫描磁盘寻找替代品。
 
+以上是本地构建入口，保持不变。GitHub 标准 Windows runner 会在版本 tag 推送后自动调用同一构建入口；PR 与 main 的基础检查（Python/JavaScript 语法、应用入口导入）由独立工作流在每次提交时运行，不构建安装包。
+
 ## 安装布局
 
 ```
@@ -72,10 +74,17 @@
 
 ## 发布约定
 
-1. 修改 `app/version.py` 的 `APP_VERSION`，重新构建安装包。
-2. 在 GitHub 仓库创建 tag（如 `v0.1.1`）的正式 Release。
-3. 上传 `XM-IMS-0.1.1-win-x64-Setup.exe`，assets 中的 digest 由 GitHub 生成，无需人工另附校验文件。
-4. 已安装的客户机会在启动或手动检查时发现新版本。
+1. 修改 `app/version.py` 的 `APP_VERSION`，并把代码提交到包含工作流的版本提交。
+2. 向 GitHub 推送与 `APP_VERSION` 一致的 `vX.Y.Z` 或 `X.Y.Z` tag。
+3. tag 构建先校验 tag 与 `APP_VERSION` 一致，再执行基础检查；通过后自动构建 `XM-IMS-<版本>-win-x64-Setup.exe` 并挂到同 tag 的 Release：
+   - 同 tag 的 Release 已存在（草稿或已正式发布）时保留它，只追加安装包，不改标题、说明、发布状态或已有资产。
+   - 尚无同 tag 的 Release 时自动创建草稿并挂包，之后由用户填写说明并正式发布。
+   - 也可以在构建完成前先正式发布 Release，安装包稍后补挂；不可变 Release 需要先挂齐文件再发布。
+   - 同名安装包已存在时不覆盖，构建在 Actions 日志中报失败。
+4. assets 中的 digest 由 GitHub 生成，无需人工另附校验文件。
+5. 已安装的客户机会在启动或手动检查时发现新版本。
+
+源码版按 Git tag 检查更新，桌面版等待正式 Release；Release 提前发布但尚未挂包时，桌面端显示「该版本暂未提供 Windows 安装包」，无需修改界面或更新逻辑。
 
 安装版更新与源码模式的 `/api/v1/update/*` 是两条独立通道：源码模式继续按 Git 标签更新检出目录，安装版按 Release 安装包升级，二者不会互相替代。
 

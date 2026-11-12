@@ -1,0 +1,41 @@
+# PR 与 main 的基础检查：只读代码，不构建安装包、不发布。
+name: 基础检查
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  basic-checks:
+    name: 基础检查
+    runs-on: windows-2022
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 准备 Python 3.12 x64
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.10"
+          architecture: x64
+      - name: 准备 Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: 创建项目内虚拟环境
+        run: python -m venv .XMTEMP/actions/venv
+      - name: 安装检查依赖
+        run: .XMTEMP/actions/venv/Scripts/python.exe -m pip install --disable-pip-version-check -r requirements.txt
+      - name: 执行基础检查
+        run: .XMTEMP/actions/venv/Scripts/python.exe -B .github/scripts/basic_checks.py
