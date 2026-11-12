@@ -40,6 +40,18 @@ Var ManifestLine
 Var ManifestFailed
 Var TailChar
 
+; 停止本次安装 / 卸载：静默调用不能弹窗等用户确认，直接以非零退出码结束，
+; 由调用方判定失败；交互安装才提示原因。Abort 在静默模式下会卡在 MessageBox，
+; 卸载段同样使用本宏。
+!macro FailStop Message
+  ${If} ${Silent}
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+  MessageBox MB_ICONSTOP|MB_OK "${Message}"
+  Abort
+!macroend
+
 ; ---------- 命令行参数 ----------
 ; /S 静默安装（更新时使用）
 ; /XM_PID=<pid> 等待该进程退出后再覆盖程序文件
@@ -62,8 +74,7 @@ Var TailChar
 Function .onInit
   ${ParseArgs}
   ${IfNot} ${IsNativeAMD64}
-    MessageBox MB_ICONSTOP|MB_OK "XM-IMS 只支持 64 位 Windows。"
-    Abort
+    !insertmacro FailStop "XM-IMS 只支持 64 位 Windows。"
   ${EndIf}
 FunctionEnd
 
@@ -87,8 +98,7 @@ Function WaitForPrevious
     IntOp $R8 $R8 + 1
     ${If} $R8 >= 120
       System::Call 'kernel32::CloseHandle(p R1)'
-      MessageBox MB_ICONSTOP|MB_OK "XM-IMS 仍在运行，已停止更新。请在托盘菜单中选择退出后重试。"
-      Abort
+      !insertmacro FailStop "XM-IMS 仍在运行，已停止更新。请在托盘菜单中选择退出后重试。"
     ${EndIf}
   ${Loop}
   System::Call 'kernel32::CloseHandle(p R1)'
@@ -205,12 +215,16 @@ Section "XM-IMS" SecMain
   ; 托盘隐藏窗口后进程仍在，逐文件覆盖会失败并留下新旧混合的安装
   Call CheckRunning
   ${If} $R5 == "1"
-    MessageBox MB_ICONSTOP|MB_OK "XM-IMS 正在运行。请在托盘菜单中选择退出后重试。"
-    Abort
+    !insertmacro FailStop "XM-IMS 正在运行。请在托盘菜单中选择退出后重试。"
   ${EndIf}
   ; 升级：先按上一份清单清掉旧程序文件，避免旧模块留在资源目录
   ${If} ${FileExists} "$INSTDIR\${MANIFEST}"
     Call DeleteManifestFiles
+    ; 旧文件没清干净就不能继续：新清单会覆盖旧登记，
+    ; 被占用而留下的旧文件从此不再出现在清单里，之后升级与卸载都清不掉
+    ${If} $ManifestFailed == "1"
+      !insertmacro FailStop "有旧版本文件无法删除，已停止升级。请关闭正在占用这些文件的程序后重试。"
+    ${EndIf}
   ${EndIf}
 
   SetOutPath "$INSTDIR"
@@ -238,8 +252,7 @@ Section "Uninstall"
   ; 运行中不按进程名杀进程，只提示用户从托盘退出
   Call un.CheckRunning
   ${If} $R5 == "1"
-    MessageBox MB_ICONSTOP|MB_OK "XM-IMS 正在运行。请在托盘菜单中选择退出后重试。"
-    Abort
+    !insertmacro FailStop "XM-IMS 正在运行。请在托盘菜单中选择退出后重试。"
   ${EndIf}
   Call un.DeleteManifestFiles
   Delete "$INSTDIR\uninstall.exe"
