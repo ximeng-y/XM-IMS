@@ -43,7 +43,7 @@ class Environment:
     def __init__(self, workspace):
         self.workspace = workspace
 
-    def environment(self):
+    def environment(self, refresh=False):
         system, machine = platform.system(), platform.machine()
         result = {
             "os": system, "arch": machine,
@@ -51,15 +51,17 @@ class Environment:
             "git": {"available": False, "version": None, "path": None},
             "gcm": {"available": False, "version": None},
         }
-        git_exe = gitstore.locate_git()
+        git_exe = gitstore.locate_git(refresh=refresh)
         if git_exe:
             result["git"] = {"available": True, "version": self._first_line([git_exe, "--version"]),
                              "path": None if git_exe == "git" else git_exe}
-            prefix = gitstore.locate_gcm()
+            prefix = gitstore.locate_gcm(refresh=refresh)
             if prefix:
                 result["gcm"] = {"available": True, "version": self._first_line(prefix + ["--version"])}
         if config.DESKTOP_MODE:
+            # installation 始终描述 Git 目标；gcm_installation 只描述独立的登录组件目标。
             result["installation"] = locations.view()
+            result["gcm_installation"] = locations.view(locations.COMPONENT_GCM)
         return result
 
     @classmethod
@@ -104,8 +106,9 @@ class Environment:
 
     def _install_desktop(self, component, mode, path):
         try:
-            selected = mode or locations.mode()
-            target = locations.resolve(selected, path)
+            selected = mode or (locations.mode() if component == locations.COMPONENT_GIT
+                                else locations.gcm_target()["mode"])
+            target = locations.resolve(selected, path, component)
         except ValueError as exc:
             fail("ONBOARDING_INSTALL_MODE", str(exc),
                  user_message="安装位置无法确定",
@@ -116,7 +119,7 @@ class Environment:
             fail("ONBOARDING_PATH_CHOICE", f"安装目标路径含中文：{target['root']}",
                  user_message=_PATH_CHOICE_MESSAGE,
                  user_hint=_PATH_CHOICE_HINT)
-        if component == "git":
+        if component == locations.COMPONENT_GIT:
             self._install_portable_git(target)
         else:
             self._install_local_gcm(target)
@@ -127,14 +130,17 @@ class Environment:
 
         不能在保存前用 locations.mode() 的旧值定位——用户改选了 custom 时，
         旧定位器仍指向原目标，会误判安装失败。系统安装走 _finish_global。
+
+        独立登录组件与 Git 共存：GCM 只核验本次 GCM 目标与统一定位的当前 Git，
+        不要求本次 GCM 根下另有一份 Git，也不改动 Git 的顶层选择。
         """
-        # 只认本次目标目录，不让系统里已有的组件顶替
-        git_exe = gitstore.locate_git_from(target["git_root"])
-        if component == "gcm":
+        if component == locations.COMPONENT_GIT:
+            git_exe = gitstore.locate_git_from(target["git_root"])
+            gcm_ok = True
+        else:
+            git_exe = gitstore.locate_git()
             gcm_ok = self._gcm_in_root(target["gcm_root"]) or bool(
                 git_exe and self._first_line([git_exe, "credential-manager", "--version"]))
-        else:
-            gcm_ok = True
         if not git_exe:
             fail("ONBOARDING_INSTALL_FAILED", "安装完成但 Git 未在目标目录找到",
                  user_message="安装没有成功",
@@ -145,7 +151,10 @@ class Environment:
                  user_hint="请重试一次；若持续失败，请从官网手动安装后点击「重新检测」")
         # 保存后统一缓存按新记录重新定位，后续业务使用同一位置
         try:
-            locations.save(mode, path=path)
+            if component == locations.COMPONENT_GIT:
+                locations.save(mode, path=path)
+            else:
+                locations.save_gcm(mode, path=path)
         except ValueError:
             pass  # 记录写入失败不影响本次已可用的组件
         gitstore.locate_git(refresh=True)
@@ -210,9 +219,10 @@ class Environment:
         # 只看本次目标：改选目录时旧的 GCM 位置不能当作已经装好
         if self._gcm_in_root(gcm_root):
             return
-        git_exe = gitstore.locate_git_from(target["git_root"])
+        # 使用统一定位的当前 Git：复用的系统 Git 可能自带登录组件，不要求本次目标下另有 Git。
+        git_exe = gitstore.locate_git()
         if git_exe and self._first_line([git_exe, "credential-manager", "--version"]):
-            return  # 目标 Git 自带登录组件，无需单独解压
+            return  # 当前 Git 自带登录组件，无需单独解压
         url = self._asset_url(_GCM_RELEASES, _GCM_ZIP_PATTERN)
         work = self.workspace.work_dir("install")
         try:

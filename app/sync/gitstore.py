@@ -64,17 +64,32 @@ def _system_git_candidates():
     yield from _git_in_dir(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git")
 
 
+def _path_git():
+    """PATH 中的可执行 Git 绝对路径；只用于没有任何明确位置选择的桌面环境。"""
+    found = shutil.which("git")
+    return str(Path(found).resolve()) if found else None
+
+
 def _git_candidates():
     if config.DESKTOP_MODE:
-        selected = locations.mode()
+        selected = locations.configured_mode()
         if selected == locations.MODE_GLOBAL:
             recorded = locations.global_git()
             if recorded:
                 yield from _git_in_dir(recorded)
             yield from _system_git_candidates()
-        else:
-            # 局部 / 自选目标：只认这一处，不让系统里已装的 Git 顶替
+        elif selected in (locations.MODE_LOCAL, locations.MODE_CUSTOM):
+            # 明确的局部 / 自选目标：只认这一处，不让系统里已装的 Git 顶替，
+            # 也不因目标失效而悄悄换用另一份 Git。
             yield from _git_in_dir(locations.git_root(selected))
+        else:
+            # 没有任何明确选择：复用已有系统 Git，最后才看软件默认局部目录。
+            # PATH 只取绝对可执行路径，不进入 _git_home 的 cmd/bin 根目录假设。
+            path_git = _path_git()
+            if path_git:
+                yield path_git
+            yield from _system_git_candidates()
+            yield from _git_in_dir(locations.git_root(locations.MODE_LOCAL))
         return
     yield "git"
     yield from _system_git_candidates()
@@ -85,8 +100,23 @@ def locate_git(refresh=False):
     global _git_exe
     with _locate_lock:
         if refresh or _git_exe is None:
-            _git_exe = next((c for c in _git_candidates() if _exe_works([c, "--version"])), None)
+            found = next((c for c in _git_candidates() if _exe_works([c, "--version"])), None)
+            changed = found != _git_exe
+            _git_exe = found
+            if refresh and changed:
+                # 实际选中的 Git 变了：另一份 Git 的登录组件前缀与目录缓存不能继续使用。
+                locate_gcm(refresh=True)
         return _git_exe
+
+
+def require_git(refresh=False):
+    """统一定位后的 Git；不可用时与 GitStore.run 使用同一套缺 Git 错误。"""
+    git_exe = locate_git(refresh=refresh)
+    if not git_exe:
+        fail("GIT_UNAVAILABLE", "Git 不可用或未安装，请检查安装、网络和系统凭证",
+             user_message="无法使用本机的版本管理工具",
+             user_hint="请确认已安装 Git、网络可用，且本机已保存仓库的登录凭证")
+    return git_exe
 
 
 def locate_git_from(base):
@@ -117,13 +147,15 @@ def locate_gcm(refresh=False):
 
 
 def _gcm_candidates():
-    """独立安装的 GCM 位置：桌面模式只看选定目标，源码模式保留用户级安装位置。"""
+    """独立安装的 GCM 位置：桌面模式看记录解析的独立目标，源码模式保留用户级安装位置。
+
+    独立目标与 Git 顶层选择分开：复用系统 Git 时也可以单独安装登录组件。
+    """
     if config.DESKTOP_MODE:
-        selected = locations.mode()
-        if selected in (locations.MODE_LOCAL, locations.MODE_CUSTOM):
-            root = locations.gcm_root(selected)
-            if root:
-                yield root / "git-credential-manager.exe"
+        target = locations.gcm_target()
+        root = target["gcm_root"]
+        if root:
+            yield root / "git-credential-manager.exe"
         return
     local = os.environ.get("LOCALAPPDATA")
     if local:

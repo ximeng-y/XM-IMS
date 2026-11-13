@@ -9,7 +9,7 @@
     <p id="syncMessage" aria-live="polite"></p>
     <div class="sync-actions">
       <button id="syncNow">立即同步</button><button id="checkNow" class="btn-outline">检查远端</button>
-      <button id="startOnboarding" type="button" class="btn-outline">配置备份</button>
+      <button id="startOnboarding" type="button" class="btn-outline">配置远端备份</button>
       <a id="continueFirstUse" href="/onboarding" role="button" hidden>继续首次设置</a>
       <button id="offlineEnter" class="btn-outline" hidden>离线进入</button>
     </div>
@@ -27,7 +27,8 @@
   <article id="localBackupPanel">
     <h2>本地备份</h2>
     <p class="muted">备份保存在本机，可在没有网络时还原。</p>
-    <div class="sync-actions"><button id="backupNow" type="button">立即备份</button></div>
+    <p id="backupToolStatus" class="muted" aria-live="polite">正在检查备份工具…</p>
+    <div class="sync-actions"><button id="backupNow" type="button">立即备份</button><button id="prepareTools" type="button" class="btn-outline">准备备份工具</button></div>
     <div id="localBackupList"></div>
     <div id="localBackupPager" class="sync-pager"></div>
   </article>

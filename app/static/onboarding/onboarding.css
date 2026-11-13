@@ -37,6 +37,9 @@ dialog.sync-onboarding { width: 38rem; max-width: calc(100vw - 2rem); max-height
   background: #fdf0ef; padding: .7rem .9rem;
 }
 .sync-onboarding .sync-onboarding-error p { margin: .3rem 0 0; }
+.sync-onboarding .sync-onboarding-error button { margin: .6rem 0 0; }
+/* 首启页的备份失败提示位于向导容器之外，与容器保持相同宽度和间距 */
+.first-use .onboarding-backup-notice:not(:empty) { margin-bottom: 1rem; }
 .sync-onboarding .sync-onboarding-change { overflow-wrap: anywhere; font-size: .85rem; }
 .sync-onboarding .dlg-body { max-height: 60vh; overflow: auto; }
 .sync-onboarding .onboarding-footer { display: flex; justify-content: flex-end; gap: .6rem; flex-wrap: wrap; margin-top: 1.2rem; }

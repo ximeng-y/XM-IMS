@@ -13,9 +13,10 @@ router = APIRouter(prefix="/sync/onboarding", tags=["数据同步"])
 
 
 @router.get("/environment")
-def onboarding_environment(request: Request):
+def onboarding_environment(request: Request, refresh: bool = Query(default=False)):
     require_sync_manager(request)
-    return request.app.state.onboarding_backup.environment()
+    # refresh 为纯增量参数：主动检测 / 重新检测时重新定位 Git 与登录组件。
+    return request.app.state.onboarding_backup.environment(refresh=refresh)
 
 
 @router.post("/install")
