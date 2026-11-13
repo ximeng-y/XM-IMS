@@ -1,6 +1,7 @@
-"""Windows 桌面发行版构建：组装运行时、依赖与安装包。
+"""Windows 桌面发行版构建：组装运行时、依赖、便携目录或安装包。
 
 用法（固定入口）：
+    .venv\\Scripts\\python.exe -B desktop\\build.py [--portable]
     .venv\\Scripts\\python.exe -B desktop\\build.py [--nsis <makensis.exe 所在目录>]
 
 全部工作文件位于项目内 .XMTEMP/electron-windows/，不安装全局工具。
@@ -24,6 +25,7 @@ WORK_ROOT = PROJECT_ROOT / ".XMTEMP" / "electron-windows"
 CACHE_ROOT = WORK_ROOT / "cache"
 STAGE_ROOT = WORK_ROOT / "stage"
 DIST_ROOT = WORK_ROOT / "dist"
+PORTABLE_ROOT = PROJECT_ROOT / "desktop-test"
 
 APP_NAME = "XM-IMS"
 ELECTRON_EXE = "xm-ims.exe"
@@ -157,6 +159,48 @@ def program_manifest(stage, version):
     print(f"程序文件 {len(lines)} 项，版本 {version}")
 
 
+def read_program_manifest(target):
+    """读取便携目录上一版程序文件；用户数据不在清单内。"""
+    manifest = target / "installed-program-files.txt"
+    if not manifest.is_file():
+        return []
+    return [line.strip() for line in manifest.read_text(encoding="utf-16-le").splitlines()
+            if line.strip()]
+
+
+def sync_portable(stage):
+    """把暂存程序同步到固定便携目录，保留 data、tools 与 .XMTEMP。"""
+    target = PORTABLE_ROOT
+    target.mkdir(parents=True, exist_ok=True)
+
+    # 先按上一版清单删除程序文件，避免旧版本残留；用户数据从未列入清单。
+    for relative in read_program_manifest(target):
+        item = Path(relative)
+        if item.is_absolute() or ".." in item.parts:
+            fail(f"便携目录程序清单包含非法路径：{relative!r}")
+        path = target / item
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+
+    # 顶层程序项整体替换；data、tools、.XMTEMP 和用户自有文件不在此循环中。
+    for source in stage.iterdir():
+        if source.name == "installed-program-files.txt":
+            continue
+        destination = target / source.name
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        elif destination.exists() or destination.is_symlink():
+            destination.unlink()
+        if source.is_dir():
+            shutil.copytree(source, destination)
+        else:
+            shutil.copy2(source, destination)
+
+    shutil.copy2(stage / "installed-program-files.txt",
+                 target / "installed-program-files.txt")
+    print(f"便携测试版已更新：{target}")
+
+
 def find_nsis(explicit):
     if explicit:
         candidate = Path(explicit)
@@ -177,7 +221,9 @@ def find_nsis(explicit):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="构建 XM-IMS Windows 安装包")
+    parser = argparse.ArgumentParser(description="构建 XM-IMS Windows 便携目录或安装包")
+    parser.add_argument("--portable", action="store_true",
+                        help="构建到项目根目录 desktop-test，不生成安装包")
     parser.add_argument("--nsis", help="已有 NSIS 编译器所在目录或 makensis.exe 路径")
     args = parser.parse_args(argv)
 
@@ -238,6 +284,12 @@ def main(argv=None):
                                       APP_NAME, "XM-IMS 进销存", version)
 
     program_manifest(electron_pkg, version)
+
+    if args.portable:
+        sync_portable(electron_pkg)
+        print(f"完成：{PORTABLE_ROOT}")
+        print(f"版本：{version}；程序入口：{PORTABLE_ROOT / ELECTRON_EXE}")
+        return 0
 
     # 6) 安装包
     DIST_ROOT.mkdir(parents=True, exist_ok=True)

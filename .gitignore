@@ -19,6 +19,9 @@ data/
 backups/
 exports/
 
+# 本地桌面测试版构建目录
+desktop-test/
+
 # 环境变量与密钥
 .env
 .env.*
