@@ -46,7 +46,7 @@ MODULES = {
     "xm/pages/fields": ("/static/js/pages/fields.js", 12),
     "xm/pages/movements": ("/static/js/pages/movements.js", 5),
     "xm/pages/shops": ("/static/js/pages/shops.js", 5),
-    "xm/pages/sync": ("/static/js/pages/sync.js", 14),
+    "xm/pages/sync": ("/static/js/pages/sync.js", 15),
     "xm/pages/settings": ("/static/js/pages/settings.js", 3),
     "xm/onboarding/wizard": ("/static/onboarding/wizard.js", 2),
     "xm/onboarding/backup": ("/static/onboarding/backup.js", 4),
