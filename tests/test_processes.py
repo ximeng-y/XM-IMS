@@ -75,6 +75,7 @@ class ProcessBoundaryTests(unittest.TestCase):
     def test_credential_output_contract(self):
         real_file = self.processes.tempfile.TemporaryFile
         writes = []
+        passed_handles = []
 
         class RecordedFile:
             def __init__(self, *args, **kwargs):
@@ -89,17 +90,24 @@ class ProcessBoundaryTests(unittest.TestCase):
             def __getattr__(self, name):
                 return getattr(self.file, name)
 
+            def fileno(self):
+                handle = self.file.fileno()
+                passed_handles.append(handle)
+                return handle
+
             def write(self, data):
                 writes.append(data)
                 return self.file.write(data)
 
         # 只使用虚构输出，检查默认丢弃 stderr，且捕获输出没有写入临时文件。
+        # 本场景没有输入，临时文件句柄也不应交给子进程，避免直接写盘绕过 write()。
         with patch.object(self.processes.tempfile, "TemporaryFile", RecordedFile):
             result = self.run_python("import os;os.write(1,b'fake-output');os.write(2,b'err')")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, b"fake-output")
         self.assertEqual(result.stderr, b"")
         self.assertEqual(writes, [])
+        self.assertEqual(passed_handles, [])
 
     def check_timeout(self, code):
         started = time.monotonic()
