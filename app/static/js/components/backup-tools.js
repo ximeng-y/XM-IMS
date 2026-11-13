@@ -51,15 +51,7 @@ function open({ request, allowSkip = false, confirmLabel = "继续", confirmWhen
     const note = (text) => node("p", text, "sync-onboarding-note");
     const ok = (text) => node("div", text, "sync-onboarding-ok");
 
-    function render() {
-      const ready = !!env?.git?.available;
-      const body = node("div");
-      body.append(note(ready ? "备份工具已准备好。" : "安装 Git 后即可保存本地备份。"));
-      if (ready && env.git.version) body.append(note(env.git.version));
-      if (confirmWhenReady) body.append(note("准备完成后保存一次本地备份。"));
-      if (!ready) body.append(note("安装包来自官方来源，下载和安装可能需要几分钟。"));
-      wrap.replaceChildren(body);
-
+    function renderFooter() {
       foot.replaceChildren();
       const cancel = UI.mkBtn("取消", "btn-outline");
       cancel.type = "button";
@@ -74,6 +66,18 @@ function open({ request, allowSkip = false, confirmLabel = "继续", confirmWhen
         skip.onclick = () => settle("skipped");
         foot.append(skip);
       }
+    }
+
+    function render() {
+      const ready = !!env?.git?.available;
+      const body = node("div");
+      body.append(note(ready ? "备份工具已准备好。" : "安装 Git 后即可保存本地备份。"));
+      if (ready && env.git.version) body.append(note(env.git.version));
+      if (confirmWhenReady) body.append(note("准备完成后保存一次本地备份。"));
+      if (!ready) body.append(note("安装包来自官方来源，下载和安装可能需要几分钟。"));
+      wrap.replaceChildren(body);
+
+      renderFooter();
 
       if (ready) {
         // 独立准备入口需要确认一次手动保存；其余调用在就绪后点「继续」回到调用方。
@@ -186,10 +190,7 @@ function open({ request, allowSkip = false, confirmLabel = "继续", confirmWhen
           box.append(retry);
           return box;
         })());
-        const cancel = UI.mkBtn("取消", "btn-outline");
-        cancel.type = "button";
-        cancel.onclick = () => settle("cancelled");
-        foot.replaceChildren(cancel);
+        renderFooter();
         return;
       }
       if (env?.git?.available && !confirmWhenReady) {
@@ -217,10 +218,7 @@ function open({ request, allowSkip = false, confirmLabel = "继续", confirmWhen
 
     // showModal 在 load 之后的第一次 render 才有内容；先打开以便展示「正在检查」。
     wrap.append(note("正在检查备份工具…"));
-    const cancel = UI.mkBtn("取消", "btn-outline");
-    cancel.type = "button";
-    cancel.onclick = () => settle("cancelled");
-    foot.replaceChildren(cancel);
+    renderFooter();
     dlg.showModal();
   });
 }

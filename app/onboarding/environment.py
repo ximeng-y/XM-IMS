@@ -67,7 +67,7 @@ class Environment:
     @classmethod
     def _first_line(cls, argv, env=None):
         try:
-            result = transport.run_hidden(argv, env=env)
+            result = transport.run_hidden(argv, env=env, timeout=5)
         except (OSError, subprocess.TimeoutExpired):
             return ""
         text = result.stdout.decode("utf-8", "replace").strip()

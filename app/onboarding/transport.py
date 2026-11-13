@@ -5,6 +5,7 @@ Token 只存在于请求头与本进程内存，不进日志、异常文本或�
 """
 import json
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -93,7 +94,25 @@ def download(url, target):
 
 
 def run_hidden(argv, env=None, timeout=30, data=None):
-    """后台子进程：隐藏窗口、默认不给标准输入，避免任何交互式提示挂起。"""
-    return subprocess.run(argv, input=data, capture_output=True, timeout=timeout,
-                          stdin=None if data is not None else subprocess.DEVNULL,
-                          env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    """后台子进程：隐藏窗口，并用临时文件承接标准流。
+
+    Git 的 Windows 启动包装器退出后，实际子进程可能继续持有输出管道。若继续
+    使用 PIPE，超时清理会等待管道彻底关闭而没有期限；临时文件不依赖 EOF。
+    """
+    with tempfile.TemporaryFile() as stdin_file, \
+            tempfile.TemporaryFile() as stdout_file, \
+            tempfile.TemporaryFile() as stderr_file:
+        if data is None:
+            stdin = subprocess.DEVNULL
+        else:
+            stdin_file.write(data)
+            stdin_file.seek(0)
+            stdin = stdin_file
+        result = subprocess.run(
+            argv, stdin=stdin, stdout=stdout_file, stderr=stderr_file, timeout=timeout,
+            env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        result.stdout = stdout_file.read()
+        result.stderr = stderr_file.read()
+        return result
