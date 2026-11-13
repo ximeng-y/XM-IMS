@@ -5,8 +5,8 @@
 """
 
 # auto 表示「自动将备份同步到云端」，local_auto 表示「本地自动备份」。
-# 新配置两者都默认开启；旧配置缺少 local_auto 时由 normalize 按旧 auto 推导。
-DEFAULTS = {"remote": "", "branch": "main", "auto": True, "local_auto": True,
+# 新配置两者都默认关闭；旧配置缺少 local_auto 时由 normalize 按旧 auto 推导。
+DEFAULTS = {"remote": "", "branch": "main", "auto": False, "local_auto": False,
             "interval": 10, "device": "本机", "github_account": ""}
 
 
