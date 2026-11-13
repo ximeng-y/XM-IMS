@@ -37,7 +37,7 @@ MODULES = {
     "xm/components/item-picker": ("/static/js/components/item-picker.js", 1),
     "xm/components/ops-forms": ("/static/js/components/ops-forms.js", 9),
     "xm/components/dependency-install": ("/static/js/components/dependency-install.js", 2),
-    "xm/components/backup-tools": ("/static/js/components/backup-tools.js", 1),
+    "xm/components/backup-tools": ("/static/js/components/backup-tools.js", 2),
     "xm/pages/overview": ("/static/js/pages/overview.js", 9),
     "xm/pages/inventory": ("/static/js/pages/inventory.js", 19),
     "xm/pages/inventory-data": ("/static/js/pages/inventory-data.js", 1),

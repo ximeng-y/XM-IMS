@@ -23,11 +23,15 @@ _locate_lock = threading.RLock()
 _git_exe = None        # 已验证可执行的 Git："git" 或绝对路径；None 表示尚未检出或不可用
 _gcm_prefix = None     # 已验证可用的 GCM 命令前缀（list）
 _gcm_path_dir = None   # 独立安装的 GCM 所在目录（需要补充进子进程 PATH 时使用）
+_PROBE_TIMEOUT = 5
 
 
-def _exe_works(argv, timeout=15):
+def _exe_works(argv, timeout=_PROBE_TIMEOUT):
     try:
-        result = subprocess.run(argv, capture_output=True, timeout=timeout,
+        # 只判断退出码，不接管输出：Windows 的 Git 启动包装器可能留下继承管道的子进程，
+        # 一旦超时后再等待管道 EOF，subprocess.run 的清理会失去时间上限。
+        result = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=timeout,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.TimeoutExpired):
         return False
