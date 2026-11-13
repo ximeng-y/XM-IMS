@@ -69,6 +69,14 @@ function onNarrowChange() {
   scheduleHintUpdate();
 }
 
+// 点击的是当前页面自身：阻止默认跳转，避免整页重载后正文入场动画重播。
+// 带修饰键或非左键的点击不拦截，保留浏览器的新标签打开与下载等原生行为。
+function samePageClick(a, e) {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
+  const page = document.body.dataset.page;
+  return !!page && a.dataset.nav === page;
+}
+
 function initNav() {
   const nav = $("#primaryNav"), backdrop = $("#navBackdrop"), btn = $("#navToggle");
   if (!nav || !btn || !backdrop) return;
@@ -77,8 +85,13 @@ function initNav() {
     else setNavOpen();
   });
   backdrop.addEventListener("click", () => setNavClosed({ focusBtn: true }));
-  // 选择页面后立即收起浮层
-  nav.addEventListener("click", (e) => { if (e.target.closest("a")) setNavClosed(); });
+  // 选择页面后立即收起浮层；点的是当前页面时只收起，不重新加载
+  nav.addEventListener("click", (e) => {
+    const a = e.target.closest("a");
+    if (!a) return;
+    if (samePageClick(a, e)) e.preventDefault();
+    setNavClosed();
+  });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && navOpen()) setNavClosed({ focusBtn: true });
   });
