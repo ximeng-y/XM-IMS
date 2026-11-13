@@ -114,9 +114,10 @@ class GitHub:
         # 与 GitStore 的 GitHub HTTPS 命令固定同一 GCM helper：清空继承链后只走 manager，
         # 避免系统 helper 配置与 GCM 不一致时，登录成功却读取不到凭据或推送失败。
         try:
-            result = transport.run_hidden([git_exe, "-c", "credential.helper=",
-                                           "-c", "credential.https://github.com.helper=manager",
-                                           "credential", "fill"], env=env, timeout=30, data=query)
+            result = transport.run_hidden_memory(
+                [git_exe, "-c", "credential.helper=",
+                 "-c", "credential.https://github.com.helper=manager",
+                 "credential", "fill"], env=env, timeout=30, data=query)
         except (OSError, subprocess.TimeoutExpired):
             fail("ONBOARDING_GITHUB_CREDENTIAL", "读取本机 GitHub 凭据失败",
                  user_message="暂时读不到 GitHub 登录信息",

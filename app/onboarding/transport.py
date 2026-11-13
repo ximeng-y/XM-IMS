@@ -6,6 +6,7 @@ Token 只存在于请求头与本进程内存，不进日志、异常文本或�
 import json
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -94,10 +95,11 @@ def download(url, target):
 
 
 def run_hidden(argv, env=None, timeout=30, data=None):
-    """后台子进程：隐藏窗口，并用临时文件承接标准流。
+    """后台子进程：隐藏窗口，并用临时文件承接不含凭据的标准流。
 
     Git 的 Windows 启动包装器退出后，实际子进程可能继续持有输出管道。若继续
     使用 PIPE，超时清理会等待管道彻底关闭而没有期限；临时文件不依赖 EOF。
+    可能输出凭据的命令必须使用 run_hidden_memory，不能写入临时文件。
     """
     with tempfile.TemporaryFile() as stdin_file, \
             tempfile.TemporaryFile() as stdout_file, \
@@ -116,3 +118,64 @@ def run_hidden(argv, env=None, timeout=30, data=None):
         result.stdout = stdout_file.read()
         result.stderr = stderr_file.read()
         return result
+
+
+def run_hidden_memory(argv, env=None, timeout=30, data=None):
+    """后台子进程：隐藏窗口，标准输出只保存在本进程内存。
+
+    Windows Git 启动包装器可能留下继续持有输出管道的子进程。这里由独立线程
+    持续读取内存，并以同一截止时间收口；超时后终止进程并关闭管道，避免等待 EOF
+    无限挂起，也避免凭据被写入临时文件。
+    """
+    with tempfile.TemporaryFile() as stdin_file:
+        if data is None:
+            stdin = subprocess.DEVNULL
+        else:
+            stdin_file.write(data)
+            stdin_file.seek(0)
+            stdin = stdin_file
+        process = subprocess.Popen(
+            argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        output = bytearray()
+
+        def read_output():
+            try:
+                while True:
+                    chunk = process.stdout.read(65536)
+                    if not chunk:
+                        return
+                    output.extend(chunk)
+            except (OSError, ValueError):
+                return
+
+        reader = threading.Thread(target=read_output, daemon=True)
+        reader.start()
+        deadline = time.monotonic() + timeout
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            reader.join(timeout=max(0.0, deadline - time.monotonic()))
+
+        if process.poll() is None or reader.is_alive():
+            try:
+                process.kill()
+            except OSError:
+                pass
+            if process.stdout:
+                try:
+                    process.stdout.close()
+                except OSError:
+                    pass
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            reader.join(timeout=1)
+            raise subprocess.TimeoutExpired(argv, timeout)
+
+        if process.stdout:
+            process.stdout.close()
+        return subprocess.CompletedProcess(argv, process.returncode, bytes(output), b"")
