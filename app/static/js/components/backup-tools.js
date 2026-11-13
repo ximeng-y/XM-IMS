@@ -41,7 +41,7 @@ function open({ request, allowSkip = false, confirmLabel = "继续", confirmWhen
     let settled = false;
 
     function settle(status) {
-      if (settled) return;
+      if (settled || (busy && status !== "ready")) return;
       settled = true;
       const environment = env;
       dlg.close();
@@ -156,6 +156,7 @@ function open({ request, allowSkip = false, confirmLabel = "继续", confirmWhen
     async function proceed(button) {
       if (busy) return;
       busy = true;
+      foot.querySelectorAll("button").forEach((item) => { item.disabled = true; });
       if (button) {
         button.disabled = true;
         button.textContent = "处理中…";
@@ -171,8 +172,13 @@ function open({ request, allowSkip = false, confirmLabel = "继续", confirmWhen
         }
       } finally {
         busy = false;
+        foot.querySelectorAll("button").forEach((item) => { item.disabled = false; });
       }
     }
+
+    dlg.addEventListener("cancel", (event) => {
+      if (busy) event.preventDefault();
+    });
 
     dlg.addEventListener("close", () => {
       dlg.remove();
