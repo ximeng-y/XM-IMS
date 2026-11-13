@@ -218,4 +218,72 @@ function reset() {
   cached = null;
 }
 
-module.exports = { setCurrentVersion, check, download, launchInstaller, reset, parseVersion, compare };
+/** 更新记录：只保存最近一次被接受的更新请求，位于数据根目录的更新资料区。
+
+    写入先落到同目录临时文件，刷新关闭后再替换正式文件，失败时保留原记录。 */
+function readUpdateRecord() {
+  let text;
+  try {
+    text = fs.readFileSync(paths.updateRecord, "utf8");
+  } catch (_) {
+    return null;   // 缺失或不可读：没有记录可处理
+  }
+  try {
+    const record = JSON.parse(text);
+    return record && typeof record === "object" && !Array.isArray(record) ? record : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeUpdateRecord(record) {
+  const folder = path.dirname(paths.updateRecord);
+  const temporary = paths.updateRecord + ".writing";
+  fs.mkdirSync(folder, { recursive: true });
+  const fd = fs.openSync(temporary, "w");
+  try {
+    fs.writeFileSync(fd, JSON.stringify(record, null, 2) + "\n", "utf8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(temporary, paths.updateRecord);
+}
+
+/** 保存本次已确认目标的接受记录；失败时抛出，由调用方停止更新。 */
+function recordUpdateRequest(tag) {
+  const target = confirmed;
+  if (!target || target.tag !== tag) {
+    throw new Error("要安装的版本不是已确认的最新版本");
+  }
+  const from = (parseVersion(currentVersion) || []).join(".");
+  if (!from) {
+    throw new Error("当前版本无法确认");
+  }
+  writeUpdateRecord({
+    from_version: from,
+    to_version: target.version,
+    confirmed_at: new Date().toISOString(),
+    status: "accepted",
+  });
+}
+
+/** 启动核对：新进程实际运行版本等于记录目标时，把记录状态改为安装完成。
+
+    只处理已存在的接受记录；读取或写入问题不改坏记录，也不阻断启动。 */
+function confirmInstalledUpdate() {
+  const record = readUpdateRecord();
+  if (!record || record.status !== "accepted") return;
+  if (typeof record.from_version !== "string" || typeof record.to_version !== "string" ||
+      typeof record.confirmed_at !== "string") {
+    return;
+  }
+  if (record.to_version !== currentVersion) return;
+  try {
+    writeUpdateRecord({ ...record, status: "installed" });
+  } catch (error) {
+    console.warn("[update] 更新记录完成状态写入失败，保留已保存的接受记录");
+  }
+}
+
+module.exports = { setCurrentVersion, check, download, launchInstaller, reset, parseVersion, compare, recordUpdateRequest, confirmInstalledUpdate };

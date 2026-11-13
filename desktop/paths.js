@@ -12,6 +12,8 @@ const iconsRoot = path.join(resourcesRoot, "icons");
 
 const dataRoot = path.join(installRoot, "data");
 const tempRoot = path.join(installRoot, ".XMTEMP");
+// 最近一次被接受的更新请求；与源码版共用同一数据根下的相对位置
+const updateRecord = path.join(dataRoot, "update", "last-update.json");
 
 module.exports = {
   installRoot,
@@ -22,6 +24,7 @@ module.exports = {
   iconsRoot,
   dataRoot,
   tempRoot,
+  updateRecord,
   pythonExe: path.join(pythonRoot, "python.exe"),
   backendRunner: path.join(backendRoot, "backend_runner.py"),
   programManifest: path.join(installRoot, "installed-program-files.txt"),
