@@ -8,7 +8,6 @@
   flex-wrap: wrap;
   margin-bottom: 1rem;
 }
-.shops-order-hint { margin: 0; flex: 1 1 14rem; }
 
 .shop-list { display: flex; flex-direction: column; gap: .6rem; }
 
