@@ -36,7 +36,8 @@ MODULES = {
     "xm/components/item-form": ("/static/js/components/item-form.js", 11),
     "xm/components/item-picker": ("/static/js/components/item-picker.js", 1),
     "xm/components/ops-forms": ("/static/js/components/ops-forms.js", 9),
-    "xm/components/dependency-install": ("/static/js/components/dependency-install.js", 1),
+    "xm/components/dependency-install": ("/static/js/components/dependency-install.js", 2),
+    "xm/components/backup-tools": ("/static/js/components/backup-tools.js", 1),
     "xm/pages/overview": ("/static/js/pages/overview.js", 9),
     "xm/pages/inventory": ("/static/js/pages/inventory.js", 19),
     "xm/pages/inventory-data": ("/static/js/pages/inventory-data.js", 1),
@@ -46,11 +47,11 @@ MODULES = {
     "xm/pages/fields": ("/static/js/pages/fields.js", 12),
     "xm/pages/movements": ("/static/js/pages/movements.js", 5),
     "xm/pages/shops": ("/static/js/pages/shops.js", 5),
-    "xm/pages/sync": ("/static/js/pages/sync.js", 14),
+    "xm/pages/sync": ("/static/js/pages/sync.js", 15),
     "xm/pages/settings": ("/static/js/pages/settings.js", 3),
     "xm/onboarding/wizard": ("/static/onboarding/wizard.js", 2),
-    "xm/onboarding/backup": ("/static/onboarding/backup.js", 4),
-    "xm/onboarding/first-use": ("/static/onboarding/first-use.js", 3),
+    "xm/onboarding/backup": ("/static/onboarding/backup.js", 5),
+    "xm/onboarding/first-use": ("/static/onboarding/first-use.js", 4),
 }
 
 # 样式资源同样逐项登记；页面清单只引用这里的键。

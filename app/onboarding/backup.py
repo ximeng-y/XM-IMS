@@ -27,8 +27,8 @@ class BackupOnboarding:
 
     # ---------- 环境与安装 ----------
 
-    def environment(self):
-        return self.environment_service.environment()
+    def environment(self, refresh=False):
+        return self.environment_service.environment(refresh=refresh)
 
     def install(self, component, mode=None, path=None):
         with self.setup.exclusive():

@@ -11,6 +11,7 @@ from ..errors import ApiError, error_dict
 from . import settings as sync_settings, snapshot
 from .common import fail, ProcessLock
 from ..storage.files import atomic_json, read_json, remove_tree, replace_path
+from . import gitstore
 from .gitstore import GitStore
 from .local_backup import LocalBackups
 from .merge import Merger
@@ -680,13 +681,34 @@ class SyncManager:
             self.record_local_error(exc)
             return None
 
+    @staticmethod
+    def _local_storage_error():
+        """本地备份存储失败的统一错误；留在本地错误通路，不改动云端错误。"""
+        return ApiError("SYNC_STORAGE_FAILED", "同步文件写入或移动失败，请检查磁盘空间、目录权限或文件占用后重试",
+                        status=409, user_message="同步数据写入失败",
+                        user_hint="请检查磁盘剩余空间，并确认文件没有被其他程序占用")
+
     def _persist_backup(self, reason, *, source_backup=None, idempotency_key=None):
-        """捕获当前数据并写入本地历史；capture 只更新捕获缓存，不代表已持久备份。"""
-        self.capture(force=True)
-        record, created = self.backups.save(self._snapshot_source(self.state["local_hash"]),
-                                            self.active["dataset"], reason,
-                                            source_backup=source_backup,
-                                            idempotency_key=idempotency_key)
+        """捕获当前数据并写入本地历史；capture 只更新捕获缓存，不代表已持久备份。
+
+        先确认 Git 可用再导出数据：工具缺失属于本地错误，不能每个自动周期都先
+        导出整套数据再失败。保存过程中的错误留在本地错误通路：ApiError 原样抛出，
+        OSError 在离开 operation() 前转成存储失败，避免被通用同步异常分支当成云端错误。
+        """
+        try:
+            gitstore.require_git(refresh=True)
+            self.capture(force=True)
+            record, created = self.backups.save(self._snapshot_source(self.state["local_hash"]),
+                                                self.active["dataset"], reason,
+                                                source_backup=source_backup,
+                                                idempotency_key=idempotency_key)
+        except ApiError as exc:
+            self.record_local_error(exc)
+            raise
+        except OSError as exc:
+            error = self._local_storage_error()
+            self.record_local_error(error)
+            raise error from exc
         self.local_error = None
         return record, created
 
@@ -767,22 +789,32 @@ class SyncManager:
                  user_message="操作标识缺失",
                  user_hint="请刷新页面后重试")
         with self.operation():
-            replay = self.backups.receipt(idempotency_key) if idempotency_key else None
-            if replay and replay.get("kind") == "backup":
-                record = self.backups.describe(replay["backup"])
-                return {"backup": self.backup_row(record), "created": bool(replay.get("created")),
-                        "dry_run": False, "idempotent_replay": True}
-            if not self.active:
-                fail("BACKUP_NO_DATA", "尚无活动数据可备份",
-                     user_message="还没有可以备份的数据",
-                     user_hint="请先创建店铺并录入数据")
-            if dry_run:
-                digest = self.current_digest()
-                return {"backup": None, "created": not self.backups.backed_up(digest),
-                        "dry_run": True, "idempotent_replay": False}
-            record, created = self._persist_backup("manual", idempotency_key=idempotency_key)
-            return {"backup": self.backup_row(record), "created": created,
-                    "dry_run": False, "idempotent_replay": False}
+            try:
+                return self._local_backup_locked(dry_run, idempotency_key)
+            except OSError as exc:
+                # 回执读取 / 描述的实际存储失败留在本地错误通路，
+                # 不落入通用同步异常分支覆盖云端错误。
+                error = self._local_storage_error()
+                self.record_local_error(error)
+                raise error from exc
+
+    def _local_backup_locked(self, dry_run, idempotency_key):
+        replay = self.backups.receipt(idempotency_key) if idempotency_key else None
+        if replay and replay.get("kind") == "backup":
+            record = self.backups.describe(replay["backup"])
+            return {"backup": self.backup_row(record), "created": bool(replay.get("created")),
+                    "dry_run": False, "idempotent_replay": True}
+        if not self.active:
+            fail("BACKUP_NO_DATA", "尚无活动数据可备份",
+                 user_message="还没有可以备份的数据",
+                 user_hint="请先创建店铺并录入数据")
+        if dry_run:
+            digest = self.current_digest()
+            return {"backup": None, "created": not self.backups.backed_up(digest),
+                    "dry_run": True, "idempotent_replay": False}
+        record, created = self._persist_backup("manual", idempotency_key=idempotency_key)
+        return {"backup": self.backup_row(record), "created": created,
+                "dry_run": False, "idempotent_replay": False}
 
     def backup_row(self, record):
         """单条本地备份描述，附带它与当前活动数据的关系。"""

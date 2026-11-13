@@ -56,9 +56,9 @@ async def lifespan(app):
                     try:
                         await asyncio.to_thread(manager.background_local_backup)
                     except ApiError as exc:
-                        manager.record_background_error(exc)
+                        manager.record_local_error(exc)
                     except Exception:
-                        manager.record_background_error(error_dict(
+                        manager.record_local_error(error_dict(
                             "BACKUP_FAILED", "后台本地备份未完成，请进入同步页重试",
                             user_message="后台备份没有完成",
                             user_hint="请进入数据同步页面点击「立即备份」重试"))

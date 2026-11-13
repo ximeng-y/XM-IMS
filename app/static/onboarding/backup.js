@@ -16,7 +16,8 @@ const BackupOnboarding = (() => {
   const note = text => node("p", text, "sync-onboarding-note");
   const ok = text => node("div", text, "sync-onboarding-ok");
 
-  function mount({ container, intent = "backup", settings, request, onComplete, onCancel, completeLabel = "返回数据同步" }) {
+  function mount({ container, intent = "backup", settings, request, environment, onComplete, onCancel,
+                   completeLabel = "返回数据同步" }) {
     container.classList.add("sync-onboarding");
     const c = {
       intent, opened: { remote: settings.remote || "", branch: settings.branch || "main" },
@@ -26,7 +27,8 @@ const BackupOnboarding = (() => {
         auto: settings.auto !== false, local_auto: settings.local_auto !== false,
         github_account: settings.github_account || "",
         repository: "xm-ims-backup" },
-      env: null, needsGit: false, github: null, accounts: new Map(),
+      // 工具准备已由共享组件完成；这里只接收环境快照，不再检测或安装 Git。
+      env: environment || null, github: null, accounts: new Map(),
       check: null, source: null, result: null, key: null, created: null, resume: false,
     };
     let wizard;
@@ -98,22 +100,17 @@ const BackupOnboarding = (() => {
       return null;
     }
     async function afterRepository() {
-      c.env = await request("GET", "/onboarding/environment");
-      c.needsGit = !c.env.git.available;
-      await wizard.go(c.needsGit ? "git-environment" : needsGithub() ? "github-account" : "review");
+      // Git 前置准备在打开向导之前完成；这里只按仓库模式进入下一步。
+      await wizard.go(needsGithub() ? "github-account" : "review");
     }
-    // 安装走统一弹窗：桌面模式可选择其他文件夹或系统位置，源码模式只有「安装」。
-    // 组件只通过回调通知向导，环境快照以安装返回值为准。
-    // 安装完成后本步骤可能因 needsGit 变化而从列表移除，必须用 go() 跳转，
-    // 只调用 render() 会让索引落到下一步却没有执行它的 enter()。
-    function installComponent(component, next) {
+    function installGcm(next) {
       DependencyInstall.open({
-        component,
-        installation: c.env?.installation,
+        component: "gcm",
+        // GCM 使用独立的安装目标描述；原字段仍描述 Git。
+        installation: c.env?.gcm_installation || c.env?.installation,
         install: async (body) => {
           const env = await request("POST", "/onboarding/install", { ...body, confirm: true });
           c.env = env;
-          if (component === "git") c.needsGit = !env.git.available;
           return env;
         },
         onDone: async () => {
@@ -265,41 +262,23 @@ const BackupOnboarding = (() => {
         canNext: repositoryError, onPrimary: afterRepository,
       },
       {
-        id: "git-environment", title: "准备备份工具", when: () => c.needsGit,
-        async enter() { c.env = await request("GET", "/onboarding/environment"); },
-        render(_, box) {
-          if (c.env.git.available) { box.append(ok("备份工具已准备好。")); return; }
-          box.append(note("安装 Git 后即可连接备份仓库。"));
-          if (c.env.one_click_install) box.append(button("安装 Git", async () =>
-            installComponent("git", needsGithub() ? "github-account" : "review")));
-          box.append(note("安装包来自官方来源，下载和安装可能需要几分钟。"));
-          const link = node("a", "打开 Git 官网下载页");
-          link.href = "https://git-scm.com/downloads"; link.target = "_blank"; link.rel = "noopener";
-          box.append(link, button("重新检测", async () => {
-            c.env = await request("GET", "/onboarding/environment"); wizard.render();
-          }));
-        },
-        canNext: () => c.env?.git.available ? null : "请先安装 Git，再继续",
-        onPrimary: () => wizard.go(needsGithub() ? "github-account" : "review"),
-      },
-      {
         id: "github-account", title: "登录 GitHub", when: needsGithub,
         async enter() {
           c.lockBack = !!c.created || !!c.resume;
-          if (!c.env?.gcm.available) c.env = await request("GET", "/onboarding/environment");
+          if (!c.env?.gcm.available) c.env = await request("GET", "/onboarding/environment?refresh=true");
           await loadGithub();
         },
         render(_, box) {
           if (!c.env?.gcm.available) {
             box.append(note("安装登录组件后，即可在系统浏览器中登录 GitHub。"));
             if (c.env?.one_click_install) box.append(button("安装登录组件", async () => {
-              installComponent("gcm", "github-account");
+              installGcm("github-account");
             }));
             const link = node("a", "打开登录组件官方安装说明");
             link.href = "https://github.com/git-ecosystem/git-credential-manager/blob/release/docs/install.md";
             link.target = "_blank"; link.rel = "noopener";
             box.append(link, button("重新检测", async () => {
-              c.env = await request("GET", "/onboarding/environment"); await loadGithub(); wizard.render();
+              c.env = await request("GET", "/onboarding/environment?refresh=true"); await loadGithub(); wizard.render();
             }));
             return;
           }

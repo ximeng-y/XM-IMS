@@ -6,9 +6,11 @@
 import { UI } from "xm/ui";
 import { Sync } from "xm/sync";
 import { BackupOnboarding } from "xm/onboarding/backup";
+import { BackupTools } from "xm/components/backup-tools";
 import { mountLocalBackups } from "xm/components/local-backups";
 
 let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changesOffset=0, settingsLoaded=false, savedSettings=null, backups=null;
+let toolEnv=null, toolChecked=false, backupKey=null;
 const limit=20;
 const $s=id=>document.getElementById(id);
 const text=(node,value)=>{node.textContent=value;};
@@ -23,6 +25,7 @@ function showLocalOnly(){
   document.querySelectorAll('.sync-page button,.sync-page input').forEach(el=>{el.disabled=true;});
   $s('settingsPanel').hidden=true;$s('conflictPanel').hidden=true;$s('initializeBox').hidden=true;
   $s('autoSettings').hidden=true;$s('localBackupPanel').hidden=true;
+  $s('prepareTools').hidden=true;
   $s('offlineEnter').hidden=true;$s('enterApp').hidden=false;$s('enterApp').textContent='返回应用';
 }
 function showRefreshError(error){
@@ -46,6 +49,13 @@ async function refresh(){
   if(syncState.legacy_present && syncState.state==='setup')message+=' 检测到旧数据库，原文件已保留。';
   if(syncState.local_error?.user_message)message+=' '+syncState.local_error.user_message+'。';
   text($s('syncMessage'),message);
+  // 只有本次环境检测确认 Git 缺失时，才把笼统的缺工具提示引导到准备入口。
+  const missingGit=toolChecked&&!toolEnv?.git?.available;
+  if(syncState.local_error?.code==='GIT_UNAVAILABLE'&&missingGit){
+    $s('backupNow').title='请先准备备份工具';
+  }else{
+    $s('backupNow').title='';
+  }
   $s('enterApp').hidden=!syncState.business_ready;
   const first=await Sync.api('GET','/onboarding/first-use/status');
   const firstEntry=['choose_source','create_shop','restore_pending'].includes(first.phase)||(first.phase==='waiting'&&!first.has_local_data);
@@ -57,10 +67,15 @@ async function refresh(){
   $s('initializeBox').hidden=!['setup','initialize','binding'].includes(syncState.state);
   $s('useRemote').hidden=!syncState.configured;
   $s('syncNow').hidden=firstEntry||firstBackup;$s('checkNow').hidden=firstEntry||firstBackup;$s('startOnboarding').hidden=firstEntry;
-  text($s('startOnboarding'),firstBackup?'继续配置备份':'配置备份');
+  text($s('startOnboarding'),firstBackup?'继续配置远端备份':'配置远端备份');
   $s('syncNow').disabled=syncState.busy;$s('checkNow').disabled=syncState.busy;
   $s('startOnboarding').disabled=syncState.busy;$s('restartOnboarding').disabled=syncState.busy;
   $s('backupNow').disabled=syncState.busy||firstEntry;
+  // 工具状态只在检测结果、同步状态变化后重绘；不在状态轮询里反复执行 --version。
+  const noData=!syncState.local_backup?.total&&!syncState.business_ready;
+  $s('prepareTools').disabled=syncState.busy||firstEntry;
+  $s('prepareTools').title=noData?'准备后即可保存本地备份':'';
+  renderToolStatus();
   updateConnectionState();
   const active=syncState.session&&!syncState.business_ready;
   $s('conflictPanel').hidden=!active;
@@ -73,6 +88,30 @@ function settingsDirty(){const values=settingsValues();return !savedSettings||!$
 // 连接测试只取决于已保存的仓库、分支与设备名，自动开关未保存不应妨碍它。
 function updateConnectionState(){const dirty=settingsDirty();$s('testConnection').disabled=!settingsLoaded||dirty||!!syncState?.busy;text($s('connectionSaveHint'),dirty?'先保存后测试':'');}
 async function loadBackups(){if(backups)await backups.load();}
+// 备份工具状态与本地备份结果分别表达：工具可用不等于已经保存本地备份。
+function renderToolStatus(){
+  const label=$s('backupToolStatus');if(!label)return;
+  if(!toolChecked){text(label,'正在检查备份工具…');return;}
+  const git=toolEnv?.git;
+  if(!git?.available){
+    let value='尚未启用本地备份，请先准备备份工具。';
+    if(savedSettings?.local_auto)value+='本地自动备份已开启，等待准备备份工具。';
+    text(label,value);
+    return;
+  }
+  const version=git.version?`（${git.version}）`:'';
+  const saved=!!syncState?.local_backup?.current_backed_up;
+  if(syncState?.local_error?.user_message)text(label,`备份工具已准备好${version}，本地备份未完成：${syncState.local_error.user_message}。`);
+  else if(saved)text(label,`备份工具已准备好${version}，本地备份已保存。`);
+  else text(label,`备份工具已准备好${version}，尚未保存本地备份。`);
+}
+async function loadEnvironment(refresh=false){
+  try{
+    toolEnv=await Sync.api('GET','/onboarding/environment'+(refresh?'?refresh=true':''));
+    toolChecked=true;
+  }catch(_){toolChecked=false;}
+  renderToolStatus();
+}
 async function loadConflicts(){
   if(!conflictSession)return;
   const p=await Sync.api('GET','/conflicts/'+conflictSession+'?offset='+offset+'&limit='+limit+'&unresolved='+$s('onlyUnresolved').checked);
@@ -103,6 +142,9 @@ export const page = {
   shell: true, shopContext: "none", requireSyncReady: false, autoUpdatePrompt: false,
   async init() {
     if(!Sync.local){showLocalOnly();return;}
+    // 工具状态只在初次加载、工具操作结束与主动重新检测时取得；
+    // 现有状态轮询只读取同步状态，不反复执行 --version。
+    await loadEnvironment(false);
     document.querySelectorAll('#syncSettings input,#syncSettings button,#autoSettings input,#autoSettings button').forEach(el=>{el.disabled=true;});
     $s('syncSettings').oninput=updateConnectionState;
     $s('syncSettings').onchange=updateConnectionState;
@@ -135,8 +177,9 @@ export const page = {
     $s('localAuto').onchange=saveAuto;
     $s('autoSync').onchange=saveAuto;
     backups=mountLocalBackups({list:$s('localBackupList'),pager:$s('localBackupPager'),backupButton:$s('backupNow'),
-      request:Sync.api,onChanged:()=>refresh().catch(showRefreshError),
+      request:Sync.api,onChanged:afterBackup,
       onRestored:()=>location.reload()});
+    $s('prepareTools').onclick=e=>action(e.currentTarget,prepareTools);
     $s('testConnection').onclick=e=>{if(settingsDirty())return;action(e.currentTarget,async()=>{await Sync.api('POST','/test-connection');UI.ok('已连接到备份仓库');});};
     $s('syncNow').onclick=e=>action(e.currentTarget,async()=>{await Sync.api('POST','/run',{synchronize:true});conflictSession=null;});
     $s('checkNow').onclick=e=>action(e.currentTarget,()=>Sync.api('POST','/run',{synchronize:false}));
@@ -172,12 +215,41 @@ async function loadChanges(){
 }
 
 // 打开备份配置向导：草稿以已保存设置为准，不用未保存的表单内容隐式应用。
+// Git 前置准备在向导之前完成；取消前置准备时不打开仓库选择。
 async function openOnboarding(intent){
-  let settings;
-  try{settings=await Sync.api('GET','/settings');}
+  let settings, environment;
+  try{
+    settings=await Sync.api('GET','/settings');
+    const tools=await BackupTools.open({request:Sync.api,confirmLabel:'继续配置远端备份'});
+    if(tools.status!=='ready')return;
+    environment=tools.environment;
+    toolEnv=environment;toolChecked=true;renderToolStatus();
+  }
   catch(e){UI.fail(e.user_message||'读取备份设置暂未完成');return;}
-  BackupOnboarding.open({intent,settings,request:Sync.api,onComplete:reloadSettings,
+  BackupOnboarding.open({intent,settings,environment,request:Sync.api,onComplete:reloadSettings,
     onCancel:context=>context.result?.settings_applied?reloadSettings():refresh().catch(showRefreshError)});
 }
+// 独立的工具准备入口：只处理工具与一次手动本地保存，不涉及仓库绑定。
+async function prepareTools(){
+  const canSave=!!syncState?.local_backup?.total||!!syncState?.business_ready;
+  const tools=await BackupTools.open({request:Sync.api,confirmWhenReady:true,
+    confirmLabel:canSave?'准备完成，保存本地备份':'完成',async onReady(){
+      // 没有可用数据时只准备工具，不调用保存接口。
+      if(!canSave)return;
+      // 同一次保存的重试复用同一个幂等键；保存成功后清除。
+      if(!backupKey)backupKey=crypto.randomUUID();
+      const result=await Sync.api('POST','/backups',{idempotency_key:backupKey});
+      backupKey=null;
+      UI.ok(result.created?'已保存一份本地备份。':'数据没有变化，已保留最近的备份版本。');
+      offset=0;
+      // 保存已经成功：列表刷新失败只提示列表未刷新，不能让用户重新保存。
+      await loadBackups().catch(()=>UI.fail('本地备份已保存，备份列表暂未刷新'));
+      await afterBackup();
+    }});
+  if(tools.environment){toolEnv=tools.environment;toolChecked=true;renderToolStatus();}
+  await refresh().catch(showRefreshError);
+}
+// 本地保存动作结束后：刷新工具环境与同步状态。
+async function afterBackup(){await loadEnvironment(true);await refresh().catch(showRefreshError);}
 // 向导结束后明确重读设置表单：重置 settingsLoaded，随后刷新同步状态。
-async function reloadSettings(){settingsLoaded=false;await refresh().catch(showRefreshError);}
+async function reloadSettings(){settingsLoaded=false;await loadEnvironment(true);await refresh().catch(showRefreshError);}
