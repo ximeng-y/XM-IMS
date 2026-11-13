@@ -51,7 +51,7 @@ MODULES = {
     "xm/pages/settings": ("/static/js/pages/settings.js", 3),
     "xm/onboarding/wizard": ("/static/onboarding/wizard.js", 2),
     "xm/onboarding/backup": ("/static/onboarding/backup.js", 5),
-    "xm/onboarding/first-use": ("/static/onboarding/first-use.js", 5),
+    "xm/onboarding/first-use": ("/static/onboarding/first-use.js", 6),
 }
 
 # 样式资源同样逐项登记；页面清单只引用这里的键。
@@ -66,7 +66,7 @@ STYLES = {
     "css/pages/overview": ("/static/css/pages/overview.css", 1),
     "css/pages/shops": ("/static/css/pages/shops.css", 5),
     "css/pages/sync": ("/static/css/pages/sync.css", 2),
-    "css/onboarding": ("/static/onboarding/onboarding.css", 4),
+    "css/onboarding": ("/static/onboarding/onboarding.css", 5),
 }
 
 # 启动入口：所有页面共用同一模块，页面能力由入口模块导出的 page 描述决定。

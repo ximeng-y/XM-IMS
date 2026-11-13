@@ -27,6 +27,9 @@ export const page = {
       if (error?.user_hint) box.append(node("p", error.user_hint));
       return box;
     }
+    // 本地备份失败的提示挂在首启容器之外：向导就地替换容器内容时，原因与重试入口仍在。
+    const backupNotice = node("div", undefined, "sync-onboarding onboarding-backup-notice");
+    root.before(backupNotice);
     async function run(action) {
       if (busy) return;
       busy = true;
@@ -58,6 +61,28 @@ export const page = {
       if (result.status === "ready") { toolsChecked = true; return true; }
       if (result.status === "skipped") { toolsSkipped = true; return true; }
       return false; // 取消回到开始选项
+    }
+    // 本地备份失败的独立提示：原因与重试入口放在向导之外，向导替换内容时不会一并消失。
+    // 重试只重发保存请求，成功后就地清除提示，不重新创建店铺。
+    function backupFailureBox(error, host) {
+      const box = node("section", undefined, "sync-onboarding-error");
+      box.append(node("strong", error?.user_message || "本地备份暂未完成"));
+      if (error?.user_hint) box.append(node("p", error.user_hint));
+      const retry = node("button", "重试本地备份", "btn-outline");
+      retry.type = "button";
+      retry.onclick = async () => {
+        retry.disabled = true;
+        retry.textContent = "正在保存…";
+        const result = await backupAfterCreate();
+        if (result?.error) {
+          host.replaceChildren(backupFailureBox(result.error, host));
+          return;
+        }
+        // 条件已不再满足（关闭自动备份或工具不可用）时不报告已保存。
+        host.replaceChildren(result ? node("p", "本地备份已保存。", "sync-onboarding-note") : node("div"));
+      };
+      box.append(retry);
+      return box;
     }
     // 首店创建成功后：Git 可用且保存的 local_auto=true 时单独保存一次本地备份。
     // 没有可用工具或没有可用数据时不发请求。
@@ -171,12 +196,13 @@ export const page = {
       if (tools.status !== "ready") return; // 取消前置准备时不打开仓库选择
       // 环境快照与工具是否就绪以本次准备结果为准，后续保存判断不再依赖旧的跳过状态。
       toolsEnv = tools.environment;
-      if (intent !== "restore" && hasLocalData && toolsEnv?.git?.available) {
-        // 已有可用本机数据且 local_auto=true：先重试本地备份，再进入仓库选择。
-        const settings = await Sync.api("GET", "/settings");
-        if (settings.local_auto) await backupAfterCreate();
-      }
+      backupNotice.replaceChildren();
       const settings = await Sync.api("GET", "/settings");
+      if (intent !== "restore" && hasLocalData && toolsEnv?.git?.available && settings.local_auto) {
+        // 已有可用本机数据且 local_auto=true：先补一次本地备份；失败在向导外保留原因与重试入口。
+        const backup = await backupAfterCreate();
+        if (backup?.error) backupNotice.append(backupFailureBox(backup.error, backupNotice));
+      }
       backupActive = true;
       BackupOnboarding.mount({ container: root, intent, settings, request: Sync.api,
         environment: tools.environment, completeLabel: "开始使用",
