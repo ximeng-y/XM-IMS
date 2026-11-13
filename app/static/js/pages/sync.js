@@ -11,6 +11,7 @@ import { mountLocalBackups } from "xm/components/local-backups";
 
 let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changesOffset=0, settingsLoaded=false, savedSettings=null, backups=null;
 let toolEnv=null, toolChecked=false;
+let firstEntry=true;
 const limit=20;
 const $s=id=>document.getElementById(id);
 const text=(node,value)=>{node.textContent=value;};
@@ -37,6 +38,7 @@ function showRefreshError(error){
 async function refresh(){
   if(!Sync.local){showLocalOnly();return;}
   syncState=await Sync.api('GET','/status');Sync.render(syncState);
+  $s('backupNow').disabled=syncState.busy||firstEntry;
   if(!settingsLoaded){
     const settings=await Sync.api('GET','/settings');savedSettings=settings;
     $s('remoteUrl').value=settings.remote;$s('dataBranch').value=settings.branch;$s('deviceName').value=settings.device;$s('syncInterval').value=settings.interval;
@@ -57,7 +59,7 @@ async function refresh(){
     $s('backupNow').title='';
   }
   const first=await Sync.api('GET','/onboarding/first-use/status');
-  const firstEntry=['choose_source','create_shop','restore_pending'].includes(first.phase)||(first.phase==='waiting'&&!first.has_local_data);
+  firstEntry=['choose_source','create_shop','restore_pending'].includes(first.phase)||(first.phase==='waiting'&&!first.has_local_data);
   const firstBackup=first.has_local_data&&!syncState.business_ready&&['initialize','binding'].includes(syncState.state);
   $s('continueFirstUse').hidden=!firstEntry;
   $s('offlineEnter').hidden=syncState.state!=='offline'||!first.has_local_data;
@@ -140,6 +142,7 @@ export const page = {
   shell: true, shopContext: "none", requireSyncReady: false, autoUpdatePrompt: false,
   async init() {
     if(!Sync.local){showLocalOnly();return;}
+    $s('backupNow').disabled=true;
     // 工具状态只在初次加载、工具操作结束与主动重新检测时取得；
     // 现有状态轮询只读取同步状态，不反复执行 --version。
     await loadEnvironment(false);

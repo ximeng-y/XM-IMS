@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from .common import fail
 from .. import config
 from ..platform_tools import locations
+from ..platform_tools.processes import run_hidden_memory
 from ..storage.files import remove_tree, replace_path
 
 
@@ -279,9 +280,9 @@ class GitStore:
                  user_hint="请确认已安装 Git、网络可用，且本机已保存仓库的登录凭证")
         # 不使用 shell，不把远端响应直接展示给用户，以免泄漏凭证。
         try:
-            result = subprocess.run([git_exe, *self.config_args(), *args],
-                                    cwd=cwd or self.root, input=data, capture_output=True, env=env, timeout=60,
-                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            result = run_hidden_memory(
+                [git_exe, *self.config_args(), *args], cwd=cwd or self.root,
+                data=data, env=env, timeout=60, capture_stderr=True)
         except (OSError, subprocess.TimeoutExpired):
             fail("GIT_UNAVAILABLE", "Git 不可用或操作超时，请检查安装、网络和系统凭证",
                  user_message="无法使用本机的版本管理工具",
