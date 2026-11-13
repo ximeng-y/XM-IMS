@@ -30,11 +30,17 @@ dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body > .dlg-form {
   display: flex;
   flex-direction: column;
 }
-/* 编辑区之外的各项保持自身高度，只有编辑区参与伸缩 */
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body > .dlg-form > *:not([data-fx-editor]) {
+/* 编辑区之外的各项保持自身高度，只有编辑区参与伸缩。用 :not([hidden]) 限定，
+   否则 display:flex 会盖过 hidden 属性带来的 display:none */
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) > .dlg-body > .dlg-form > *:not([data-fd-formula]) {
   flex: 0 0 auto;
 }
-dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) [data-fx-editor] {
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) [data-fd-formula]:not([hidden]) {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) [data-fd-editor] {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -47,8 +53,9 @@ dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) [data-fx-editor] {
 .dlg-formula .fx-editor > .fx-preview,
 .dlg-formula .fx-editor > .fx-actions { flex: 0 0 auto; }
 .dlg-formula .fx-palette { flex: 1 1 auto; }
-/* 结果格式区铺满宽弹窗：三格等宽（小数位格在整数类型下收起，其余两格留在原位） */
-.dlg-form-formula .form-grid { grid-template-columns: repeat(3, 1fr); }
+/* 结果格式区铺满宽弹窗：按可用宽度排成等宽列（新建计算属性时含类型下拉共四格，
+   编辑公式时是三格），窄容器由下方媒体查询压成单列 */
+.dlg-form-formula .form-grid { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
 
 .fx-editor { border: 1px solid var(--line-light); background: #fff; padding: .8rem .9rem; }
 .fx-pane-title { font-size: .78rem; color: var(--ink-soft); margin-bottom: .35rem; }

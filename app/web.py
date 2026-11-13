@@ -44,7 +44,7 @@ MODULES = {
     "xm/pages/inventory-viewport": ("/static/js/pages/inventory-viewport.js", 1),
     "xm/pages/items": ("/static/js/pages/items.js", 14),
     "xm/pages/spus": ("/static/js/pages/spus.js", 10),
-    "xm/pages/fields": ("/static/js/pages/fields.js", 12),
+    "xm/pages/fields": ("/static/js/pages/fields.js", 14),
     "xm/pages/movements": ("/static/js/pages/movements.js", 5),
     "xm/pages/shops": ("/static/js/pages/shops.js", 5),
     "xm/pages/sync": ("/static/js/pages/sync.js", 16),
@@ -57,7 +57,7 @@ MODULES = {
 # 样式资源同样逐项登记；页面清单只引用这里的键。
 # 加载顺序：基础样式（base.html 固定引用）→ 组件样式 → 页面样式。
 STYLES = {
-    "css/components/formula-editor": ("/static/css/components/formula-editor.css", 1),
+    "css/components/formula-editor": ("/static/css/components/formula-editor.css", 2),
     "css/components/item-form": ("/static/css/components/item-form.css", 1),
     "css/components/sortable-list": ("/static/css/components/sortable-list.css", 1),
     "css/pages/catalog": ("/static/css/pages/catalog.css", 1),
