@@ -23,7 +23,7 @@ function showLocalOnly(){
   document.querySelectorAll('.sync-page button,.sync-page input').forEach(el=>{el.disabled=true;});
   $s('settingsPanel').hidden=true;$s('conflictPanel').hidden=true;$s('initializeBox').hidden=true;
   $s('autoSettings').hidden=true;$s('localBackupPanel').hidden=true;
-  $s('offlineEnter').hidden=true;$s('enterApp').hidden=false;$s('enterApp').textContent='返回应用';
+  $s('offlineEnter').hidden=true;
 }
 function showRefreshError(error){
   if(!Sync.local){showLocalOnly();return;}
@@ -46,12 +46,10 @@ async function refresh(){
   if(syncState.legacy_present && syncState.state==='setup')message+=' 检测到旧数据库，原文件已保留。';
   if(syncState.local_error?.user_message)message+=' '+syncState.local_error.user_message+'。';
   text($s('syncMessage'),message);
-  $s('enterApp').hidden=!syncState.business_ready;
   const first=await Sync.api('GET','/onboarding/first-use/status');
   const firstEntry=['choose_source','create_shop','restore_pending'].includes(first.phase)||(first.phase==='waiting'&&!first.has_local_data);
   const firstBackup=first.has_local_data&&!syncState.business_ready&&['initialize','binding'].includes(syncState.state);
   $s('continueFirstUse').hidden=!firstEntry;
-  if(firstEntry)$s('enterApp').hidden=true;
   $s('offlineEnter').hidden=syncState.state!=='offline'||!first.has_local_data;
   $s('offlineEnter').disabled=syncState.busy;
   $s('initializeBox').hidden=!['setup','initialize','binding'].includes(syncState.state);
