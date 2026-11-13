@@ -4,9 +4,10 @@ Token 只存在于请求头与本进程内存，不进日志、异常文本或�
 的只读请求提供有界退避，创建仓库、推送与浏览器授权不自动重试。
 """
 import json
+import os
+import select
 import subprocess
 import tempfile
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -20,6 +21,18 @@ RETRY_DELAYS = (2.0, 5.0)
 DOWNLOAD_DEADLINE = 240.0
 INSTALLER_TIMEOUT = 300
 LOGIN_TIMEOUT = 180
+
+if os.name == "nt":
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    _PEEK_NAMED_PIPE = ctypes.WinDLL("kernel32", use_last_error=True).PeekNamedPipe
+    _PEEK_NAMED_PIPE.argtypes = [
+        wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, wintypes.LPVOID,
+        ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+    ]
+    _PEEK_NAMED_PIPE.restype = wintypes.BOOL
 
 
 class GitHubHttpError(Exception):
@@ -123,9 +136,9 @@ def run_hidden(argv, env=None, timeout=30, data=None):
 def run_hidden_memory(argv, env=None, timeout=30, data=None):
     """后台子进程：隐藏窗口，标准输出只保存在本进程内存。
 
-    Windows Git 启动包装器可能留下继续持有输出管道的子进程。这里由独立线程
-    持续读取内存，并以同一截止时间收口；超时后终止进程并关闭管道，避免等待 EOF
-    无限挂起，也避免凭据被写入临时文件。
+    Windows Git 启动包装器可能留下继续持有输出管道的子进程。这里只用同一截止
+    时间主动读取管道，不启动会阻塞在 read() 的线程；超时后可直接关闭管道并返回，
+    避免等待 EOF 无限挂起，也避免凭据被写入临时文件。
     """
     with tempfile.TemporaryFile() as stdin_file:
         if data is None:
@@ -137,45 +150,74 @@ def run_hidden_memory(argv, env=None, timeout=30, data=None):
         process = subprocess.Popen(
             argv, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        output = bytearray()
-
-        def read_output():
-            try:
-                while True:
-                    chunk = process.stdout.read(65536)
-                    if not chunk:
-                        return
-                    output.extend(chunk)
-            except (OSError, ValueError):
-                return
-
-        reader = threading.Thread(target=read_output, daemon=True)
-        reader.start()
         deadline = time.monotonic() + timeout
         try:
-            process.wait(timeout=timeout)
+            output = _read_pipe_until_eof(process, deadline, timeout)
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
-            pass
-        else:
-            reader.join(timeout=max(0.0, deadline - time.monotonic()))
-
-        if process.poll() is None or reader.is_alive():
-            try:
-                process.kill()
-            except OSError:
-                pass
+            _stop_process(process)
+            raise subprocess.TimeoutExpired(argv, timeout) from None
+        except BaseException:
+            _stop_process(process)
+            raise
+        finally:
             if process.stdout:
                 try:
                     process.stdout.close()
-                except OSError:
+                except (OSError, ValueError):
                     pass
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass
-            reader.join(timeout=1)
-            raise subprocess.TimeoutExpired(argv, timeout)
+        return subprocess.CompletedProcess(argv, process.returncode, output, b"")
 
-        if process.stdout:
-            process.stdout.close()
-        return subprocess.CompletedProcess(argv, process.returncode, bytes(output), b"")
+
+def _read_pipe_until_eof(process, deadline, timeout):
+    """按截止时间主动读取管道；Windows 不依赖可能被后代进程占住的 EOF。"""
+    fd = process.stdout.fileno()
+    output = bytearray()
+    if os.name == "nt":
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            available = _pipe_available(fd)
+            if available is None:
+                return bytes(output)
+            if available:
+                output.extend(os.read(fd, min(available, 65536)))
+                continue
+            time.sleep(min(0.01, remaining))
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        if not select.select([fd], [], [], remaining)[0]:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return bytes(output)
+        output.extend(chunk)
+
+
+def _pipe_available(fd):
+    """返回 Windows 管道可读字节数；写端全部关闭时返回 None。"""
+    available = wintypes.DWORD()
+    handle = msvcrt.get_osfhandle(fd)
+    if _PEEK_NAMED_PIPE(handle, None, 0, None, ctypes.byref(available), None):
+        return available.value
+    error = ctypes.get_last_error()
+    if error in (109, 232):
+        return None
+    raise ctypes.WinError(error)
+
+
+def _stop_process(process):
+    """终止仍在运行的本层进程；等待上限固定，避免超时清理再次挂住。"""
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        pass
