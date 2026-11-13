@@ -143,6 +143,12 @@ function registerIpc() {
       if (!state || state.availability !== "available" || state.latest_tag !== tag) {
         return { ok: false, user_message: "暂时无法确认这个版本，请重新检查更新" };
       }
+      // 请求已被接受：记录必须在下载安装包之前成功落盘，否则本次不更新。
+      try {
+        updater.recordUpdateRequest(tag);
+      } catch (_) {
+        return { ok: false, user_message: "无法保存更新记录，请确认数据目录可写后重试" };
+      }
       const downloaded = await updater.download();
       if (!downloaded.ok) return downloaded;
       // 同步状态只读取现有公开接口；忙时先让用户完成当前备份 / 同步。
@@ -182,6 +188,8 @@ async function main() {
   app.setPath("sessionData", paths.desktopProfile);
   prepareDirectories();
   updater.setCurrentVersion(pkg.version);
+  // 新进程实际版本已加载：核对上次接受的目标是否已安装到位
+  updater.confirmInstalledUpdate();
 
   await app.whenReady();
   let url;

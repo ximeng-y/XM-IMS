@@ -10,6 +10,7 @@
 `git fetch` + `git archive` 导出，不依赖匿名下载。
 """
 import json
+import logging
 import os
 import re
 import shutil
@@ -22,7 +23,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .. import db
-from ..config import BASE_DIR, DATA_ROOT, DESKTOP_MODE
+from ..config import BASE_DIR, DATA_ROOT, DESKTOP_MODE, now_iso
 from ..errors import error_dict
 from ..storage.files import atomic_json, read_json
 from ..version import APP_VERSION
@@ -56,6 +57,8 @@ _confirmed_target = None
 _PROCESS_STARTED = time.time()
 _SKIPPED = {"data", ".git", ".venv", ".xmtemp", "backups", "exports", ".env"}
 
+log = logging.getLogger(__name__)
+
 # 用户设置：与同步设置同级存放，切换数据代次不影响
 DEFAULT_SETTINGS = {"auto_check": True}
 
@@ -83,6 +86,37 @@ def save_settings(values):
         current["auto_check"] = values["auto_check"]
     atomic_json(_settings_path(), current)
     return current
+
+
+def _update_record_path():
+    """最近一次被接受的更新请求记录；独立于设置对象、活动代次与程序文件"""
+    return DATA_ROOT / "update" / "last-update.json"
+
+
+def _record_update_request(tag):
+    """在下载与替换程序文件之前保存本次更新请求；写入失败由调用方中止更新"""
+    version = parse_version(tag)
+    if version is None:
+        raise ValueError("更新标签必须为 vX.Y.Z 格式")
+    atomic_json(_update_record_path(), {
+        "from_version": APP_VERSION,
+        "to_version": ".".join(str(x) for x in version),
+        "confirmed_at": now_iso(),
+        "status": "accepted",
+    })
+
+
+def _mark_update_installed():
+    """程序文件安装完成：只改记录状态，保留接受时的起止版本与确认时间"""
+    path = _update_record_path()
+    try:
+        record = read_json(path)
+        if not isinstance(record, dict):
+            return
+        record["status"] = "installed"
+        atomic_json(path, record)
+    except (OSError, ValueError):
+        log.warning("更新记录完成状态写入失败，保留已保存的接受记录")
 
 
 def _git(args, timeout):
@@ -447,6 +481,11 @@ def _install_update(tag, expected_sha):
             return {"ok": False,
                     "message": "上一次更新没有完成，请先恢复后再更新",
                     "hint": "检查 .XMTEMP/xmims-update-*/pending.json 与 backup/ 后恢复"}
+        # 请求已被接受：记录必须先落盘，才能继续下载与替换程序文件。
+        try:
+            _record_update_request(tag)
+        except (OSError, ValueError):
+            return {"ok": False, "message": "无法保存更新记录，请确认数据目录可写后重试"}
         tmp = Path(tempfile.mkdtemp(prefix="xmims-update-", dir=temp_root))
         src = tmp / "src"
         src.mkdir()
@@ -528,6 +567,8 @@ def install_update(tag, expected_sha):
         result = _install_update(tag, expected_sha)
         if result["ok"]:
             _installed_tag = tag
+            # 程序文件已安装完成；完成状态写入失败不影响本次成功返回
+            _mark_update_installed()
         return result
     finally:
         _install_lock.release()
