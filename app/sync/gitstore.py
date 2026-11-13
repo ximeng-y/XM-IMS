@@ -28,9 +28,11 @@ _PROBE_TIMEOUT = 5
 
 def _exe_works(argv, timeout=_PROBE_TIMEOUT):
     try:
-        # 只判断退出码，不接管输出：Windows 的 Git 启动包装器可能留下继承管道的子进程，
-        # 一旦超时后再等待管道 EOF，subprocess.run 的清理会失去时间上限。
-        result = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        # 只判断退出码并隔离标准流：Windows 的 Git 启动包装器可能留下继承管道的子进程，
+        # 一旦超时后再等待管道 EOF，subprocess.run 的清理会失去时间上限。桌面后台另有
+        # 线程持续读取自身标准输入，子进程不能继承那条管道，否则探测会互相阻塞。
+        result = subprocess.run(argv, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 timeout=timeout,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.TimeoutExpired):
@@ -45,6 +47,16 @@ def _git_in_dir(base):
         exe = Path(base) / sub / ("git.exe" if os.name == "nt" else "git")
         if exe.is_file():
             yield str(exe)
+
+
+def _unique_candidates(candidates):
+    """按实际路径去重候选；保留原顺序，避免同一 Git 被重复探测。"""
+    seen = set()
+    for candidate in candidates:
+        key = os.path.normcase(os.path.abspath(candidate))
+        if key not in seen:
+            seen.add(key)
+            yield candidate
 
 
 def _system_git_candidates():
@@ -104,7 +116,8 @@ def locate_git(refresh=False):
     global _git_exe
     with _locate_lock:
         if refresh or _git_exe is None:
-            found = next((c for c in _git_candidates() if _exe_works([c, "--version"])), None)
+            found = next((c for c in _unique_candidates(_git_candidates())
+                          if _exe_works([c, "--version"])), None)
             changed = found != _git_exe
             _git_exe = found
             if refresh and changed:
@@ -130,7 +143,8 @@ def locate_git_from(base):
 
 def locate_system_git():
     """系统候选里第一个可执行的 Git；不看 locations 记录。"""
-    return next((c for c in _system_git_candidates() if _exe_works([c, "--version"])), None)
+    return next((c for c in _unique_candidates(_system_git_candidates())
+                 if _exe_works([c, "--version"])), None)
 
 
 def locate_gcm(refresh=False):
