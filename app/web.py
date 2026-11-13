@@ -43,7 +43,7 @@ MODULES = {
     "xm/pages/inventory-viewport": ("/static/js/pages/inventory-viewport.js", 1),
     "xm/pages/items": ("/static/js/pages/items.js", 14),
     "xm/pages/spus": ("/static/js/pages/spus.js", 10),
-    "xm/pages/fields": ("/static/js/pages/fields.js", 13),
+    "xm/pages/fields": ("/static/js/pages/fields.js", 14),
     "xm/pages/movements": ("/static/js/pages/movements.js", 5),
     "xm/pages/shops": ("/static/js/pages/shops.js", 5),
     "xm/pages/sync": ("/static/js/pages/sync.js", 15),

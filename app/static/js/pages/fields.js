@@ -310,9 +310,11 @@ function fieldDialog({ field = null, onSaved }) {
     }
   });
 
-  // 名称框内回车即提交；公式编辑器里的数字输入框自行拦截回车，不会误触
+  // 名称框内回车即提交；输入法选字确认时派发的回车不算提交（isComposing 与
+  // keyCode 229 覆盖不同浏览器），否则组合中文名称会提前发出保存。公式编辑器
+  // 里的数字输入框自行拦截回车，不会误触
   nameEl.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
+    if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
     save.click();
   });
