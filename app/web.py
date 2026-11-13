@@ -47,7 +47,7 @@ MODULES = {
     "xm/pages/fields": ("/static/js/pages/fields.js", 12),
     "xm/pages/movements": ("/static/js/pages/movements.js", 5),
     "xm/pages/shops": ("/static/js/pages/shops.js", 5),
-    "xm/pages/sync": ("/static/js/pages/sync.js", 15),
+    "xm/pages/sync": ("/static/js/pages/sync.js", 16),
     "xm/pages/settings": ("/static/js/pages/settings.js", 3),
     "xm/onboarding/wizard": ("/static/onboarding/wizard.js", 2),
     "xm/onboarding/backup": ("/static/onboarding/backup.js", 5),
@@ -64,7 +64,7 @@ STYLES = {
     "css/pages/inventory": ("/static/css/pages/inventory.css", 1),
     "css/pages/movements": ("/static/css/pages/movements.css", 1),
     "css/pages/overview": ("/static/css/pages/overview.css", 1),
-    "css/pages/shops": ("/static/css/pages/shops.css", 4),
+    "css/pages/shops": ("/static/css/pages/shops.css", 5),
     "css/pages/sync": ("/static/css/pages/sync.css", 2),
     "css/onboarding": ("/static/onboarding/onboarding.css", 4),
 }
