@@ -13,6 +13,8 @@ export const page = {
     let state = null, name = "", requestKey = null, createdHere = false, backupActive = false, busy = false;
     // 本页只在从零开始时准备一次工具，渲染或输入不重复打开弹窗。
     let toolsChecked = false, toolsSkipped = false, toolsEnv = null, backupRequestKey = null;
+    // 本机数据是否存在以状态接口为准；创建成功与读回成功时同步更新。
+    let hasLocalData = false;
     const node = (tag, text, cls) => {
       const el = document.createElement(tag);
       if (text !== undefined) el.textContent = text;
@@ -63,7 +65,6 @@ export const page = {
       try {
         const settings = await Sync.api("GET", "/settings");
         if (!settings.local_auto) return null;
-        if (toolsSkipped && !toolsEnv?.git?.available) return null;
         if (!toolsEnv) toolsEnv = await Sync.api("GET", "/onboarding/environment");
         if (!toolsEnv.git?.available) return null;
         // 同一次保存的重试复用同一个幂等键；成功后清除。
@@ -106,6 +107,14 @@ export const page = {
             button("配置远端备份（可稍后）", () => startBackup("backup")));
           return actions; })());
     }
+    // 首店已存在时的统一收尾：正常响应与两处成功读回都走这里，
+    // 只补一次本地保存，不重新创建店铺。
+    async function finishCreate(preferred) {
+      createdHere = true;
+      hasLocalData = true;
+      const backup = await backupAfterCreate();
+      showComplete(preferred, backup?.error);
+    }
     async function showShop() {
       if (!(await prepareTools())) { await refresh(); return; }
       root.replaceChildren(node("h2", "创建第一间店铺"),
@@ -128,21 +137,22 @@ export const page = {
         run(async () => {
           // 重试先读回首店；成功回执丢失时也不会再创建第二间店铺。
           state = await Sync.api("GET", "/onboarding/first-use/status");
-          if (state.phase === "ready") { createdHere = true; showComplete(); return; }
+          hasLocalData = !!state.has_local_data;
+          if (state.phase === "ready") { await finishCreate(); return; }
           if (!["choose_source", "create_shop"].includes(state.phase)) { await refresh(); return; }
           if (!requestKey) requestKey = crypto.randomUUID();
           try {
             const result = await Sync.api("POST", "/onboarding/first-use/shop",
               { name: name.trim(), confirm: true, idempotency_key: requestKey });
             state = { phase: result.phase, shops: [result.shop], sync: result.sync };
-            createdHere = true;
             // 店铺已创建：本地备份失败不撤销店铺，也不把创建按钮变回可重试状态。
-            const backup = await backupAfterCreate();
-            showComplete(result.shop.id, backup?.error);
+            await finishCreate(result.shop.id);
           } catch (error) {
             const actual = await Sync.api("GET", "/onboarding/first-use/status");
             state = actual;
-            if (actual.phase === "ready") { createdHere = true; showComplete(); }
+            // 服务端已建店（回执丢失或重试读回成功）时同样补一次本地保存。
+            hasLocalData = !!actual.has_local_data;
+            if (actual.phase === "ready") await finishCreate();
             else root.append(errorBox(error));
           }
         });
@@ -159,7 +169,9 @@ export const page = {
         tools = await BackupTools.open({ request: Sync.api, confirmLabel: "继续配置远端备份" });
       } catch (error) { root.append(errorBox(error)); return; }
       if (tools.status !== "ready") return; // 取消前置准备时不打开仓库选择
-      if (intent !== "restore" && state?.has_local_data && tools.environment?.git?.available) {
+      // 环境快照与工具是否就绪以本次准备结果为准，后续保存判断不再依赖旧的跳过状态。
+      toolsEnv = tools.environment;
+      if (intent !== "restore" && hasLocalData && toolsEnv?.git?.available) {
         // 已有可用本机数据且 local_auto=true：先重试本地备份，再进入仓库选择。
         const settings = await Sync.api("GET", "/settings");
         if (settings.local_auto) await backupAfterCreate();
@@ -185,6 +197,7 @@ export const page = {
       }
       try {
         state = await Sync.api("GET", "/onboarding/first-use/status");
+        hasLocalData = !!state.has_local_data;
         if (backupActive) return;
         if (state.phase === "ready") {
           if (createdHere) showComplete();

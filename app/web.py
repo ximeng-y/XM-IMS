@@ -51,7 +51,7 @@ MODULES = {
     "xm/pages/settings": ("/static/js/pages/settings.js", 3),
     "xm/onboarding/wizard": ("/static/onboarding/wizard.js", 2),
     "xm/onboarding/backup": ("/static/onboarding/backup.js", 5),
-    "xm/onboarding/first-use": ("/static/onboarding/first-use.js", 4),
+    "xm/onboarding/first-use": ("/static/onboarding/first-use.js", 5),
 }
 
 # 样式资源同样逐项登记；页面清单只引用这里的键。

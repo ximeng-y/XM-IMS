@@ -10,7 +10,7 @@ import { BackupTools } from "xm/components/backup-tools";
 import { mountLocalBackups } from "xm/components/local-backups";
 
 let syncState=null, conflictSession=null, revision=0, offset=0, total=0, changesOffset=0, settingsLoaded=false, savedSettings=null, backups=null;
-let toolEnv=null, toolChecked=false, backupKey=null;
+let toolEnv=null, toolChecked=false;
 const limit=20;
 const $s=id=>document.getElementById(id);
 const text=(node,value)=>{node.textContent=value;};
@@ -212,6 +212,19 @@ async function loadChanges(){
   $s('previousChanges').disabled=changesOffset===0;$s('nextChanges').disabled=changesOffset+limit>=p.total;
 }
 
+// 工具就绪后的条件本地备份：已有本机数据、开启本地自动备份且当前内容尚未保存时补一次。
+// 失败只提示，不阻止继续配置远端备份。
+async function backupIfPending(settings){
+  const hasData=!!syncState?.business_ready||!!syncState?.local_backup?.total;
+  if(!hasData||!settings?.local_auto||syncState?.local_backup?.current_backed_up)return;
+  try{
+    const result=await Sync.api('POST','/backups',{idempotency_key:crypto.randomUUID()});
+    UI.ok(result.created?'已保存一份本地备份。':'本地备份已是最新。');
+  }catch(e){
+    UI.fail(e.user_message||'本地备份暂未完成',{title:UI.codeTitle(e.code)||'本地备份暂未完成',hint:e.user_hint||''});
+  }
+  await afterBackup();
+}
 // 打开备份配置向导：草稿以已保存设置为准，不用未保存的表单内容隐式应用。
 // Git 前置准备在向导之前完成；取消前置准备时不打开仓库选择。
 async function openOnboarding(intent){
@@ -222,6 +235,8 @@ async function openOnboarding(intent){
     if(tools.status!=='ready')return;
     environment=tools.environment;
     toolEnv=environment;toolChecked=true;renderToolStatus();
+    // 此前可能因缺工具或保存失败没有完成备份，工具就绪后按设置补一次。
+    await backupIfPending(settings);
   }
   catch(e){UI.fail(e.user_message||'读取备份设置暂未完成');return;}
   BackupOnboarding.open({intent,settings,environment,request:Sync.api,onComplete:reloadSettings,
@@ -230,11 +245,13 @@ async function openOnboarding(intent){
 // 独立的工具准备入口：只处理工具与一次手动本地保存，不涉及仓库绑定。
 async function prepareTools(){
   const canSave=!!syncState?.local_backup?.total||!!syncState?.business_ready;
+  // 幂等键只属于本次准备窗口：同一窗口内重试沿用，关闭后新操作重新生成，
+  // 避免服务端已保存但回执丢失时重放旧回执而不保存当前数据。
+  let backupKey=null;
   const tools=await BackupTools.open({request:Sync.api,confirmWhenReady:true,
     confirmLabel:canSave?'准备完成，保存本地备份':'完成',async onReady(){
       // 没有可用数据时只准备工具，不调用保存接口。
       if(!canSave)return;
-      // 同一次保存的重试复用同一个幂等键；保存成功后清除。
       if(!backupKey)backupKey=crypto.randomUUID();
       const result=await Sync.api('POST','/backups',{idempotency_key:backupKey});
       backupKey=null;
