@@ -1,0 +1,38 @@
+# 与基础检查独立运行，只执行已有的共享执行器与本地备份回归测试。
+name: 回归测试
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  backup-regression:
+    name: 本地备份回归测试
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 准备 Python 3.12 x64
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.10"
+          architecture: x64
+      - name: 创建项目内虚拟环境
+        run: python -m venv .XMTEMP/actions/venv
+      - name: 安装项目依赖
+        run: .XMTEMP/actions/venv/Scripts/python.exe -m pip install --disable-pip-version-check -r requirements.txt
+      - name: 执行回归测试
+        run: .XMTEMP/actions/venv/Scripts/python.exe -B tests/run.py

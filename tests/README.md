@@ -3,17 +3,22 @@
 这组测试仅覆盖共享进程执行器边界和一条真实本地备份流程，使用 Python 标准库
 `unittest`，不引入测试框架依赖。
 
-## 运行
+## CI 执行
 
 需要 Python 3.12、`requirements.txt` 中的现有依赖，以及可用的 Git。
-在项目根目录执行：
+独立的 `.github/workflows/tests.yml` 在面向 `main` 的 PR 和 `main` 推送时自动执行，
+与基础检查工作流并行。CI 使用 Windows 环境，通过 `tests/run.py` 运行全部 14 个用例。
+
+## 本地执行
+
+按 `AGENTS.md` 约定，只有用户明确要求“不开 PR、直接合并”时才允许在本地运行
+必要测试。在项目根目录执行：
 
 ```powershell
 .\.venv\Scripts\python.exe -B tests/run.py
 ```
 
 使用其他已安装项目依赖的 Python 环境时，执行 `python -B tests/run.py`。
-未来测试 CI 可以调用同一入口；当前未接入 CI。
 
 运行器会在项目 `.XMTEMP` 下创建独立临时目录，并为子进程设置隔离的数据目录和
 程序目录。不会使用真实店铺数据、远端仓库或 GitHub 凭据，结束后清理本次测试目录。
