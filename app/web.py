@@ -21,7 +21,7 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # 只改启动入口的版本不足以让浏览器更新已缓存的子模块。
 MODULES = {
     "xm/api": ("/static/js/api.js", 4),
-    "xm/ui": ("/static/js/ui.js", 21),
+    "xm/ui": ("/static/js/ui.js", 22),
     "xm/shop-context": ("/static/js/runtime/shop-context.js", 1),
     "xm/sync": ("/static/js/sync-common.js", 7),
     "xm/update": ("/static/js/update.js", 6),
@@ -33,9 +33,10 @@ MODULES = {
     "xm/components/delete-flow": ("/static/js/components/delete-flow.js", 2),
     "xm/components/sortable-list": ("/static/js/components/sortable-list.js", 5),
     "xm/components/formula-editor": ("/static/js/components/formula-editor.js", 5),
-    "xm/components/item-form": ("/static/js/components/item-form.js", 11),
-    "xm/components/item-picker": ("/static/js/components/item-picker.js", 1),
-    "xm/components/ops-forms": ("/static/js/components/ops-forms.js", 9),
+    "xm/components/item-form": ("/static/js/components/item-form.js", 12),
+    "xm/components/item-info": ("/static/js/components/item-info.js", 1),
+    "xm/components/item-picker": ("/static/js/components/item-picker.js", 2),
+    "xm/components/ops-forms": ("/static/js/components/ops-forms.js", 10),
     "xm/components/dependency-install": ("/static/js/components/dependency-install.js", 2),
     "xm/components/backup-tools": ("/static/js/components/backup-tools.js", 3),
     "xm/pages/overview": ("/static/js/pages/overview.js", 9),
@@ -58,7 +59,9 @@ MODULES = {
 # 加载顺序：基础样式（base.html 固定引用）→ 组件样式 → 页面样式。
 STYLES = {
     "css/components/formula-editor": ("/static/css/components/formula-editor.css", 2),
-    "css/components/item-form": ("/static/css/components/item-form.css", 1),
+    "css/components/item-form": ("/static/css/components/item-form.css", 2),
+    "css/components/item-info": ("/static/css/components/item-info.css", 1),
+    "css/components/ops-forms": ("/static/css/components/ops-forms.css", 1),
     "css/components/sortable-list": ("/static/css/components/sortable-list.css", 1),
     "css/pages/catalog": ("/static/css/pages/catalog.css", 1),
     "css/pages/inventory": ("/static/css/pages/inventory.css", 1),
@@ -77,9 +80,11 @@ BOOTSTRAP = ("/static/js/runtime/bootstrap.js", 2)
 PAGES = {
     "overview": {"module": "xm/pages/overview", "styles": ("css/pages/overview",)},
     "inventory": {"module": "xm/pages/inventory",
-                  "styles": ("css/components/item-form", "css/pages/inventory")},
+                  "styles": ("css/components/item-form", "css/components/item-info",
+                             "css/components/ops-forms", "css/pages/inventory")},
     "items": {"module": "xm/pages/items",
-              "styles": ("css/components/item-form", "css/pages/catalog")},
+              "styles": ("css/components/item-form", "css/components/item-info",
+                         "css/pages/catalog")},
     "spus": {"module": "xm/pages/spus", "styles": ("css/pages/catalog",)},
     "fields": {"module": "xm/pages/fields",
                "styles": ("css/components/formula-editor", "css/pages/catalog")},

@@ -128,13 +128,13 @@ function openCreateDialog() {
     onCreated: () => { offset = 0; loadItems(); },
     onSpuCreated: () => fillSpuSelects(),
     onSpusChanged: applySpus,
-    // issue #33：重名提示里选「编辑这个当前已有的 SKU」时打开同一个编辑小窗
+    // issue #33：同名提醒里选「编辑这个当前已有的 SKU」时打开同一个编辑小窗
     onEditExisting: (dup) => editFlow(dup),
   });
 }
 
 // ---------- 编辑（PATCH：改名 / 换挂 SPU / 改值，null = 清除） ----------
-// 小窗本体在 components/item-form.js：单品页与库存页（重名提示的「编辑这个当前已有的 SKU」）共用
+// 小窗本体在 components/item-form.js：单品页与库存页（同名提醒的「编辑这个当前已有的 SKU」）共用
 function editFlow(item) {
   ItemForm.openEditItem({
     item,

@@ -1,0 +1,26 @@
+/* 共享组件：只读 SKU 信息展示（同名提醒与库存操作弹窗共用）
+   基础信息在上，自定义属性在下；属性多时由使用方给容器限高，不在这里限制。 */
+
+.item-info { font-size: .85rem; }
+
+/* 基本信息与属性列表共用同一行结构：左侧固定宽度键名，右侧值可换行 */
+.ii-row {
+  display: flex;
+  gap: .75rem;
+  padding: .35rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+.ii-row:last-child { border-bottom: none; }
+.ii-key { flex: 0 0 6rem; color: var(--pico-muted-color); overflow-wrap: anywhere; }
+.ii-val { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+/* 基本信息区以底色与属性区分开，展开弹窗时先看到编号与库存 */
+.ii-basic {
+  background: var(--blue-pale);
+  border: 1px solid var(--line-light);
+  padding: .15rem .75rem;
+  margin-bottom: .6rem;
+}
+.ii-basic .ii-row { border-bottom-color: var(--line-light); }
+
+.item-info-empty { font-size: .85rem; padding: .6rem 0; }

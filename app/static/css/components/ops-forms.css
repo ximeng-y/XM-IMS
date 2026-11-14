@@ -1,0 +1,29 @@
+/* 共享组件：库存操作小窗（入库 / 出库 / 盘点调整）布局
+   桌面两栏：左侧单品选择与只读信息，右侧本次操作的填写内容；
+   窄屏（≤860px，与全站断点一致）改为上下排列。宽屏弹窗宽度由
+   app.css 的 dialog 规则给出，这里只负责两栏的比例与内部滚动。 */
+
+/* 两栏：信息区固定下限、填写区占剩余宽度；高度由弹窗自身 max-height 约束 */
+.ops-layout {
+  display: grid;
+  grid-template-columns: minmax(16rem, 20rem) minmax(18rem, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* 本组件的小窗按两栏需要定宽，不改动全站弹窗的通用宽度规则；
+   超窄屏由 dialog 自带的 max-width 收缩 */
+dialog:has(> .dlg-body > .dlg-form.dlg-form-ops) { width: min(50rem, calc(100vw - 2rem)); }
+
+/* 属性较多时只在信息区内部滚动，右侧输入与底部按钮保持可用 */
+.ops-info {
+  margin-top: .6rem;
+  max-height: min(22rem, 45vh);
+  overflow: auto;
+}
+
+@media (max-width: 860px) {
+  .ops-layout { grid-template-columns: minmax(0, 1fr); gap: .9rem; }
+  /* 窄屏上下排列后页面本身可滚动，信息区不再单独限高 */
+  .ops-info { max-height: none; }
+}
