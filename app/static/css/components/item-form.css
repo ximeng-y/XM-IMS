@@ -1,5 +1,5 @@
 /* 商品表单组件（单品新建/编辑小窗、库存页操作弹窗共用）：
-   SPU 可搜索组合框、计算字段只读区、SKU 重名对照列表 */
+   SPU 可搜索组合框、计算字段只读区、SKU 同名提醒 */
 
 /* ---------- SPU 可搜索组合框 ---------- */
 .spu-combo { position: relative; }
@@ -25,9 +25,12 @@
 /* 只读结果与同排的输入框对齐：给一个与输入框相当的高度，不参与编辑 */
 .calc-cell { min-height: 2.4rem; display: flex; align-items: center; }
 
-/* SKU 重名对照竖列表（issue #33） */
-.dup-list{border:1px solid var(--pico-muted-border-color);border-radius:.5rem;padding:.15rem .75rem;margin:.7rem 0 .2rem}
-.dup-row{display:flex;gap:.75rem;padding:.35rem 0;border-bottom:1px solid var(--pico-muted-border-color)}
-.dup-row:last-child{border-bottom:none}
-.dup-key{flex:0 0 6rem;color:var(--pico-muted-color)}
-.dup-val{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+/* SKU 同名提醒（issue #33 / #103）：候选切换后展示只读信息，属性多时内部滚动。
+   弹窗按内容自然宽度会缩成一条，给一个与其他表单小窗相当的定宽 */
+dialog:has(> .dlg-body > .dup-dialog) { width: min(26rem, calc(100vw - 2rem)); }
+/* 定宽下底栏并排容不下三个操作按钮，改为纵向铺满：任何宽度都完整可见、可点击 */
+dialog:has(> .dlg-body > .dup-dialog) .dlg-foot {
+  flex-direction: column;
+  align-items: stretch;
+}
+.dup-dialog .item-info { max-height: 18rem; overflow: auto; margin-top: .6rem; }

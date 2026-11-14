@@ -321,7 +321,7 @@ function applySpus(next) {
 const OP_ACTIONS = {
   "new-item": () => ItemForm.openCreateItem({
     fields: fieldsMeta, spus: spusList, onCreated: afterWrite, onSpusChanged: applySpus,
-    // issue #33：重名提示里选「编辑这个当前已有的 SKU」时打开同一个编辑小窗
+    // issue #33：同名提醒里选「编辑这个当前已有的 SKU」时打开同一个编辑小窗
     onEditExisting: (item) => ItemForm.openEditItem({
       item, fields: fieldsMeta, spus: spusList, onSaved: afterWrite, onSpusChanged: applySpus,
     }),

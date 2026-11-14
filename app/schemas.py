@@ -122,7 +122,8 @@ class FieldConvert(BaseModel):
 
 
 class ItemCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200, description="SKU 名称，同一 SPU 下唯一")
+    name: str = Field(min_length=1, max_length=200,
+                      description="SKU 名称，允许与同一 SPU 下的其他 SKU 同名；同名 SKU 仍是独立单品")
     spu_id: Optional[int] = Field(default=None, description="挂载的 SPU ID（与 spu_name 二选一必填）")
     spu_name: Optional[str] = Field(default=None,
                                     description="SPU 名称：精确匹配已有 SPU 则复用，否则自动创建")
@@ -135,7 +136,7 @@ class ItemCreate(BaseModel):
 
 class ItemPatch(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200,
-                               description="新 SKU 名称，同一 SPU 下唯一")
+                               description="新 SKU 名称，允许与同一 SPU 下的其他 SKU 同名")
     spu_id: Optional[int] = Field(default=None, description="换挂的目标 SPU ID（与 spu_name 二选一）")
     spu_name: Optional[str] = Field(default=None, description="换挂的目标 SPU 名称（精确匹配复用，否则自动创建）")
     values: Optional[dict[str, Any]] = Field(default=None,
