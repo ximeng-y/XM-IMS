@@ -23,7 +23,7 @@ const BackupOnboarding = (() => {
       intent, opened: { remote: settings.remote || "", branch: settings.branch || "main" },
       mode: intent === "restore" || settings.remote ? "existing" : null,
       draft: { remote: settings.remote || "", branch: settings.branch || "main",
-        device: settings.device || "本机", interval: settings.interval ?? 10,
+        device: settings.device || "本机", cloud_interval: settings.cloud_interval ?? 10,
         auto: settings.auto !== false, local_auto: settings.local_auto !== false,
         github_account: settings.github_account || "",
         repository: "xm-ims-backup" },
@@ -41,7 +41,8 @@ const BackupOnboarding = (() => {
       if (!c.result || c.result.completed) invalidate();
     }
     function payload() {
-      const p = { mode: c.mode, device: c.draft.device, interval: Number(c.draft.interval),
+      // 向导只编辑上传云端间隔；本地备份间隔由服务端从已保存设置继承。
+      const p = { mode: c.mode, device: c.draft.device, cloud_interval: Number(c.draft.cloud_interval),
         auto: c.draft.auto, local_auto: c.draft.local_auto, github_account: c.draft.github_account };
       if (c.mode === "existing") { p.remote = c.draft.remote; p.branch = c.draft.branch; }
       else p.repository = c.draft.repository;
@@ -95,8 +96,8 @@ const BackupOnboarding = (() => {
         if (!c.draft.branch || c.draft.branch.startsWith("-")) return "请填写有效分支名，如 main";
       }
       if (!c.draft.device || c.draft.device.length > 80) return "本机名称需为 1–80 个字符";
-      if (!String(c.draft.interval).trim() || !Number.isInteger(Number(c.draft.interval)) || Number(c.draft.interval) < 1)
-        return "同步间隔需为至少 1 分钟的整数";
+      if (!String(c.draft.cloud_interval).trim() || !Number.isInteger(Number(c.draft.cloud_interval)) || Number(c.draft.cloud_interval) < 1)
+        return "上传云端间隔需为至少 1 分钟的整数";
       return null;
     }
     async function afterRepository() {
@@ -246,8 +247,8 @@ const BackupOnboarding = (() => {
           details.append(input("本机名称", c.draft.device, "本机",
             value => { c.draft.device = value.trim(); }, { maxLength: 80 }));
           const grid = node("div", undefined, "sync-onboarding-grid");
-          grid.append(input("间隔（分钟）", c.draft.interval, "10",
-            value => { c.draft.interval = value; }, { type: "number" }));
+          grid.append(input("上传云端间隔（分钟）", c.draft.cloud_interval, "10",
+            value => { c.draft.cloud_interval = value; }, { type: "number" }));
           const switches = node("div", undefined, "sync-onboarding-switches");
           for (const [field, text] of [["local_auto", "本地自动备份"], ["auto", "自动将备份同步到云端"]]) {
             const row = node("label", undefined, "sync-onboarding-check"), check = node("input");

@@ -72,7 +72,9 @@ class SyncManager:
         各自判断前置条件。
         """
         settings = self.settings_snapshot()
-        return {"interval": settings["interval"], "remote": bool(settings["remote"]),
+        return {"local_interval": settings["local_interval"],
+                "cloud_interval": settings["cloud_interval"],
+                "interval": settings["interval"], "remote": bool(settings["remote"]),
                 "auto": bool(settings["auto"]), "local_auto": bool(settings["local_auto"]),
                 "started": self.started, "busy": self.busy,
                 "session_open": bool(self.state.get("session")) and not db.business_ready}
@@ -451,12 +453,18 @@ class SyncManager:
             fail("SETTINGS_INVALID", "设置包含未知字段",
              user_message="提交的设置中包含无法识别的项",
              user_hint="请刷新页面后重新填写")
+        # 先校验本次实际提交的间隔：非法旧值不能被同次提交的新字段遮掉。
+        for key in ("interval", "local_interval", "cloud_interval"):
+            if key in values and not sync_settings.valid_minutes(values[key]):
+                fail(**sync_settings.interval_error(key))
         updated = sync_settings.merge(self.settings, values)
-        if type(updated["interval"]) is not int or updated["interval"] < 1 \
-                or type(updated["auto"]) is not bool or type(updated["local_auto"]) is not bool:
+        for key in ("local_interval", "cloud_interval"):
+            if not sync_settings.valid_minutes(updated[key]):
+                fail(**sync_settings.interval_error(key))
+        if type(updated["auto"]) is not bool or type(updated["local_auto"]) is not bool:
             fail("SETTINGS_INVALID", "自动同步间隔必须是至少 1 分钟的整数",
-             user_message="自动同步间隔至少为 1 分钟",
-             user_hint="请填写一个不小于 1 的整数")
+                 user_message="自动同步间隔至少为 1 分钟",
+                 user_hint="请填写一个不小于 1 的整数")
         if not isinstance(updated["device"], str) or not 1 <= len(updated["device"].strip()) <= 80:
             fail("SETTINGS_INVALID", "设备名称长度应为 1–80 个字符",
              user_message="设备名称需为 1–80 个字符",

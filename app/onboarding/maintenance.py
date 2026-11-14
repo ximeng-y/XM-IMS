@@ -95,7 +95,8 @@ class Maintenance:
                 # 使用 API 返回的标准 HTTPS clone 地址，不自行拼接。
                 draft["remote"] = clone_url
             values = {"remote": draft["remote"], "branch": draft["branch"], "device": draft["device"],
-                      "interval": draft["interval"], "auto": draft["auto"],
+                      "local_interval": draft["local_interval"],
+                      "cloud_interval": draft["cloud_interval"], "auto": draft["auto"],
                       "local_auto": draft["local_auto"],
                       "github_account": draft["github_account"]}
             try:

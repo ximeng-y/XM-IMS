@@ -41,38 +41,49 @@ async def lifespan(app):
                 "SYNC_START_FAILED", "同步初始化失败，请检查数据目录或重复运行的实例",
                 user_message="数据同步没有启动成功",
                 user_hint="请确认程序没有重复打开，且数据目录可正常读写后重启程序"))
-        last_run = time.monotonic()
+        # 本地备份与上传云端各有一份周期基准，互不影响。
+        now = time.monotonic()
+        last_local_run = last_cloud_run = now
         while not stop.is_set():
             try:
                 await asyncio.wait_for(stop.wait(), timeout=1)
             except asyncio.TimeoutError:
                 pass
             window = manager.background_window()
-            if time.monotonic() - last_run >= window["interval"] * 60:
+            now = time.monotonic()
+            local_due = now - last_local_run >= window["local_interval"] * 60
+            cloud_due = now - last_cloud_run >= window["cloud_interval"] * 60
+            if local_due or cloud_due:
                 runnable = not update.maintenance_error() and window["started"] \
                     and not window["busy"] and not window["session_open"]
-                # 本地阶段不依赖远端；云端阶段失败不回滚刚保存的本地版本。
-                if runnable and window["local_auto"]:
-                    try:
-                        await asyncio.to_thread(manager.background_local_backup)
-                    except ApiError as exc:
-                        manager.record_local_error(exc)
-                    except Exception:
-                        manager.record_local_error(error_dict(
-                            "BACKUP_FAILED", "后台本地备份未完成，请进入同步页重试",
-                            user_message="后台备份没有完成",
-                            user_hint="请进入数据同步页面点击「立即备份」重试"))
-                if runnable and window["auto"] and window["remote"]:
-                    try:
-                        await asyncio.to_thread(manager.run)
-                    except ApiError as exc:
-                        manager.record_background_error(exc)
-                    except Exception:
-                        manager.record_background_error(error_dict(
-                            "SYNC_CHECK_FAILED", "后台同步未完成，请进入同步页重试",
-                            user_message="后台同步没有完成",
-                            user_hint="请进入同步页面点击「立即同步」重试"))
-                last_run = time.monotonic()
+                # 到期后无论成功、失败还是因开关或门禁跳过，都只推进这一阶段自己的计时。
+                if local_due:
+                    last_local_run = now
+                if cloud_due:
+                    last_cloud_run = now
+                if local_due and window["local_auto"]:
+                    if runnable:
+                        try:
+                            await asyncio.to_thread(manager.background_local_backup)
+                        except ApiError as exc:
+                            manager.record_local_error(exc)
+                        except Exception:
+                            manager.record_local_error(error_dict(
+                                "BACKUP_FAILED", "后台本地备份未完成，请进入同步页重试",
+                                user_message="后台备份没有完成",
+                                user_hint="请进入数据同步页面点击「立即备份」重试"))
+                if cloud_due and window["auto"] and window["remote"]:
+                    # 自动上传只发送已保存的本地备份候选，不因到期而补做本地备份。
+                    if runnable:
+                        try:
+                            await asyncio.to_thread(manager.run)
+                        except ApiError as exc:
+                            manager.record_background_error(exc)
+                        except Exception:
+                            manager.record_background_error(error_dict(
+                                "SYNC_CHECK_FAILED", "后台同步未完成，请进入同步页重试",
+                                user_message="后台同步没有完成",
+                                user_hint="请进入同步页面点击「立即同步」重试"))
     task = asyncio.create_task(loop())
     try:
         yield
