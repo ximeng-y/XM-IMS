@@ -41,7 +41,8 @@ async function refresh(){
   $s('backupNow').disabled=syncState.busy||firstEntry;
   if(!settingsLoaded){
     const settings=await Sync.api('GET','/settings');savedSettings=settings;
-    $s('remoteUrl').value=settings.remote;$s('dataBranch').value=settings.branch;$s('deviceName').value=settings.device;$s('syncInterval').value=settings.interval;
+    $s('remoteUrl').value=settings.remote;$s('dataBranch').value=settings.branch;$s('deviceName').value=settings.device;$s('syncInterval').value=settings.cloud_interval;
+    $s('localInterval').value=settings.local_interval;
     $s('localAuto').checked=settings.local_auto;$s('autoSync').checked=settings.auto;
     settingsLoaded=true;document.querySelectorAll('#syncSettings input,#syncSettings button,#autoSettings input,#autoSettings button').forEach(el=>{el.disabled=false;});
     await loadBackups();
@@ -83,7 +84,7 @@ async function refresh(){
 }
 function autoValues(){return {local_auto:$s('localAuto').checked,auto:$s('autoSync').checked};}
 function autoDirty(){const values=autoValues();return !savedSettings||values.local_auto!==savedSettings.local_auto||values.auto!==savedSettings.auto;}
-function settingsValues(){return {remote:$s('remoteUrl').value.trim(),branch:$s('dataBranch').value.trim(),device:$s('deviceName').value.trim(),interval:Number($s('syncInterval').value)};}
+function settingsValues(){return {remote:$s('remoteUrl').value.trim(),branch:$s('dataBranch').value.trim(),device:$s('deviceName').value.trim(),cloud_interval:Number($s('syncInterval').value)};}
 function settingsDirty(){const values=settingsValues();return !savedSettings||!$s('syncInterval').value.trim()||Object.keys(values).some(key=>values[key]!==savedSettings[key]);}
 // 连接测试只取决于已保存的仓库、分支与设备名，自动开关未保存不应妨碍它。
 function updateConnectionState(){const dirty=settingsDirty();$s('testConnection').disabled=!settingsLoaded||dirty||!!syncState?.busy;text($s('connectionSaveHint'),dirty?'先保存后测试':'');}
@@ -177,6 +178,35 @@ export const page = {
     }
     $s('localAuto').onchange=saveAuto;
     $s('autoSync').onchange=saveAuto;
+    // 本地备份间隔独立即时保存：只提交本字段，不动开关与高级表单草稿。
+    // 卡片不是表单，HTML 约束拦不住 change 事件，这里先自行校验再发请求。
+    let localSaving=false;
+    async function saveLocalInterval(){
+      const input=$s('localInterval');
+      if(localSaving||!settingsLoaded||!Sync.local)return;
+      const raw=input.value.trim(), value=Number(raw);
+      if(!raw||!Number.isInteger(value)||value<1){
+        UI.fail('本地备份间隔至少为 1 分钟',{title:'本地备份间隔填写有误',hint:'请填写一个不小于 1 的整数'});
+        return;
+      }
+      const confirmed=savedSettings?.local_interval;
+      if(value===confirmed)return;
+      localSaving=true;input.disabled=true;
+      try{
+        const saved=await Sync.api('PATCH','/settings',{local_interval:value});
+        savedSettings={...savedSettings,...saved};
+        input.value=savedSettings.local_interval;
+        UI.ok('本地备份间隔已保存');
+      }catch(error){
+        if(confirmed!==undefined)input.value=confirmed;
+        UI.fail(error.user_message||'本地备份间隔暂未保存',{title:UI.codeTitle(error.code)||'本地备份间隔暂未保存',hint:error.user_hint||''});
+      }finally{
+        localSaving=false;
+        input.disabled=!(settingsLoaded&&Sync.local);
+      }
+      await refresh().catch(showRefreshError);
+    }
+    $s('localInterval').onchange=saveLocalInterval;
     backups=mountLocalBackups({list:$s('localBackupList'),pager:$s('localBackupPager'),backupButton:$s('backupNow'),
       request:Sync.api,onChanged:afterBackup,
       onRestored:()=>location.reload()});

@@ -181,7 +181,7 @@ class SyncSetup:
         更新，所以按读回结果决定是否再保存一次。
         """
         settings = self.manager.settings
-        values = {key: draft[key] for key in ("device", "interval", "auto", "local_auto")
+        values = {key: draft[key] for key in ("device", "local_interval", "cloud_interval", "auto", "local_auto")
                   if draft[key] != settings[key]}
         if "auto" in values:
             # 旧设置把本地备份隐含在 auto 中：改动 auto 时一并带上草稿里的本地开关，
@@ -192,7 +192,7 @@ class SyncSetup:
         if values:
             self.manager._settings_update_locked(values)
         if ensure_persisted:
-            keys = ("device", "interval", "auto", "local_auto", "github_account")
+            keys = ("device", "local_interval", "cloud_interval", "auto", "local_auto", "github_account")
             if not self.persisted_settings_match({key: draft[key] for key in keys}):
                 self.manager._settings_update_locked({key: draft[key] for key in keys})
 

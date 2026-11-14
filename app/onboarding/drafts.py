@@ -8,11 +8,15 @@ from ..sync.gitstore import GitStore
 from .github import REPO_NAME_PATTERN, GitHub
 
 
-def _auto_values(payload, settings):
-    """两个自动开关：与同步管理器共用同一条旧客户端兼容规则。"""
-    submitted = {key: payload[key] for key in ("auto", "local_auto") if key in payload}
-    merged = sync_settings.merge(settings, submitted)
-    return merged["auto"], merged["local_auto"]
+def _settings_values(payload, settings):
+    """自动开关与三个间隔字段：与同步管理器共用同一条旧客户端兼容规则。
+
+    只纳入请求里实际存在的字段，未提交项沿用已保存设置。
+    """
+    submitted = {key: payload[key] for key in
+                 ("auto", "local_auto", "interval", "local_interval", "cloud_interval")
+                 if key in payload}
+    return sync_settings.merge(settings, submitted)
 
 
 def build_draft(payload, settings, allow_file) -> dict:
@@ -23,9 +27,16 @@ def build_draft(payload, settings, allow_file) -> dict:
              user_message="备份方式选择有误",
              user_hint="请回到「选择备份方式」重新选择")
     device = payload.get("device", settings["device"])
-    interval = payload.get("interval", settings["interval"])
-    auto, local_auto = _auto_values(payload, settings)
-    if type(interval) is not int or interval < 1 or type(auto) is not bool or type(local_auto) is not bool:
+    merged = _settings_values(payload, settings)
+    auto, local_auto = merged["auto"], merged["local_auto"]
+    # 先校验本次实际提交的值，非法旧字段不能被有效的新字段遮掉。
+    for key in ("interval", "local_interval", "cloud_interval"):
+        if key in payload and not sync_settings.valid_minutes(payload[key]):
+            fail(**sync_settings.interval_error(key))
+    for key in ("local_interval", "cloud_interval"):
+        if not sync_settings.valid_minutes(merged[key]):
+            fail(**sync_settings.interval_error(key))
+    if type(auto) is not bool or type(local_auto) is not bool:
         fail("SETTINGS_INVALID", "自动同步间隔必须是至少 1 分钟的整数",
              user_message="自动同步间隔至少为 1 分钟",
              user_hint="请填写一个不小于 1 的整数")
@@ -38,7 +49,9 @@ def build_draft(payload, settings, allow_file) -> dict:
         fail("ONBOARDING_INVALID", "github_account 必须是不超过 100 字符的文本",
              user_message="GitHub 账号填写有误",
              user_hint="请回到「登录 GitHub」步骤重新选择账号")
-    draft = {"mode": mode, "device": device.strip(), "interval": interval,
+    draft = {"mode": mode, "device": device.strip(),
+             "local_interval": merged["local_interval"], "cloud_interval": merged["cloud_interval"],
+             "interval": merged["cloud_interval"],
              "auto": auto, "local_auto": local_auto,
              "github_account": github_account, "remote": "", "branch": "main", "repository": None}
     if mode == "existing":
