@@ -26,7 +26,7 @@ MODULES = {
     "xm/sync": ("/static/js/sync-common.js", 7),
     "xm/update": ("/static/js/update.js", 6),
     "xm/runtime/desktop": ("/static/js/runtime/desktop.js", 1),
-    "xm/runtime/view-settings": ("/static/js/runtime/view-settings.js", 2),
+    "xm/runtime/view-settings": ("/static/js/runtime/view-settings.js", 3),
     "xm/responsive": ("/static/js/runtime/responsive.js", 3),
     "xm/shell": ("/static/js/runtime/shell.js", 1),
     "xm/components/context-menu": ("/static/js/components/context-menu.js", 3),

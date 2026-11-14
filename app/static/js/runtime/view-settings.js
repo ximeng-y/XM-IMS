@@ -37,8 +37,10 @@ function save(view, values) {
   return next;
 }
 
-// 当前页可能暂时缺某些列（如库存页的自定义属性还没取回）：保存时把上次设置里
-// 存在、本次列清单里没有的列补回原位置，隐藏状态也保留，否则一次保存就会写没它们。
+// 页面列可能少于已保存设置里的列：属性元数据晚到、或设置来自列更多的页面版本。
+// 这些列在本次设置里无法表达，保存时按上次的位置补回，隐藏状态也保留，
+// 否则一次保存就会写没它们。known 必须是产生这次 next 的那份列清单：
+// 面板早开时属性还没取回，面板里根本没有这些列，用页面最新列清单判断就会误当已知列。
 // 已知列按面板给出的新顺序与隐藏状态排列
 function mergeUnknown(prev, next, known) {
   const order = next.order.slice();
@@ -70,8 +72,11 @@ function create({ view, columns, onApply }) {
   let instance = null;       // 打开中的列设置内容组件
   let pending = null;        // 首次读取的同一个 promise：ready 与 open 共用
 
-  function apply(next) {
-    const known = new Set(columnList().map((c) => c.key));
+  // knownColumns 必须是产生 next 的那份列清单，而不是页面此刻的列清单：
+  // 面板早于属性元数据打开时，面板里没有属性列，用页面最新列清单判断会把它们
+  // 当成已知列，从而跳过补齐、随后把缺列的设置写回本机
+  function apply(next, knownColumns) {
+    const known = new Set(knownColumns.map((c) => c.key));
     const merged = mergeUnknown(current, next, known);
     current = { ...current, order: merged.order, hidden: merged.hidden };
     onApply({ order: current.order, hidden: current.hidden });
@@ -93,7 +98,7 @@ function create({ view, columns, onApply }) {
       current = EMPTY();
       UI.apiFail(e, "读取列设置失败");
     }).then(() => {
-      apply(current);
+      apply(current, columnList());
       return current;
     });
     return pending;
@@ -103,11 +108,14 @@ function create({ view, columns, onApply }) {
     // 已经打开同一个侧栏时不再叠加第二个
     if (RightSidebar.isOpen()) return;
     await ready();
+    // 面板列清单在这里固定一次：之后页面列再怎么变（如属性元数据到达），
+    // 面板仍只列出挂载时的列，保存时也按这份清单判定哪些列缺失需要补齐
+    const panelColumns = columnList();
     instance = ColumnSettings.mount({
-      columns: columnList(),
+      columns: panelColumns,
       settings: current,
       onChange: (next) => {
-        apply(next);
+        apply(next, panelColumns);
         persist();
       },
     });
