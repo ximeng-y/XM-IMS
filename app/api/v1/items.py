@@ -25,7 +25,7 @@ def create_item(shop_id: ShopDep, body: ItemCreate):
 def list_items(shop_id: ShopDep,
                q: str | None = Query(default=None, description="SKU 名子串模糊搜索"),
                name: str | None = Query(default=None,
-                                        description="SKU 名精确匹配（创建前查重用，与 spu_id 配合）"),
+                                        description="SKU 名精确匹配（创建前查同名候选用，与 spu_id 配合）"),
                spu_id: int | None = Query(default=None),
                offset: int = Query(default=0, ge=0),
                limit: int = Query(default=50, ge=1, le=200)):

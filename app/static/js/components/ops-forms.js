@@ -1,11 +1,13 @@
 /* 共享组件：库存操作小窗（入库 / 出库 / 盘点调整）
    三类操作字段结构相近，用一个描述表驱动渲染与提交体拼装；供「库存」页操作区调用。
+   桌面为两栏：左侧选择单品并查看只读信息，右侧填写本次操作；窄屏改为上下排列。
    幂等键仅在小窗内部生成与轮换，不展示给用户 */
 "use strict";
 
 import { XM } from "xm/api";
 import { UI } from "xm/ui";
 import { fillItemOptions, itemOptionLabel } from "xm/components/item-picker";
+import { ItemInfo } from "xm/components/item-info";
 
 const OpsForm = (() => {
   const esc = UI.esc;
@@ -48,13 +50,16 @@ const OpsForm = (() => {
     },
   };
 
-  // 开窗时的单品下拉：复用 item-picker，返回值用于库存提示
-  let itemsCache = [];
+  // 属性定义供信息区展示：当前店铺的自定义属性（不含系统字段），只取一次
+  async function loadFields() {
+    const data = await XM.get("/fields");
+    return data.fields.filter((f) => !f.system);
+  }
 
+  // 右侧填写区：原有的输入项与含义不变
   function buildFormHtml(cfg) {
     const req = `<span class="fieldreq">*</span>`;
-    const cells = [`<div><label>单品 ${req}</label>
-        <select data-f="item"></select><div class="hint" data-qty></div></div>`];
+    const cells = [];
     if (cfg.qty) {
       cells.push(`<div><label>${cfg.qty.label} ${req}</label>
         <input data-f="qty" type="number" min="${cfg.qty.min}" step="1" value="1"></div>`);
@@ -69,39 +74,16 @@ const OpsForm = (() => {
       cells.push(`<div><label>${ex.label}</label>
         <input data-f="${ex.key}" maxlength="${ex.max}" autocomplete="off" placeholder="${ex.placeholder || ""}"></div>`);
     }
-    return `<div class="form-grid" style="grid-template-columns:1fr">${cells.join("")}</div>` +
+    return `<div class="form-grid ops-fields" style="grid-template-columns:1fr">${cells.join("")}</div>` +
       (cfg.hint ? `<div class="hint">${esc(cfg.hint)}</div>` : "") +
       `<div data-result></div>`;
   }
 
-  const TYPE_BADGE = { in: `<span class="badge green">入库</span>`,
-                       out: `<span class="badge red">出库</span>`,
-                       adjust: `<span class="badge gray">盘点</span>` };
-
-  function renderResult(box, cfg, res) {
-    const m = res.movement;
-    // 重复提交的成功结果不再标注「幂等重放」——这是接口机制词，用户只需要知道
-    // 「没有重复记账」；具体机制与幂等键在控制台留一条记录便于排查。
-    if (res.idempotent_replay) console.info("[ops] idempotent replay", m.id);
-    const badges = `<span class="badge fill">已执行</span>`;
-    const dl = [
-      ["流水 ID", m.id],
-      ["类型", TYPE_BADGE[m.type] || `<span class="muted">未知类型</span>`],
-      ["数量增量", UI.fmtDelta(m.qty_delta)],
-      ["单价", UI.fmtMoney(m.unit_price)],
-      m.target_qty !== null && m.target_qty !== undefined ? ["目标库存", m.target_qty] : null,
-      m.batch_no ? ["批次", esc(m.batch_no)] : null,
-      m.supplier ? ["供应商", esc(m.supplier)] : null,
-      m.channel ? ["渠道", esc(m.channel)] : null,
-      m.customer ? ["客户", esc(m.customer)] : null,
-      m.note ? ["备注", esc(m.note)] : null,
-    ].filter(Boolean);
-    box.className = "result-box";
-    box.innerHTML = `<div class="headline">${badges} ${esc(cfg.label)}结果</div>` +
-      `<div style="margin-top:.5rem">当前库存：<b>${res.current_qty}</b></div>` +
-      `<table class="mini-table" style="margin-top:.5rem">` +
-      dl.map(([k, v]) => `<tr><td class="muted" style="width:5.625rem">${k}</td><td>${v}</td></tr>`).join("") +
-      `</table>`;
+  // 左侧：单品选择 + 只读信息
+  function buildInfoHtml() {
+    return `<label>单品 <span class="fieldreq">*</span></label>
+      <select data-f="item"></select>
+      <div class="ops-info" data-info></div>`;
   }
 
   // 打开某类操作小窗；onDone(res) 在真实落库成功后回调（供调用方刷新列表）
@@ -110,20 +92,23 @@ const OpsForm = (() => {
     const cfg = KINDS[kind];
     if (!cfg) throw new Error("未知操作类型：" + kind);
 
+    // 开窗时的单品下拉缓存与属性定义：并行取回，属性未到前信息区先给出基础信息与加载提示
+    let itemsCache = [];
+    let fieldsCache = null;
+
     const wrap = document.createElement("div");
-    wrap.className = "dlg-form";
-    wrap.innerHTML = buildFormHtml(cfg);
+    wrap.className = "dlg-form dlg-form-ops";
+    wrap.innerHTML = `<div class="ops-layout">
+        <div class="ops-side">${buildInfoHtml()}</div>
+        <div class="ops-main">${buildFormHtml(cfg)}</div>
+      </div>`;
     const { dlg, foot } = UI.baseDialog(cfg.label, wrap);
 
     const itemSel = wrap.querySelector('[data-f="item"]');
-    const qtyHint = wrap.querySelector("[data-qty]");
+    const infoBox = wrap.querySelector("[data-info]");
     const resultBox = wrap.querySelector("[data-result]");
     const input = (name) => wrap.querySelector(`[data-f="${name}"]`);
 
-    const showQtyHint = () => {
-      const it = itemsCache.find((x) => String(x.id) === itemSel.value);
-      qtyHint.textContent = it ? `当前库存：${it.qty}` : "";
-    };
     // 下拉只覆盖前 200 个单品（全店加载不在此处展开）。明确指定了目标又不在列表中时，
     // 用单个单品接口把它补进下拉再选中，避免静默落到第一条上。
     // 取不到（目标已被删除等）不抛出：保持下拉原样并明确告知，错误不再冒泡成一句
@@ -149,11 +134,19 @@ const OpsForm = (() => {
         const ok = await ensureTargetOption(cur);
         itemSel.value = ok ? String(cur) : "";
         // 赋值后仍不等于目标（目标不在下拉里）就清空，不让选择框停在第一条上，
-        // 否则下面的库存提示会把第一条的库存当成目标的库存显示出来
+        // 否则信息区会把第一条的库存当成目标的库存显示出来
         if (itemSel.value !== String(cur)) itemSel.value = "";
       }
-      showQtyHint();
+      showInfo();
     };
+
+    // 信息区按选中编号取对象：同名单品文本相同，绝不能按名称匹配
+    function currentItem() {
+      return itemsCache.find((x) => String(x.id) === itemSel.value) || null;
+    }
+    function showInfo() {
+      infoBox.innerHTML = ItemInfo.html(currentItem(), fieldsCache);
+    }
 
     const buildBody = () => {
       // 单品标识是「SPU 号-组内序号」字符串，不可转数值
@@ -191,7 +184,7 @@ const OpsForm = (() => {
     dlg.addEventListener("close", () => { done = true; dlg.remove(); });
 
     dlg.dataset.key = genKey();
-    itemSel.addEventListener("change", showQtyHint);
+    itemSel.addEventListener("change", showInfo);
     submit.onclick = async () => {
       let body;
       try { body = buildBody(); }
@@ -201,21 +194,21 @@ const OpsForm = (() => {
         try {
           res = await XM.post(cfg.endpoint, body);
         } catch (e) {
+          // 失败保留窗口与输入；重试仍用本次操作的幂等键
           resultBox.className = "result-box error-box";
           resultBox.innerHTML = UI.apiFailHtml(e);
           UI.apiFail(e, `${cfg.label}失败`);
           return;
         }
-        renderResult(resultBox, cfg, res);
-        if (res.idempotent_replay) UI.toast("这次提交之前已经成功记账，本次没有重复记账");
-        else UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
-        // 真实落库后换新幂等键，避免下次误重放
-        dlg.dataset.key = genKey();
-        try {
-          await refreshPickers(body.item_id);
-        } catch (e) {
-          UI.apiFail(e, "操作已成功，但刷新单品列表失败");
+        // 接口确认成功即关闭小窗，结果改在页面提示；幂等重放单独说明没有重复记账
+        done = true;
+        dlg.close();
+        if (res.idempotent_replay) {
+          UI.ok("这次提交之前已经成功记账，本次没有重复记账", { title: `${cfg.label}成功` });
+        } else {
+          UI.ok(`${cfg.label}已执行（流水 #${res.movement.id}）`);
         }
+        // 关闭不等待刷新：刷新失败只说明列表未更新，不改报提交失败
         if (onDone) {
           try {
             await onDone(res);
@@ -226,9 +219,17 @@ const OpsForm = (() => {
       });
     };
 
+    // 单品列表与属性定义各自取回；属性未到时信息区先展示基础信息与加载提示
     dlg.showModal();
-    refreshPickers(itemRef).catch((e) => UI.apiFail(e, "加载单品列表失败"));
     setTimeout(() => itemSel.focus(), 50);
+    loadFields()
+      .then((fields) => { fieldsCache = fields; showInfo(); })
+      .catch((e) => {
+        fieldsCache = "error";
+        showInfo();
+        UI.apiFail(e, "加载属性列表失败");
+      });
+    refreshPickers(itemRef).catch((e) => { UI.apiFail(e, "加载单品列表失败"); });
   }
 
   return { open, KINDS };

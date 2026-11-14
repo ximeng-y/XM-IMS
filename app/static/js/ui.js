@@ -69,7 +69,6 @@ const CODE_TITLES = {
   SHOP_HEADER_MISSING: "未选择店铺", SHOP_NOT_FOUND: "店铺不可用",
   ITEM_REF_INVALID: "单品编号无效", ITEM_NOT_FOUND: "找不到单品",
   ITEM_NAME_INVALID: "单品名有误", ITEM_HAS_MOVEMENTS: "单品不能删除",
-  ITEM_NAME_EXISTS: "单品名重复",
   ITEM_SPU_REQUIRED: "未指定 SPU",
   SPU_NOT_FOUND: "找不到 SPU", SPU_NAME_INVALID: "SPU 名有误",
   SPU_NAME_EXISTS: "SPU 名重复",

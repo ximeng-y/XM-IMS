@@ -8,38 +8,17 @@
 
 import { XM } from "xm/api";
 import { UI } from "xm/ui";
+import { ItemInfo } from "xm/components/item-info";
 
 const ItemForm = (() => {
   const esc = UI.esc;
 
   const isComputed = (f) => !!(f && f.computed);
 
-  // ---------- 计算结果只读呈现 ----------
-  // calc：后端 ItemOut.calculations 中的一项 {display, error}；缺失表示后端未给出该字段
-  // error 里 message/hint 是给 API 调用方的文案，界面一律取 user_message/user_hint（缺失时
-  // 回落 message），错误码只用于确定中文标签，不直接展示。
-  const calcText = (err) => [err && (err.user_message || err.message),
-                             err && (err.user_hint || "")].filter(Boolean).join("；");
-  function calcHtml(calc) {
-    if (!calc) return `<span class="muted">—</span>`;
-    if (calc.error) {
-      const tip = esc(calcText(calc.error));
-      const label = UI.codeTitle(calc.error.code) || "无法计算";
-      return `<span class="badge red" title="${tip}">${esc(label)}</span>`;
-    }
-    return `<span class="mono">${esc(calc.display)}</span>`;
-  }
-
-  // 编辑对话框中的计算字段只读区：结果正常时紧凑并排，出错时在下方展开消息与提示
-  function computedRowHtml(f, calc) {
-    const body = calc && calc.error
-      ? `<div class="calc-block">${calcHtml(calc)}<span class="calc-msg">${
-          esc(calcText(calc.error))}</span></div>`
-      : calcHtml(calc);
-    return `<div>
-      <label>${esc(f.name)} <span class="badge gray">计算</span></label>
-      <div class="calc-cell">${body}</div>    </div>`;
-  }
+  // 计算结果的只读呈现统一由 item-info 提供（同名提醒与库存操作弹窗共用一套规则），
+  // 这里保留原有公开出口，页面与编辑小窗的调用方式不变
+  const calcHtml = ItemInfo.calcHtml;
+  const computedRowHtml = ItemInfo.computedRowHtml;
 
   // ---------- 自定义字段值输入控件 ----------
   function fieldInputHtml(f, value, { withClear = false } = {}) {
@@ -250,8 +229,9 @@ const ItemForm = (() => {
   }
 
   // ---------- 编辑单品（SKU）小窗 ----------
-  // PATCH：改名 / 换挂 SPU / 改值（null = 清除）。单品页与库存页（重名提示里的
+  // PATCH：改名 / 换挂 SPU / 改值（null = 清除）。单品页与库存页（同名提醒里的
   // 「编辑这个当前已有的 SKU」）共用同一实现，避免两处各写一份。
+  // SKU 允许同名，改名与换挂不再做重名拦截。
   // onSaved(updated)：保存成功后回调；onSpuCreated()：需要刷新调用方 SPU 列表时回调
   // onSpusChanged(nextSpus)：换挂到新名称的 SPU 后，交回最新完整列表（仅字符串 SPU 会新建）
   function openEditItem({ item, fields = [], spus = [], onSaved, onSpuCreated, onSpusChanged } = {}) {
@@ -325,10 +305,6 @@ const ItemForm = (() => {
       if (bad) { UI.fail("属性值格式不正确"); return; }
       if (Object.keys(values).length) body.values = values;
       if (!Object.keys(body).length) { UI.toast("没有任何修改"); dlg.close(); return; }
-      // 改名或换挂会让名称落到另一个 SPU 组内，先在界面口径上查一次重名
-      if (body.spu_id !== undefined || body.spu_name !== undefined || body.name !== undefined) {
-        if (!await checkRenameCollision(body)) return;
-      }
       try {
         const updated = await XM.patch(`/items/${encodeURIComponent(item.id)}`, body);
         // 换挂 SPU 会改变单品编号，提示时以新编号为准
@@ -349,32 +325,6 @@ const ItemForm = (() => {
 
     dlg.showModal();
     setTimeout(() => $("#edName", wrap).focus(), 50);
-
-    // 改名/换挂前的重名提示：目标 SPU 组内已有同名 SKU 时给出对照，返回 false 拦下保存。
-    // 判断口径与后端一致（同名、同 SPU、排除自身）；最终仍以后端校验为准
-    async function checkRenameCollision(body) {
-      const finalName = body.name !== undefined ? body.name : item.name;
-      let targetSpu = item.spu_id;
-      if (body.spu_id !== undefined) targetSpu = body.spu_id;
-      else if (body.spu_name !== undefined) {
-        const hit = spus.find((s) => s.name === body.spu_name);
-        // 名称不存在时后端会新建一个空 SPU，组内不可能有同名单品
-        if (!hit) return true;
-        targetSpu = hit.id;
-      }
-      // 取多条再排除自身：存量数据允许过重名，只取一条可能刚好取到自己而漏判
-      let data;
-      try {
-        data = await XM.get(`/items?spu_id=${targetSpu}&name=${encodeURIComponent(finalName)}&limit=20`);
-      } catch (e) { UI.apiFail(e, "查重失败"); return false; }
-      const dup = data.items.find((x) => x.id !== item.id);
-      if (!dup) return true;
-      UI.fail(`目标 SPU 下已有同名单品「${dup.name}」（编号 ${dup.id}）`,
-              { title: "SKU 重名", hint: "同一 SPU 下的 SKU 名称唯一，请换一个名称" });
-      $("#edName", wrap).focus();
-      $("#edName", wrap).select();
-      return false;
-    }
   }
 
   // ---------- 新建单品（SKU）小窗 ----------
@@ -459,54 +409,89 @@ const ItemForm = (() => {
       } catch (e) { UI.apiFail(e, "加载 SPU 失败"); return undefined; }
     }
 
-    // SKU 重名把关（issue #33）：同一 SPU 下已存在完全相同名称时给出对照与两个操作。
-    // 返回 true 表示可以继续创建；false 表示已被拦下
+    // 同名提醒（issue #33 / #103）：同一 SPU 下已存在完全相同的名称时列出全部候选，
+    // 由用户选择返回修改、编辑已有 SKU，或确认创建同名单品。
+    // 返回 "create" 表示用户确认创建同名 SKU；false 表示已拦下本次提交
     async function checkDuplicate(spu, name) {
-      let data;
+      let dups;
       try {
-        data = await XM.get(`/items?spu_id=${spu.id}&name=${encodeURIComponent(name)}&limit=1`);
+        dups = await fetchNameDuplicates(spu.id, name);
       } catch (e) { UI.apiFail(e, "查重失败"); return false; }
       if (done) return false;
-      if (!data.total) return true;
-      const dup = data.items[0];
-      const rows = [
-        ["编号", dup.id], ["名称", dup.name], ["所属 SPU", dup.spu_name],
-        ["当前库存", String(dup.qty)],
-        ...fields.map((f) => [f.name, isComputed(f)
-          ? (dup.calculations?.[f.name]?.display ?? "—")
-          : (dup.values[f.name] === undefined || dup.values[f.name] === null || dup.values[f.name] === ""
-              ? "—" : String(dup.values[f.name]))]),
-      ];
-      const listHtml = `<div class="dup-list">` + rows.map(([k, v]) =>
-        `<div class="dup-row"><span class="dup-key">${esc(k)}</span><span class="dup-val">${esc(v)}</span></div>`
-      ).join("") + `</div>`;
-      const edit = await new Promise((resolve) => {
+      if (!dups.length) return true;
+      const choice = await new Promise((resolve) => {
         const wrap2 = document.createElement("div");
+        wrap2.className = "dup-dialog";
+        // 候选多于一条时给出切换列表，切换后右侧展示该条单品的完整只读信息；
+        // 第一条只是默认选中项，不是唯一候选
+        const picker = dups.length > 1
+          ? `<label>同名单品（${dups.length} 条，按编号区分）</label>
+             <select data-dup-pick>${dups.map((it, idx) =>
+               `<option value="${idx}">${esc(it.id)} · 库存 ${esc(it.qty)}</option>`).join("")}
+             </select>`
+          : "";
         wrap2.innerHTML =
-          `<p>当前 SPU 下已有一个完全相同的 SKU 名，请查看这是否与你想要添加的单品相同，并选择对应操作。</p>` +
-          listHtml;
-        const { dlg: d2, foot: f2 } = UI.baseDialog("SKU 重名", wrap2);
+          `<p>当前 SPU 下已有 ${dups.length} 个名称完全相同的 SKU。` +
+          `同名 SKU 是各自独立的单品，各自的属性与库存互不影响。</p>` +
+          picker + `<div data-dup-info></div>`;
+        const { dlg: d2, foot: f2 } = UI.baseDialog("SKU 同名", wrap2);
+        const infoBox = wrap2.querySelector("[data-dup-info]");
+        const pickerEl = wrap2.querySelector("[data-dup-pick]");
+        let current = dups[0];
+        const showInfo = () => {
+          infoBox.innerHTML = ItemInfo.html(current, fields);
+        };
+        if (pickerEl) {
+          pickerEl.addEventListener("change", () => {
+            current = dups[Number(pickerEl.value)] || dups[0];
+            showInfo();
+          });
+        }
+        showInfo();
         const back = UI.mkBtn("返回修改这个 SKU 名", "btn-outline");
         const go = UI.mkBtn("编辑这个当前已有的 SKU");
-        back.type = go.type = "button";
-        f2.append(back, go);
-        let done = false;
-        const finish = (v) => { if (!done) { done = true; d2.close(); resolve(v); } };
-        back.onclick = () => finish(false);
-        go.onclick = () => finish(true);
-        d2.addEventListener("close", () => { finish(false); d2.remove(); });
+        const create = UI.mkBtn("确认创建同名SKU", "btn-danger-outline");
+        back.type = go.type = create.type = "button";
+        f2.append(back, go, create);
+        let finished = false;
+        const finish = (v) => {
+          if (finished) return;
+          finished = true;
+          d2.close();
+          resolve({ value: v, item: current });
+        };
+        back.onclick = () => finish("back");
+        go.onclick = () => finish("edit");
+        create.onclick = () => finish("create");
+        d2.addEventListener("close", () => { finish("back"); d2.remove(); });
         d2.showModal();
       });
       if (done) return false;
-      if (edit) {
+      if (choice.value === "edit") {
         dlg.close();
-        if (onEditExisting) onEditExisting(dup);
+        if (onEditExisting) onEditExisting(choice.item);
         else UI.fail("当前页面无法打开编辑小窗");
-      } else {
-        nameEl.focus();
-        nameEl.select();
+        return false;
       }
+      if (choice.value === "create") return "create";
+      nameEl.focus();
+      nameEl.select();
       return false;
+    }
+
+    // 取同一 SPU 下名称完全相同的全部单品：列表单页上限 200，按分页取全，
+    // 不静默遗漏超出首页的候选
+    async function fetchNameDuplicates(spuId, name) {
+      const out = [];
+      let offset = 0;
+      for (;;) {
+        const data = await XM.get(`/items?spu_id=${spuId}&name=${
+          encodeURIComponent(name)}&offset=${offset}&limit=200`);
+        out.push(...data.items);
+        offset += data.items.length;
+        if (!data.items.length || offset >= data.total) break;
+      }
+      return out;
     }
 
     submit.onclick = () => UI.withBusy(submit, async () => {
@@ -532,7 +517,8 @@ const ItemForm = (() => {
       const spu = await resolveSpu();
       if (!spu || done) return;
       if (spu.id !== undefined) {
-        if (!await checkDuplicate(spu, name) || done) return;
+        const dup = await checkDuplicate(spu, name);
+        if (done || !dup) return;   // "create" 表示确认创建同名 SKU，继续下面的创建
         body.spu_id = spu.id;
       } else {
         body.spu_name = spu.name;
