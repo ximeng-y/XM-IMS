@@ -10,6 +10,7 @@ import { Sync } from "xm/sync";
 import { initResponsive } from "xm/responsive";
 import { installShell, loadShops } from "xm/shell";
 import { startAutoCheck } from "xm/update";
+import { Desktop } from "xm/runtime/desktop";
 
 // 页面描述缺省值：新增页面必须显式声明能力，未声明时不获得业务上下文。
 const DEFAULT_PAGE = {
@@ -38,6 +39,7 @@ export async function boot(module) {
     // 独立页面不加载普通外壳：不触碰 shopSelect/btnNewShop/toasts，也不拦截全站右键
     Sync.initSync();
     await spec.init({});
+    confirmDesktopReady();
     return;
   }
 
@@ -69,4 +71,12 @@ export async function boot(module) {
 
   try { await spec.init({ shopContext: spec.shopContext }); }
   catch (e) { console.error(e); UI.fail("页面初始化失败：" + (e.message || e)); }
+  confirmDesktopReady();
+}
+
+/** 首屏本地模块初始化成功后通知桌面；不等待远端更新检查。
+    桌面首次启动用它确认候选版本可用；普通启动与源码模式没有影响。 */
+function confirmDesktopReady() {
+  if (!Desktop.available()) return;
+  Desktop.confirmPageReady().catch(() => {});
 }

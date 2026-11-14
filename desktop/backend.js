@@ -15,7 +15,9 @@ const API_PORT = 33111;
 const WEB_PORT = 22888;
 const READY_TIMEOUT = 60000;
 const STOP_TIMEOUT = 45000;
+const EXIT_TIMEOUT = 15000;
 const READY_PREFIX = "XM-IMS-READY";
+const TRIAL_PREFIX = "XM-IMS-TRIAL";
 const STOP_COMMAND = "XM-IMS-STOP\n";
 
 function portFree(port) {
@@ -37,6 +39,15 @@ class Backend {
   constructor() {
     this.processes = new Map();
     this.stopping = null;
+    // 本次首次启动标识与阶段回调；只在启动器传入的有效标识下启用
+    this.attempt = "";
+    this.onTrial = null;
+  }
+
+  /** 首次启动：把本次标识交给 API 子进程，阶段消息经回调上报。 */
+  setAttempt(attempt, onTrial) {
+    this.attempt = typeof attempt === "string" ? attempt : "";
+    this.onTrial = typeof onTrial === "function" ? onTrial : null;
   }
 
   async start() {
@@ -48,17 +59,32 @@ class Backend {
     const baseEnv = {
       ...process.env,
       XM_DESKTOP: "1",
+      // 程序根是固定安装根：局部 Git / GCM 与临时目录都围绕它定位
       XM_PROGRAM_ROOT: paths.installRoot,
       XM_DATA_ROOT: paths.dataRoot,
       PYTHONUTF8: "1",
       PYTHONDONTWRITEBYTECODE: "1",
     };
+    if (this.attempt) baseEnv.XM_DESKTOP_ATTEMPT = this.attempt;
     // 先起 API，再让 web 指向实际端口；两者都等到各自的准备消息后才算成功。
     const api = this._spawn("api", apiPort, baseEnv);
     await api.ready;
     const web = this._spawn("web", webPort, { ...baseEnv, XM_API_BASE: `http://${HOST}:${apiPort}` });
     await web.ready;
     return { url: `http://${HOST}:${webPort}` };
+  }
+
+  /** 把本次交接命令送入 API 管道；非本次首次启动进程不接受命令。 */
+  sendTrial(command) {
+    if (command !== "commit" && command !== "release") return false;
+    const api = this.processes.get("api");
+    if (!api || !this.attempt || api.child.exitCode !== null) return false;
+    try {
+      api.child.stdin.write(`XM-IMS-TRIAL-${command.toUpperCase()}\n`);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   _spawn(role, port, env) {
@@ -88,7 +114,12 @@ class Backend {
         while ((index = buffered.indexOf("\n")) >= 0) {
           const line = buffered.slice(0, index).trim();
           buffered = buffered.slice(index + 1);
-          if (line === `${READY_PREFIX} ${role} ${port}`) finish();
+          if (line === `${READY_PREFIX} ${role} ${port}`) {
+            finish();
+          } else if (this.attempt && line.startsWith(`${TRIAL_PREFIX} ${this.attempt} `)) {
+            const parts = line.slice(TRIAL_PREFIX.length + this.attempt.length + 2).split(" ");
+            if (this.onTrial && parts[0]) this.onTrial(parts[0], parts.slice(1));
+          }
         }
       });
       // 服务日志只保留到进程结束，不进入界面也不写入数据目录。
@@ -101,7 +132,10 @@ class Backend {
     return entry;
   }
 
-  /** 正常退出：发送停止指令并等待 lifespan 收尾；失败时只终止本次子进程。 */
+  /** 正常退出：发送停止指令并等待 lifespan 收尾；失败时只终止本次子进程。
+
+      停止必须先等到进程真正退出，再清空进程表：首次启动恢复前必须确认候选
+      进程组已经为空。 */
   async stop() {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
@@ -118,6 +152,13 @@ class Backend {
       for (const entry of entries) {
         if (entry.child.exitCode === null && entry.child.signalCode === null) {
           try { entry.child.kill(); } catch (_) { /* 已退出 */ }
+        }
+      }
+      // kill() 只发出终止请求：必须等到实际退出，不能提前清空进程表
+      const killDeadline = Date.now() + EXIT_TIMEOUT;
+      for (const entry of entries) {
+        while (entry.child.exitCode === null && entry.child.signalCode === null && Date.now() < killDeadline) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
       this.processes.clear();
