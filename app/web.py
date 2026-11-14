@@ -59,9 +59,9 @@ MODULES = {
 # 加载顺序：基础样式（base.html 固定引用）→ 组件样式 → 页面样式。
 STYLES = {
     "css/components/formula-editor": ("/static/css/components/formula-editor.css", 2),
-    "css/components/item-form": ("/static/css/components/item-form.css", 2),
+    "css/components/item-form": ("/static/css/components/item-form.css", 3),
     "css/components/item-info": ("/static/css/components/item-info.css", 1),
-    "css/components/ops-forms": ("/static/css/components/ops-forms.css", 1),
+    "css/components/ops-forms": ("/static/css/components/ops-forms.css", 2),
     "css/components/sortable-list": ("/static/css/components/sortable-list.css", 1),
     "css/pages/catalog": ("/static/css/pages/catalog.css", 1),
     "css/pages/inventory": ("/static/css/pages/inventory.css", 1),

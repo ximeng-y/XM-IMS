@@ -23,7 +23,8 @@ dialog:has(> .dlg-body > .dlg-form.dlg-form-ops) { width: min(50rem, calc(100vw 
 }
 
 @media (max-width: 860px) {
+  /* 上下排列后信息区仍在内部滚动：属性再多也不会把填写区与提交按钮
+     推到弹窗长滚动末尾 */
   .ops-layout { grid-template-columns: minmax(0, 1fr); gap: .9rem; }
-  /* 窄屏上下排列后页面本身可滚动，信息区不再单独限高 */
-  .ops-info { max-height: none; }
+  .ops-info { max-height: min(16rem, 38vh); }
 }

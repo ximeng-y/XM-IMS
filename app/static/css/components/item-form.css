@@ -28,4 +28,9 @@
 /* SKU 同名提醒（issue #33 / #103）：候选切换后展示只读信息，属性多时内部滚动。
    弹窗按内容自然宽度会缩成一条，给一个与其他表单小窗相当的定宽 */
 dialog:has(> .dlg-body > .dup-dialog) { width: min(26rem, calc(100vw - 2rem)); }
+/* 定宽下底栏并排容不下三个操作按钮，改为纵向铺满：任何宽度都完整可见、可点击 */
+dialog:has(> .dlg-body > .dup-dialog) .dlg-foot {
+  flex-direction: column;
+  align-items: stretch;
+}
 .dup-dialog .item-info { max-height: 18rem; overflow: auto; margin-top: .6rem; }
