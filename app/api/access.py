@@ -39,6 +39,11 @@ def update_request(request):
     local_request(request, scope="UPDATE", header="x-xm-update", label="程序更新")
 
 
+def view_settings_request(request):
+    """页面列设置只需本机与同源：读请求走本机校验，写请求额外要求同源标记。"""
+    local_request(request, scope="VIEW_SETTINGS", header="x-xm-view-settings", label="页面设置")
+
+
 def require_sync_manager(request):
     """同步管理接口的统一前置：本机校验 + 写操作需要服务已取得独占访问权。"""
     local_request(request)

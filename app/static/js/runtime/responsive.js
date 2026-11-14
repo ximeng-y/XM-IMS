@@ -24,9 +24,10 @@ function watchTopbar() {
 const navOpen = () => document.body.classList.contains("nav-open");
 
 // 浮层期间的背景隔离：CSS 的 pointer-events 只挡指针命中，Tab / Shift+Tab
-// 仍会走进被遮罩盖住的正文与顶栏控件（Enter 照常触发），故这里再给它们加 inert
+// 仍会走进被遮罩盖住的正文与顶栏控件（Enter 照常触发），故这里再给它们加 inert。
+// 右侧栏是 body 下的浮层、层级低于导航浮层，同样会被遮罩盖住，必须一并隔离
 function setNavInert(on) {
-  $$("main.content, .topbar > *:not(#navToggle)").forEach((el) => {
+  $$("main.content, .topbar > *:not(#navToggle), .right-sidebar").forEach((el) => {
     el.toggleAttribute("inert", on);
   });
 }
@@ -93,7 +94,11 @@ function initNav() {
     setNavClosed();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && navOpen()) setNavClosed({ focusBtn: true });
+    if (e.key === "Escape" && navOpen()) {
+      // 已由导航浮层消费：右侧栏等其它浮层看到 defaultPrevented 就不再跟着关闭
+      e.preventDefault();
+      setNavClosed({ focusBtn: true });
+    }
   });
   NARROW.addEventListener("change", onNarrowChange);
   watchTopbar();

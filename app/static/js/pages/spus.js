@@ -1,4 +1,4 @@
-/* SPU 管理页：列表 / 新建 / 改名 */
+/* SPU 管理页：列表 / 新建 / 改名 / 列设置 */
 "use strict";
 
 import { XM } from "xm/api";
@@ -6,31 +6,82 @@ import { UI, $, $$ } from "xm/ui";
 import { ShopContext } from "xm/shop-context";
 import { DeleteFlow } from "xm/components/delete-flow";
 import { ItemForm } from "xm/components/item-form";
+import { ViewSettings } from "xm/runtime/view-settings";
+
+// 列的语义标识与位置无关：列顺序和隐藏状态由列设置按店铺保存，
+// 表头与每一行都按同一份可见列顺序渲染，列宽也只认列标识，不认「第几列」
+const COLUMNS = [
+  { key: "id", label: "ID", cls: "col-id", headCls: "num" },
+  { key: "name", label: "名称", cls: "col-name" },
+  { key: "sku_count", label: "SKU 数", cls: "col-sku-count", headCls: "num" },
+  { key: "updated_at", label: "更新时间", cls: "col-updated" },
+  // 操作是交互控件：可以排序，不提供隐藏
+  { key: "actions", label: "操作", cls: "col-actions", control: true },
+];
+
+const CELLS = {
+  id: (s) => `<td class="num mono">${s.id}</td>`,
+  name: (s) => `<td title="${UI.esc(s.name)}">${UI.esc(s.name)}</td>`,
+  sku_count: (s) => `<td class="num">${s.sku_count}</td>`,
+  updated_at: (s) => `<td class="muted">${UI.esc(UI.fmtTime(s.updated_at))}</td>`,
+  actions: (s) => `<td class="row-actions">
+      <button type="button" class="btn-outline btn-sm" data-rename="${s.id}" data-name="${UI.esc(s.name)}">改名</button>
+      <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${s.id}" data-name="${UI.esc(s.name)}" data-count="${s.sku_count}">删除</button>
+    </td>`,
+};
+
+let rows = null;      // 最近一次加载的列表；null 表示还没拿到数据
+let errorText = "";   // 加载失败的文案
+
+const settings = ViewSettings.create({
+  view: "spus",
+  columns: COLUMNS,
+  // 列设置变化（含首次载入）后立即按新顺序与可见性重画表格
+  onApply: () => render(),
+});
+
+function headHtml(keys) {
+  return "<tr>" + keys.map((key) => {
+    const col = COLUMNS.find((c) => c.key === key);
+    const cls = [col.headCls, col.cls].filter(Boolean).join(" ");
+    return `<th class="${cls}">${UI.esc(col.label)}</th>`;
+  }).join("") + "</tr>";
+}
+
+function render() {
+  const keys = settings.visible();
+  const tbody = $("#spuRows");
+  $("#spuHead").innerHTML = headHtml(keys);
+  // 全部信息列都隐藏时给出页面级提示；操作列始终保留，恢复入口不会消失
+  $("#columnsHiddenHint").hidden = settings.infoVisible();
+  if (errorText) {
+    tbody.innerHTML = `<tr><td colspan="${keys.length}" class="t-empty">加载失败：${UI.esc(errorText)}</td></tr>`;
+    return;
+  }
+  if (rows === null) {
+    tbody.innerHTML = `<tr><td colspan="${keys.length}" class="t-empty">加载中…</td></tr>`;
+    return;
+  }
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="${keys.length}" class="t-empty">还没有 SPU；可点击「＋ 新建 SPU」创建，或在新建单品时按名称自动创建</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map((s) =>
+    `<tr class="spu-row" data-spu="${s.id}">` +
+    keys.map((key) => CELLS[key](s)).join("") + "</tr>").join("");
+  $$("button[data-rename]", tbody).forEach((b) => b.addEventListener("click", renameFlow));
+  $$("button[data-del]", tbody).forEach((b) => b.addEventListener("click", deleteFlow));
+}
 
 async function loadSpus() {
-  const tbody = $("#spuRows");
   try {
-    const data = await XM.get("/spus");
-    if (!data.spus.length) {
-      tbody.innerHTML = `<tr><td colspan="5" class="t-empty">还没有 SPU；可点击「＋ 新建 SPU」创建，或在新建单品时按名称自动创建</td></tr>`;
-      return;
-    }
-    tbody.innerHTML = data.spus.map((s) => `
-      <tr class="spu-row" data-spu="${s.id}">
-        <td class="num mono">${s.id}</td>
-        <td title="${UI.esc(s.name)}">${UI.esc(s.name)}</td>
-        <td class="num">${s.sku_count}</td>
-        <td class="muted">${UI.esc(UI.fmtTime(s.updated_at))}</td>
-        <td class="row-actions">
-          <button type="button" class="btn-outline btn-sm" data-rename="${s.id}" data-name="${UI.esc(s.name)}">改名</button>
-          <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${s.id}" data-name="${UI.esc(s.name)}" data-count="${s.sku_count}">删除</button>
-        </td>
-      </tr>`).join("");
-    $$("button[data-rename]", tbody).forEach((b) => b.addEventListener("click", renameFlow));
-    $$("button[data-del]", tbody).forEach((b) => b.addEventListener("click", deleteFlow));
+    rows = (await XM.get("/spus")).spus;
+    errorText = "";
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="5" class="t-empty">加载失败：${UI.esc(e.message)}</td></tr>`;
+    rows = null;
+    errorText = e.message;
   }
+  render();
 }
 
 async function renameFlow(ev) {
@@ -73,7 +124,11 @@ function deleteFlow(ev) {
 export const page = {
   shell: true, shopContext: "required", requireSyncReady: true, autoUpdatePrompt: true,
   async init() {
-      if (ShopContext.currentId() === null) return;
+    if (ShopContext.currentId() === null) return;
+
+    $("#btnColumns").addEventListener("click", () => settings.open());
+    $$("[data-open-columns]").forEach((b) =>
+      b.addEventListener("click", () => settings.open()));
 
     // 双击行内任意非控件区域（含单元格内文字与文字旁的空白）跳到库存页并展开该 SPU。
     // 判据与库存页行点击一致：只排除控件，不排除文字——文字由双击选中的选区自行处理，
@@ -92,6 +147,8 @@ export const page = {
       if (await ItemForm.openCreateSpu()) loadSpus();
     });
 
+    // 先取回本页已保存的列设置并应用，首次渲染就是用户上次的顺序
+    await settings.ready();
     await loadSpus();
   },
 };

@@ -1,0 +1,125 @@
+/* 通用右侧栏：固定浮在视口右侧，不挤压正文、不改变左侧导航与页面居中
+
+   浮层自身是 fixed 定位，正文宽度与位置完全不受影响；非模态，没有遮罩。
+   层级低于顶栏（20）与右键菜单（200），高于正文与左导航（10）；打开或关闭都不锁页面滚动。 */
+
+.right-sidebar {
+  position: fixed;
+  top: 3.5rem;                 /* 顶栏高度：侧栏从顶栏下沿开始 */
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid var(--line);
+  /* 与顶栏同宽感的分隔线，浮在正文上时边界清楚，不加阴影以外扩视觉 */
+  box-shadow: -6px 0 18px rgba(28, 39, 51, .08);
+}
+
+/* 左边缘调宽热区：独立成条，整条都可拖动，命中比 1px 边框宽得多 */
+.right-sidebar-grip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: .5rem;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 1;
+  /* 静置时不可见的竖条，悬停/拖动时高亮，提示这里可以拖动 */
+  background: transparent;
+  transition: background-color .15s ease;
+}
+.right-sidebar-grip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 2.5rem;
+  background: var(--line-deep);
+  border-radius: 2px;
+  transition: height .15s ease, background-color .15s ease;
+}
+.right-sidebar-grip:hover::after,
+.right-sidebar-grip.is-dragging::after {
+  background: var(--blue);
+  height: 4rem;
+}
+.right-sidebar-grip.is-dragging { background: rgba(26, 95, 180, .08); }
+
+.right-sidebar-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .7rem .9rem .7rem 1.1rem;
+  border-bottom: 1px solid var(--line-light);
+}
+.right-sidebar-title {
+  flex: 1;
+  margin: 0;
+  font-size: 1rem;
+  color: var(--blue-dark);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.right-sidebar-close {
+  flex: none;
+  margin: 0;
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+  line-height: 1;
+  font-size: 1.25rem;
+  background: none;
+  border: 0;
+  color: var(--ink-soft);
+  cursor: pointer;
+  /* 与 Pico 按钮的内边距和纵向尺寸脱钩，只保留一个方形命中区 */
+  --pico-form-element-spacing-vertical: 0;
+  --pico-form-element-spacing-horizontal: 0;
+}
+.right-sidebar-close:hover { background: var(--blue-pale); color: var(--blue-dark); }
+
+/* 内容区：侧栏内独立滚动，长列表不出侧栏；底部操作区常驻 */
+.right-sidebar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: .75rem .9rem 1rem 1.1rem;
+}
+.right-sidebar-foot {
+  flex: none;
+  display: flex;
+  gap: .5rem;
+  justify-content: flex-end;
+  padding: .7rem .9rem .7rem 1.1rem;
+  border-top: 1px solid var(--line-light);
+  background: #fff;
+}
+.right-sidebar-foot:empty { display: none; }
+
+/* 窄屏（与全站断点一致）：接近全宽的侧栏，不提供调宽 */
+@media (max-width: 860px) {
+  .right-sidebar {
+    /* 顶栏高度随内容变化，基准取 responsive 实测并写入的变量 */
+    top: var(--mobile-topbar-height, 3.5rem);
+    left: 0;
+    width: auto !important;
+    max-width: none;
+    border-left: 0;
+    box-shadow: none;
+    z-index: 17;               /* 低于窄屏导航浮层（19），菜单仍可盖住侧栏 */
+  }
+  .right-sidebar-grip { display: none; }
+  .right-sidebar-head { padding-left: .75rem; }
+  .right-sidebar-body { padding-left: .75rem; }
+  .right-sidebar-foot { padding-left: .75rem; }
+  /* 窄屏触屏：侧栏内按钮给足点按高度 */
+  .right-sidebar-foot button { min-height: 44px; }
+}

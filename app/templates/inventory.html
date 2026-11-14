@@ -5,7 +5,10 @@
 <div class="page-head">
   <div>
     <h1>库存总览</h1>
-    <div class="sub">按 SPU 分组查看库存；点击行首三角展开附属 SKU</div>
+    <div class="sub">按 SPU 分组查看库存；点击行内三角展开附属 SKU</div>
+  </div>
+  <div class="head-actions">
+    <button type="button" id="btnColumns" class="btn-outline btn-sm">列设置</button>
   </div>
 </div>
 
@@ -24,9 +27,12 @@
 </div>
 
 <div class="panel" id="inventoryPanel">
+  <div id="columnsHiddenHint" class="columns-hidden-hint" hidden>
+    表格中的信息列已全部隐藏。<button type="button" class="btn-outline btn-sm" data-open-columns>打开列设置</button>
+  </div>
   <div class="table-scroll table-scroll-auto" id="inventoryScroll">
-    <table>
-      <thead id="spuHead"><tr><th></th><th class="num">ID</th><th>名称</th><th class="num">SKU 数</th><th class="num">合计库存</th><th>更新时间</th></tr></thead>
+    <table class="columns-table">
+      <thead id="spuHead"><tr><th class="col-expand"></th><th class="col-id num">ID</th><th class="col-name">名称</th><th class="col-sku-count num">SKU 数</th><th class="col-total num">合计库存</th><th class="col-updated">更新时间</th></tr></thead>
       <tbody id="spuRows"><tr><td colspan="6" class="t-empty">加载中…</td></tr></tbody>
     </table>
     <!-- 定位用的临时底部留白（issue #49）：高度由脚本按需设置，不进入表格结构 -->

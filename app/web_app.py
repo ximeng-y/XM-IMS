@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import web
-from .api.access import local_request, update_request
+from .api.access import local_request, update_request, view_settings_request
 from .version import APP_VERSION
 from .errors import error_dict, register_error_handlers
 from .service import update
@@ -28,6 +28,7 @@ API_BASE = os.environ.get("XM_API_BASE", "http://127.0.0.1:33111")
 _FORWARD_HEADERS = (
     "content-type", "content-disposition", "accept",
     "x-shop-id", "x-api-token", "authorization", "x-idempotency-key", "x-xm-sync", "x-xm-update",
+    "x-xm-view-settings",
 )
 
 
@@ -69,6 +70,8 @@ async def api_proxy(path: str, request: Request):
     if path.startswith("update/"):
         # 必须在转发前检查真实客户端；后端看到的来源已经是本机代理。
         update_request(request)
+    if path.startswith("view-settings/"):
+        view_settings_request(request)
     headers = {k: v for k, v in request.headers.items() if k.lower() in _FORWARD_HEADERS}
     body = await request.body()
     return await run_in_threadpool(

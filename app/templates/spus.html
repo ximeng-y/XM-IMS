@@ -7,14 +7,20 @@
     <h1>SPU 管理</h1>
     <div class="sub">顶层商品分类</div>
   </div>
-  <div><button type="button" id="btnNewSpu" class="btn-sm">＋ 新建 SPU</button></div>
+  <div class="head-actions">
+    <button type="button" id="btnColumns" class="btn-outline btn-sm">列设置</button>
+    <button type="button" id="btnNewSpu" class="btn-sm">＋ 新建 SPU</button>
+  </div>
 </div>
 
 <div class="panel">
   <h2>SPU 列表</h2>
+  <div id="columnsHiddenHint" class="columns-hidden-hint" hidden>
+    表格中的信息列已全部隐藏。<button type="button" class="btn-outline btn-sm" data-open-columns>打开列设置</button>
+  </div>
   <div class="table-scroll">
-    <table>
-      <thead><tr><th class="num">ID</th><th>名称</th><th class="num">SKU 数</th><th>更新时间</th><th>操作</th></tr></thead>
+    <table class="columns-table">
+      <thead id="spuHead"><tr><th class="col-id num">ID</th><th class="col-name">名称</th><th class="col-sku-count num">SKU 数</th><th class="col-updated">更新时间</th><th class="col-actions">操作</th></tr></thead>
       <tbody id="spuRows"><tr><td colspan="5" class="t-empty">加载中…</td></tr></tbody>
     </table>
   </div>

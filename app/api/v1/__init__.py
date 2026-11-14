@@ -4,7 +4,8 @@
 """
 from fastapi import APIRouter
 
-from . import fields, inventory, items, onboarding, overview, shops, spus, sync, update
+from . import (fields, inventory, items, onboarding, overview, shops, spus, sync, update,
+               view_settings)
 
 router = APIRouter()
 router.include_router(shops.router)
@@ -13,6 +14,7 @@ router.include_router(fields.router)
 router.include_router(items.router)
 router.include_router(inventory.router)
 router.include_router(overview.router)
+router.include_router(view_settings.router)
 router.include_router(update.router)
 router.include_router(sync.router)
 router.include_router(onboarding.router)
