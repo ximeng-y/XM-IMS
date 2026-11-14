@@ -11,7 +11,7 @@ from ..errors import ApiError, error_dict
 from . import settings as sync_settings, snapshot
 from .common import fail, ProcessLock
 from ..storage.files import atomic_json, read_json, remove_tree, replace_path
-from . import gitstore
+from . import gitstore, update_trial
 from .gitstore import GitStore
 from .local_backup import LocalBackups
 from .merge import Merger
@@ -41,6 +41,8 @@ class SyncManager:
         self._space = (0.0, 0)
         # (epoch, digest)：仅用于本进程内的内容关系缓存，不能替代持久备份/上传状态。
         self._relation = None
+        # 本次首次试运行的目标代次与原代次；交接完成或恢复前不被 prune 清理
+        self._trial = None
         self.backups = LocalBackups(self.directory / "local-backups", self.settings["device"])
 
     @staticmethod
@@ -90,9 +92,14 @@ class SyncManager:
 
     def start(self):
         with self.mutex:
-            self._start()
+            self._start_local()
+            self._start_background()
 
-    def _start(self):
+    def _start_local(self):
+        """本地打开阶段：取得进程锁、关闭旧连接、打开活动数据库并迁移。
+
+        普通启动与首次试运行共用这一段；其后是否立即进入正常同步由调用方决定。
+        """
         self.process_lock.acquire()
         self.started = True
         db.set_ready(False)
@@ -102,14 +109,13 @@ class SyncManager:
             with db.internal_access():
                 db.init()
                 self.upgrade_active_shops()
-        # repo 目录替换中断时先恢复旧仓库，不丢未上传对象。
-        if not (self.directory / "repo").exists() and (self.directory / "repo-old").exists():
-            replace_path(self.directory / "repo-old", self.directory / "repo", self.directory)
-        journal = self.state.get("journal")
-        if journal and journal.get("confirmed"):
-            if journal.get("apply"):
-                self.apply_snapshot(journal["hash"])
-            self.mark_synced(journal["hash"], journal["commit"], compact=False)
+
+    def _start_background(self):
+        """正常同步阶段：仓库恢复、日志确认、本地备份与远端检查。
+
+        试运行放行后直接沿用已打开的副本与进程锁调用这一段，不重新取得锁。
+        """
+        self._recover_repository()
         if not self.settings["auto"]:
             # 关闭自动上云：启动阶段不访问远端；本地自动备份仍按开关执行。
             self._start_offline_cloud()
@@ -165,6 +171,70 @@ class SyncManager:
         db.close_all()
         self.process_lock.close()
         self.started = False
+
+    # ---------- 桌面首次试运行 ----------
+
+    def _recover_repository(self):
+        """仓库目录替换中断的恢复与已确认日志的收尾。"""
+        if not (self.directory / "repo").exists() and (self.directory / "repo-old").exists():
+            replace_path(self.directory / "repo-old", self.directory / "repo", self.directory)
+        journal = self.state.get("journal")
+        if journal and journal.get("confirmed"):
+            if journal.get("apply"):
+                self.apply_snapshot(journal["hash"])
+            self.mark_synced(journal["hash"], journal["commit"], compact=False)
+
+    def prepare_trial(self, attempt, progress=None):
+        """首次试运行：取得进程锁并在专属副本上打开、迁移候选数据。
+
+        原数据库只用于读取复制，正式指针在提交前保持原值；试运行期间业务门禁
+        始终关闭。返回是否原本存在活动数据。
+        """
+        with self.mutex:
+            self.process_lock.acquire()
+            self.started = True
+            db.set_ready(False)
+            db.close_all()
+            originals = self.active
+            sources = []
+            if originals:
+                base = self.runtime / originals["generation"]
+                for _uid, _kind, path in snapshot.database_files(base):
+                    sources.append((path.relative_to(base).as_posix(), path))
+                # 原代次与本次副本代次在确认或恢复前不被正常清理
+                self._trial = {"attempt": str(attempt), "original": originals["generation"],
+                               "candidate": None}
+            prepared = update_trial.prepare(self.root, attempt, sources, progress)
+            self._trial = {"attempt": str(attempt), "original": prepared["previous"],
+                           "candidate": prepared["generation"]}
+            config.use_generation(self.runtime / prepared["generation"])
+            with db.internal_access():
+                db.init()
+                self.upgrade_active_shops()
+            return prepared.get("count", 0) > 0
+
+    def commit_trial(self, attempt):
+        """提交试运行副本指针；提交后仍不开放业务、不启动同步。"""
+        with self.mutex, db.coordinated_access(), db.internal_access():
+            db.close_all()
+            record = update_trial.commit(self.root, attempt)
+            self.active = read_json(self.runtime / "active.json")
+            config.use_generation(self.runtime / record["generation"])
+            db.init()
+            self.upgrade_active_shops()
+            db.set_ready(False)
+            return record
+
+    def release_trial(self):
+        """交接完成：解除代次保护并进入正常同步启动，沿用已打开的副本与进程锁。"""
+        with self.mutex:
+            self._trial = None
+            self._recover_repository()
+            self._start_background()
+
+    def protect_trial(self, attempt, original, candidate):
+        """记录本次待确认的原代次与副本代次，避免正常清理误删恢复目标。"""
+        self._trial = {"attempt": str(attempt), "original": original, "candidate": candidate}
 
     @contextlib.contextmanager
     def operation(self):
@@ -1211,6 +1281,9 @@ class SyncManager:
         self.state["cache_order"] = [h for h in order if h in keep or h == current]
         if self.active:
             generations = {self.active["generation"], self.active.get("previous")}
+            if self._trial:
+                generations.update({self._trial.get("original"), self._trial.get("candidate")})
+            generations.discard(None)
             for child in self.runtime.iterdir():
                 if child.is_dir() and len(child.name) == 32 and child.name not in generations:
                     remove_tree(child, self.runtime)

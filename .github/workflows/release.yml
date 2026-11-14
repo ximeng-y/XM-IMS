@@ -43,9 +43,9 @@ jobs:
         run: .XMTEMP/actions/venv/Scripts/python.exe -m pip install --disable-pip-version-check -r requirements.txt
       - name: 执行基础检查
         run: .XMTEMP/actions/venv/Scripts/python.exe -B .github/scripts/basic_checks.py
-      - name: 构建安装包
+      - name: 构建安装包与更新包
         run: .XMTEMP/actions/venv/Scripts/python.exe -B desktop/build.py
-      - name: 挂载安装包到同 tag Release
+      - name: 挂载 Setup 与更新包到同 tag Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: .XMTEMP/actions/venv/Scripts/python.exe -B .github/scripts/release.py publish --tag "${{ github.ref_name }}" --repo "${{ github.repository }}" --asset "${{ steps.prepare.outputs.asset_path }}"
+        run: .XMTEMP/actions/venv/Scripts/python.exe -B .github/scripts/release.py publish --tag "${{ github.ref_name }}" --repo "${{ github.repository }}" --setup "${{ steps.prepare.outputs.setup_asset_path }}" --zip "${{ steps.prepare.outputs.zip_asset_path }}"

@@ -30,7 +30,7 @@ async function checkUpdate(force = false) {
   }
 }
 
-/** 安装已确认的版本；返回值含 ok 与用户版提示。 */
+/** 启动后台准备作业；返回值只表示请求是否被接受，完成状态从进度快照读取。 */
 async function installUpdate(tag) {
   if (!available()) return { ok: false, user_message: "当前不是桌面安装版，无法使用桌面更新" };
   try {
@@ -40,4 +40,50 @@ async function installUpdate(tag) {
   }
 }
 
-export const Desktop = { available, selectDependencyDirectory, checkUpdate, installUpdate };
+/** 当前更新进度快照；非桌面环境返回 null。 */
+async function getUpdateProgress() {
+  if (!bridge || typeof bridge.getUpdateProgress !== "function") return null;
+  try {
+    return await bridge.getUpdateProgress();
+  } catch (_) {
+    return null;
+  }
+}
+
+/** 订阅进度；返回退订函数。非桌面环境返回空退订，不建立状态。 */
+function subscribeUpdateProgress(callback) {
+  if (!bridge || typeof bridge.subscribeUpdateProgress !== "function") return () => {};
+  try {
+    const unsubscribe = bridge.subscribeUpdateProgress(callback);
+    return typeof unsubscribe === "function" ? unsubscribe : () => {};
+  } catch (_) {
+    return () => {};
+  }
+}
+
+/** 重启到已准备版本；不接受版本或路径。 */
+async function restartToPreparedUpdate() {
+  if (!bridge || typeof bridge.restartToPreparedUpdate !== "function") {
+    return { ok: false, user_message: "当前不是桌面安装版，无法重启更新" };
+  }
+  try {
+    return await bridge.restartToPreparedUpdate();
+  } catch (_) {
+    return { ok: false, user_message: "重启更新没有完成，请稍后重试" };
+  }
+}
+
+/** 首屏本地初始化完成确认；只在桌面首次启动时有意义。 */
+async function confirmPageReady() {
+  if (!bridge || typeof bridge.confirmDesktopPageReady !== "function") return false;
+  try {
+    return await bridge.confirmDesktopPageReady();
+  } catch (_) {
+    return false;
+  }
+}
+
+export const Desktop = {
+  available, selectDependencyDirectory, checkUpdate, installUpdate,
+  getUpdateProgress, subscribeUpdateProgress, restartToPreparedUpdate, confirmPageReady,
+};

@@ -1,12 +1,13 @@
-"""版本 tag 与 Release 衔接：构建前校验 tag，构建后向同 tag Release 挂安装包。
+"""版本 tag 与 Release 衔接：构建前校验 tag，构建后向同 tag Release 挂 Setup 与 ZIP。
 
 用法：
     python -B .github/scripts/release.py prepare --tag v0.1.1
     python -B .github/scripts/release.py publish --tag v0.1.1 \
-        --repo ximeng-y/XM-IMS --asset <.XMTEMP/electron-windows/dist/*.exe>
+        --repo ximeng-y/XM-IMS --setup <.XMTEMP/electron-windows/dist/*-Setup.exe> \
+        --zip <.XMTEMP/electron-windows/dist/*.zip>
 
-prepare 把 version 与 asset_path 写入 GITHUB_OUTPUT；publish 只从 GH_TOKEN
-环境变量读取凭据，本脚本不导入业务应用、不启动构建。
+prepare 把 version、setup_asset_path 与 zip_asset_path 写入 GITHUB_OUTPUT；
+publish 只从 GH_TOKEN 环境变量读取凭据，本脚本不导入业务应用、不启动构建。
 """
 import argparse
 import json
@@ -63,12 +64,13 @@ def normalized_tag(tag):
     return tag[1:] if tag.startswith("v") else tag
 
 
-def asset_name(version):
-    return f"XM-IMS-{version}-win-x64-Setup.exe"
+def asset_names(version):
+    """两个资产共用这一处命名规则：Setup 负责首装与迁移，ZIP 用于软件内更新。"""
+    return (f"XM-IMS-{version}-win-x64-Setup.exe", f"XM-IMS-{version}-win-x64.zip")
 
 
 def check_tag_version(tag):
-    """tag、APP_VERSION 与安装包文件名共用这一处版本规则。"""
+    """tag、APP_VERSION 与两个资产文件名共用这一处版本规则。"""
     version = normalized_tag(tag)
     expected = app_version()
     if version != expected:
@@ -86,10 +88,13 @@ def write_output(key, value):
 
 def prepare(tag):
     version = check_tag_version(tag)
-    asset_path = PROJECT_ROOT / ".XMTEMP" / "electron-windows" / "dist" / asset_name(version)
+    setup_name, zip_name = asset_names(version)
+    directory = PROJECT_ROOT / ".XMTEMP" / "electron-windows" / "dist"
+    setup_path, zip_path = directory / setup_name, directory / zip_name
     write_output("version", version)
-    write_output("asset_path", str(asset_path))
-    print(f"版本 {version} 与 tag {tag} 一致，安装包将输出到 {asset_path}")
+    write_output("setup_asset_path", str(setup_path))
+    write_output("zip_asset_path", str(zip_path))
+    print(f"版本 {version} 与 tag {tag} 一致，产物：{setup_path}、{zip_path}")
 
 
 def split_repo(repo):
@@ -143,58 +148,66 @@ def run_gh(arguments):
         fail(f"GitHub CLI 执行失败：{detail}")
 
 
-def upload_asset(tag, repo, asset_path):
+def upload_assets(tag, repo, paths):
     # 不带 --clobber：同名资产已存在时由 CLI 报错终止，不覆盖、不改写原资产
-    run_gh(["release", "upload", tag, str(asset_path), "--repo", repo])
+    run_gh(["release", "upload", tag] + [str(path) for path in paths] + ["--repo", repo])
 
 
-def create_draft(tag, repo, asset_path):
+def create_draft(tag, repo, paths):
     # 只关联已推送的 tag（--verify-tag），不自动生成新 tag；说明留空供用户填写
     run_gh([
-        "release", "create", tag, str(asset_path), "--repo", repo,
+        "release", "create", tag, *[str(path) for path in paths], "--repo", repo,
         "--draft", "--verify-tag", "--title", tag, "--notes", "",
     ])
 
 
-def publish(tag, repo, asset):
+def publish(tag, repo, setup, zip_asset):
     version = check_tag_version(tag)
-    asset_path = Path(asset)
-    if asset_path.name != asset_name(version):
-        fail(f"安装包文件名 {asset_path.name!r} 不符合产物约定 {asset_name(version)!r}")
-    if not asset_path.is_file():
-        fail(f"安装包不存在：{asset_path}")
+    setup_name, zip_name = asset_names(version)
+    setup_path, zip_path = Path(setup), Path(zip_asset)
+    if setup_path.name != setup_name:
+        fail(f"安装包文件名 {setup_path.name!r} 不符合产物约定 {setup_name!r}")
+    if zip_path.name != zip_name:
+        fail(f"更新包文件名 {zip_path.name!r} 不符合产物约定 {zip_name!r}")
+    for asset_path in (setup_path, zip_path):
+        if not asset_path.is_file():
+            fail(f"产物不存在：{asset_path}（Setup 与更新包必须同时就位）")
     token = os.environ.get("GH_TOKEN", "").strip()
     if not token:
         fail("缺少 GH_TOKEN 环境变量")
     owner, name = split_repo(repo)
     release = find_release(token, owner, name, tag)
+    paths = [setup_path, zip_path]
     if release is None:
-        create_draft(tag, repo, asset_path)
-        print(f"已创建草稿 Release {tag} 并挂载 {asset_path.name}，正式发布由用户完成")
+        create_draft(tag, repo, paths)
+        print(f"已创建草稿 Release {tag} 并挂载 {setup_path.name}、{zip_path.name}，正式发布由用户完成")
         return
     if release.get("immutable"):
-        fail("该 Release 已不可变，正式发布前需要先挂齐资产，无法再补传安装包")
-    upload_asset(tag, repo, asset_path)
-    print(f"已向 Release {tag}（草稿：{bool(release.get('isDraft'))}）挂载 {asset_path.name}")
+        fail("该 Release 已不可变，正式发布前需要先挂齐资产，无法再补传产物")
+    upload_assets(tag, repo, paths)
+    print(f"已向 Release {tag}（草稿：{bool(release.get('isDraft'))}）"
+          f"挂载 {setup_path.name}、{zip_path.name}")
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="XM-IMS 版本 tag 与 Release 衔接")
     operations = parser.add_subparsers(dest="operation", required=True)
 
-    prepare_parser = operations.add_parser("prepare", help="校验 tag 并输出 version/asset_path")
+    prepare_parser = operations.add_parser(
+        "prepare", help="校验 tag 并输出 version/setup_asset_path/zip_asset_path")
     prepare_parser.add_argument("--tag", required=True)
 
-    publish_parser = operations.add_parser("publish", help="向同 tag Release 挂载安装包")
+    publish_parser = operations.add_parser("publish", help="向同 tag Release 挂载 Setup 与更新包")
     publish_parser.add_argument("--tag", required=True)
     publish_parser.add_argument("--repo", required=True)
-    publish_parser.add_argument("--asset", required=True)
+    publish_parser.add_argument("--setup", required=True)
+    publish_parser.add_argument("--zip", required=True, dest="zip_asset")
 
     args = parser.parse_args(argv)
     if args.operation == "prepare":
         prepare(args.tag)
     else:
-        publish(args.tag, args.repo, args.asset)
+        publish(args.tag, args.repo, args.setup, args.zip_asset)
     return 0
 
 

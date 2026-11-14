@@ -1,30 +1,43 @@
 "use strict";
-/* 桌面版程序更新：匿名查询本项目 GitHub 正式 Release，下载并交接给安装程序。
+/* 桌面版程序更新：匿名查询本项目 GitHub 正式 Release，下载完整版本 ZIP，
+   在后台解压为新的版本槽，准备完成后由用户决定何时重启应用。
 
-   检查与安装都只在本进程内完成，renderer 只能拿状态、只能请求安装「已确认的 tag」。
-   安装资产的完整性直接使用 GitHub 提供的 sha256 digest，下载时用 node:crypto 边写边算，
-   不一致不进入安装阶段。 */
+   - 检查与准备都只在本进程内完成，renderer 只能拿状态、只能请求安装「已确认的 tag」
+   - 安装资产的完整性直接使用 GitHub 提供的 sha256 digest，下载时用 node:crypto
+     边写边算，不一致不进入解压阶段
+   - 下载与解压不停止服务、不替换当前程序、不改业务数据；进度只来自实际字节
+   - 准备结果写入版本选择资料；renderer 通过快照与订阅拿到只读进度 */
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const https = require("node:https");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const paths = require("./paths");
+const store = require("./version-store");
 
 const REPOSITORY = "ximeng-y/XM-IMS";
 const USER_AGENT = "XM-IMS-Desktop";
 const API_LATEST = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
-const ASSET_PATTERN = /^XM-IMS-(\d+\.\d+\.\d+)-win-x64-Setup\.exe$/;
+const ASSET_PATTERN = /^XM-IMS-(\d+\.\d+\.\d+)-win-x64\.zip$/;
 const VERSION_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)$/;
 const MAX_REDIRECTS = 5;
+const PREPARE_TIMEOUT = 30 * 60 * 1000;
 
 let currentVersion = "0.0.0";
-let confirmed = null;   // {tag, version, assetName, assetId, digest}
+let confirmed = null;   // {tag, version, assetName, assetSize, digest}
 // 检查结果缓存：页面每次完整加载都会自动检查，而 GitHub 匿名 REST 配额按出口 IP
 // 每小时 60 次；只有用户手动检查（force）才跳过缓存。
 let cached = null;      // {state, at}
 const CACHE_TTL = 10 * 60 * 1000;
 const ERROR_TTL = 60 * 1000;
+
+// 权威进度快照：renderer 只读，主进程是唯一写入者
+let revision = 0;
+let job = null;         // {id, targetVersion, stage, ...}
+let lastStage = "idle"; // 作业结束后的最终阶段：prepared / failed
+let lastFailure = "";
+let fallbackNotice = null;
+const listeners = new Set();
 
 function setCurrentVersion(version) {
   currentVersion = String(version);
@@ -40,6 +53,69 @@ function compare(left, right) {
     if (left[i] !== right[i]) return left[i] - right[i];
   }
   return 0;
+}
+
+function emptySnapshot(extra) {
+  return {
+    revision: 0,
+    current_version: currentVersion,
+    target_version: null,
+    target_tag: null,
+    stage: "idle",
+    download_done: 0,
+    download_total: null,
+    install_done: 0,
+    install_total: null,
+    can_restart: false,
+    preparing: false,
+    job_id: null,
+    last_error: "",
+    fallback: null,
+    ...extra,
+  };
+}
+
+function snapshot() {
+  const prepared = store.preparedCandidate();
+  // 作业结束后仍保留最终阶段；正常启动前 stage 一直停留在这里
+  const stage = job ? job.stage : (prepared ? "prepared" : lastStage);
+  return emptySnapshot({
+    revision,
+    stage,
+    preparing: !!job,
+    // 只有没有进行中的作业、且选择资料确实有待应用候选时才允许重启
+    can_restart: !job && stage === "prepared" && !!prepared,
+    target_version: job ? job.targetVersion : (prepared ? prepared.version : null),
+    target_tag: job ? job.targetTag : (prepared ? prepared.tag : null),
+    last_error: lastFailure,
+    fallback: fallbackNotice,
+    job_id: job ? job.id : null,
+    download_done: job ? job.downloadDone : 0,
+    download_total: job ? job.downloadTotal : null,
+    install_done: job ? job.installDone : 0,
+    install_total: job ? job.installTotal : null,
+  });
+}
+
+function publish(patch) {
+  if (job && patch) Object.assign(job, patch);
+  revision += 1;
+  const value = snapshot();
+  for (const callback of [...listeners]) {
+    try { callback(value); } catch (_) { /* 单个订阅回调失败不影响其他订阅 */ }
+  }
+}
+function subscribe(callback) {
+  if (typeof callback !== "function") return () => {};
+  listeners.add(callback);
+  return () => listeners.delete(callback);
+}
+
+/** 启动时读取一次回退结果；旧版重开后只展示一次。 */
+function takeFallbackNotice() {
+  fallbackNotice = store.consumeFallbackNotice();
+  if (fallbackNotice) revision += 1;
+  return fallbackNotice;
 }
 
 /** 只接受 https 与有限的同站重定向；返回 response 与最终地址。 */
@@ -97,7 +173,7 @@ function baseState(extra) {
 
 /** 查询最新正式 Release；所有失败都折算成可展示的状态，不抛给 renderer。
 
-    force 为 false 时（页面自动检查、安装前的再次确认）优先复用未过期的结果。 */
+    force 为 false 时（页面自动检查）优先复用未过期的结果。 */
 async function check(force = false) {
   if (!force && cached) {
     const ttl = cached.state.availability === "error" ? ERROR_TTL : CACHE_TTL;
@@ -125,7 +201,8 @@ async function fetchLatest() {
     return baseState({ checked: true, availability: "no_release" });
   }
   const latest = version.join(".");
-  const asset = (release.assets || []).find(item => {
+  const assets = release.assets || [];
+  const asset = assets.find(item => {
     const match = ASSET_PATTERN.exec(String(item && item.name));
     return match && match[1] === latest;
   });
@@ -135,15 +212,17 @@ async function fetchLatest() {
     has_update: compare(version, parseVersion(currentVersion) || [0, 0, 0]) > 0,
   });
   if (!asset) {
+    // 只有旧版 Setup 资产时不再回到覆盖安装，按暂无可安装更新处理
     state.availability = "no_asset";
     return state;
   }
-  // 安装只使用本次检查确认的目标：下载地址由 tag 与文件名重新拼出，不接受 renderer 传入。
+  // 准备只使用本次检查确认的目标：下载地址由 tag 与文件名重新拼出，不接受 renderer 传入。
   state.availability = "available";
   confirmed = {
     tag,
     version: latest,
     assetName: asset.name,
+    assetSize: Number.isFinite(asset.size) && asset.size > 0 ? asset.size : null,
     digest: typeof asset.digest === "string" ? asset.digest : "",
   };
   return state;
@@ -153,12 +232,10 @@ function fail(message) {
   return { ok: false, user_message: message };
 }
 
-/** 下载并校验已确认的安装包；只有校验通过才返回可安装的本地路径。 */
-async function download() {
-  const target = confirmed;
-  if (!target) return fail("暂时无法确认要安装的版本，请重新检查更新");
+/** 下载并校验已确认的更新包；只有校验通过才返回本地路径。 */
+async function download(target, onProgress) {
   const digest = /^sha256:([0-9a-f]{64})$/i.exec(target.digest);
-  if (!digest) return fail("该版本缺少完整性信息，已停止安装");
+  if (!digest) return fail("该版本缺少完整性信息，已停止更新");
   const folder = paths.updateStaging(target.version);
   const finalPath = path.join(folder, target.assetName);
   const partPath = finalPath + ".part";
@@ -172,12 +249,20 @@ async function download() {
     const { response } = await open(assetDownloadUrl(target));
     if (response.statusCode !== 200) {
       response.resume();
-      return fail("下载安装包失败，请检查网络后重试");
+      return fail("下载更新包失败，请检查网络后重试");
     }
+    const length = Number(response.headers["content-length"]);
+    const total = target.assetSize || (Number.isFinite(length) && length > 0 ? length : null);
+    onProgress(0, total);
     const hash = crypto.createHash("sha256");
     const output = fs.createWriteStream(partPath);
+    let received = 0;
     await new Promise((resolve, reject) => {
-      response.on("data", chunk => hash.update(chunk));
+      response.on("data", chunk => {
+        hash.update(chunk);
+        received += chunk.length;
+        onProgress(received, total);
+      });
       response.on("error", reject);
       output.on("error", reject);
       output.on("finish", resolve);
@@ -185,13 +270,13 @@ async function download() {
     });
     if (hash.digest("hex").toLowerCase() !== digest[1].toLowerCase()) {
       fs.rmSync(partPath, { force: true });
-      return fail("下载的安装包校验失败，已停止安装");
+      return fail("下载的更新包校验失败，已停止更新");
     }
     fs.renameSync(partPath, finalPath);
     return { ok: true, path: finalPath };
   } catch (_) {
     try { fs.rmSync(partPath, { force: true }); } catch (__) { /* 忽略 */ }
-    return fail("下载安装包失败，请检查网络后重试");
+    return fail("下载更新包失败，请检查网络后重试");
   }
 }
 
@@ -199,18 +284,153 @@ function assetDownloadUrl(target) {
   return `https://github.com/${REPOSITORY}/releases/download/${encodeURIComponent(target.tag)}/${encodeURIComponent(target.assetName)}`;
 }
 
-/** 交接给安装程序：等待当前 Electron 退出后再替换程序文件。
-
-    安装目录通过环境变量传递：NSIS 的内置 /D= 必须位于最后且会吞掉其后所有参数，
-    路径含空格时还会被整体加引号，两者都与自定义参数冲突。/XM_PID 让安装器等待
-    本进程退出后再覆盖程序文件。 */
-function launchInstaller(installerPath) {
-  return spawn(installerPath, ["/S", `/XM_PID=${process.pid}`], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: false,
-    env: { ...process.env, XM_UPDATE_DIR: paths.installRoot },
+/** 用当前稳定版的嵌入式 Python 解压；隐藏窗口，只按 stdout 的实际字节更新进度。 */
+function extract(target, archivePath, slot) {
+  return new Promise(resolve => {
+    if (!fs.existsSync(paths.pythonExe) || !fs.existsSync(paths.updateExtract)) {
+      resolve(fail("程序文件不完整，请重新安装 XM-IMS"));
+      return;
+    }
+    const staging = path.join(paths.updateStaging(target.version), "staging-" + slot);
+    const child = spawn(paths.pythonExe, [
+      "-B", paths.updateExtract,
+      "--zip", archivePath,
+      "--target", staging,
+      "--slot", slot,
+      "--slot-root", paths.versionsRoot,
+    ], { cwd: paths.backendRoot, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let buffered = "";
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (_) { /* 已退出 */ }
+      finish(fail("安装准备超时，请检查磁盘空间后重试"));
+    }, PREPARE_TIMEOUT);
+    child.stderr.resume();
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", chunk => {
+      buffered += chunk;
+      let index;
+      while ((index = buffered.indexOf("\n")) >= 0) {
+        const line = buffered.slice(0, index).trim();
+        buffered = buffered.slice(index + 1);
+        const parts = line.split(" ");
+        if (parts[0] !== "XM-IMS-EXTRACT") continue;
+        if (parts[1] === "extracting" || parts[1] === "checking") {
+          publish({
+            stage: "installing",
+            installDone: Number(parts[2]) || 0,
+            installTotal: Number(parts[3]) || null,
+          });
+        }
+      }
+    });
+    child.once("error", () => finish(fail("无法启动安装准备，请稍后重试")));
+    child.once("exit", code => {
+      if (code === 0) finish({ ok: true, slot });
+      else finish(fail("安装准备失败，请检查磁盘空间后重试"));
+    });
   });
+}
+
+function buildSlot(version) {
+  // 每次准备产生唯一槽名：同一版本重复准备或便携版重复构建不会混合覆盖
+  return `${version}-${crypto.randomBytes(16).toString("hex")}`;
+}
+
+/** 准备作业：下载 → 校验 → 解压 → 保存 prepared。返回接受结果，完成由快照表达。 */
+async function prepare(tag) {
+  if (job) return { ok: false, user_message: "更新正在准备中，请稍候" };
+  const prepared = store.preparedCandidate();
+  if (prepared) {
+    return { ok: true, accepted: true, existing: true, version: prepared.version,
+             user_message: "新版本已准备就绪，可重启应用更新" };
+  }
+  // 先占住作业槽再等远端检查：检查期间再次请求会看到进行中的作业，
+  // 不会与本次并发下载到同一个临时文件
+  job = {
+    id: crypto.randomBytes(8).toString("hex"),
+    targetVersion: null,
+    targetTag: tag,
+    stage: "checking",
+    downloadDone: 0,
+    downloadTotal: null,
+    installDone: 0,
+    installTotal: null,
+  };
+  lastFailure = "";
+  lastStage = "checking";
+  publish({});
+  try {
+    const state = await check(true);
+    if (!state || state.availability !== "available" || state.latest_tag !== tag) {
+      return finishJob("暂时无法确认这个版本，请重新检查更新");
+    }
+    const target = confirmed;
+    if (!target) return finishJob("暂时无法确认要安装的版本，请重新检查更新");
+    try {
+      recordUpdateRequest(tag);
+    } catch (_) {
+      return finishJob("无法保存更新记录，请确认数据目录可写后重试");
+    }
+    Object.assign(job, {
+      targetVersion: target.version,
+      targetTag: target.tag,
+      stage: "downloading",
+      downloadTotal: target.assetSize,
+    });
+    lastStage = "downloading";
+    publish({});
+    runPrepareJob(target, buildSlot(target.version));
+    return { ok: true, accepted: true, version: target.version,
+             user_message: "正在准备更新，可以继续使用，完成后会提示重启" };
+  } catch (error) {
+    return finishJob(error && error.message ? error.message : "更新准备失败，请稍后重试");
+  }
+}
+
+/** 后台作业：主进程持有 Promise，权威快照在结束或失败时更新。 */
+async function runPrepareJob(target, slot) {
+  const downloaded = await download(target, (done, total) => {
+    publish({ stage: "downloading", downloadDone: done, downloadTotal: total });
+  });
+  if (!downloaded.ok) return finishJob(downloaded.user_message);
+  publish({ stage: "installing", downloadDone: target.assetSize || job.downloadDone,
+            downloadTotal: target.assetSize || job.downloadTotal,
+            installDone: 0, installTotal: null });
+  const extracted = await extract(target, downloaded.path, slot);
+  if (!extracted.ok) return finishJob(extracted.user_message);
+  let failure = "";
+  try {
+    const saved = store.savePreparedCandidate({ slot, version: target.version, tag: target.tag });
+    if (!saved.ok) failure = "程序状态已经变化，请稍后重新检查更新";
+  } catch (_) {
+    failure = "无法保存更新准备结果，请确认数据目录可写后重试";
+  }
+  finishJob(failure);
+}
+
+/** 结束本次作业：清空作业槽并发布最终阶段；失败文案保留在快照里。 */
+function finishJob(failure) {
+  job = null;
+  lastFailure = failure || "";
+  lastStage = failure ? "failed" : "prepared";
+  publish({});
+  return failure ? fail(lastFailure) : { ok: true };
+}
+
+/** 用户请求重启：只使用已准备目标，不停留中间状态。 */
+function requestRestart() {
+  const prepared = store.preparedCandidate();
+  if (!prepared) return { ok: false, user_message: "没有待重启的新版本" };
+  const marked = store.markPending();
+  if (!marked.ok) return marked;
+  return { ok: true, version: prepared.version };
 }
 
 function reset() {
@@ -286,4 +506,18 @@ function confirmInstalledUpdate() {
   }
 }
 
-module.exports = { setCurrentVersion, check, download, launchInstaller, reset, parseVersion, compare, recordUpdateRequest, confirmInstalledUpdate };
+module.exports = {
+  setCurrentVersion,
+  check,
+  prepare,
+  requestRestart,
+  reset,
+  parseVersion,
+  compare,
+  recordUpdateRequest,
+  confirmInstalledUpdate,
+  publish,
+  subscribe,
+  snapshot,
+  takeFallbackNotice,
+};

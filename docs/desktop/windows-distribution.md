@@ -12,7 +12,10 @@
 - 固定输入在 `desktop/runtime-lock.json`：Electron 45.3.0、Python 3.12.10 嵌入包、NSIS 3.13。
 - 所有下载、解压、暂存与输出都在 `.XMTEMP\electron-windows\`，不安装全局 Node / NSIS / Python。
 - 网络不可用时，把三个官方包放进 `.XMTEMP\electron-windows\cache\`（文件名见 `runtime-lock.json` 的 URL）后重跑。
-- 输出：`.XMTEMP\electron-windows\dist\XM-IMS-<版本>-win-x64-Setup.exe`，版本取自 `app/version.py` 的 `APP_VERSION`。
+- 输出两个产物：
+  - `.XMTEMP\electron-windows\dist\XM-IMS-<版本>-win-x64-Setup.exe`：安装包，负责首次安装、旧布局迁移、手动重装与卸载。
+  - `.XMTEMP\electron-windows\dist\XM-IMS-<版本>-win-x64.zip`：软件内更新使用的完整版本载荷。
+- 版本取自 `app/version.py` 的 `APP_VERSION`。每次构建生成一个 32 位十六进制构建标识，Setup 与 ZIP 共用；版本槽名为 `<X.Y.Z>-<构建标识>`，同版本重复构建不会混合覆盖旧载荷。
 - 已有 NSIS 时可用 `--nsis <makensis.exe 所在目录>` 复用，脚本不会扫描磁盘寻找替代品。
 
 以上是本地构建入口，保持不变。GitHub 标准 Windows runner 会在版本 tag 推送后自动调用同一构建入口；PR 与 main 的基础检查（Python/JavaScript 语法、应用入口导入）由独立工作流在每次提交时运行，不构建安装包。
@@ -20,28 +23,40 @@
 ## 安装布局
 
 ```
-<安装目录>\
-  xm-ims.exe、xm-ims_wer.dll、Electron 官方运行文件、locales\
-  resources\
-    app\          Electron 主进程、preload 与桌面模块
-    backend\      Python 应用代码与 backend_runner.py
-    python\       嵌入式 Python 与 Lib\site-packages
-    icons\        icon.png、icon.ico
-    licenses\     Electron / Chromium / Python 随包许可
-  installed-program-files.txt   安装器管理的程序文件清单
+<固定安装根>\
+  xm-ims.exe                          固定根启动器（独立 NSIS 程序）
   uninstall.exe
-  data\          业务数据（安装器不携带、不覆盖、不删除）
-  tools\         局部安装的 Git / 登录组件（运行后由引导准备）
-  .XMTEMP\       工具与更新临时目录
+  bootstrap-support\
+    update_trial.py                   首次启动失败时的独立恢复入口
+    process_lock.py                   与同步入口共用的进程文件锁
+  versions\
+    <版本>-<构建标识>\
+      xm-ims.exe                      该版本的 Electron 主程序
+      resources\app、backend、python、icons、licenses
+      locales\、Electron 官方运行文件
+      version-manifest.json
+      installed-program-files.txt
+  installed-program-files.txt         固定根受管理文件清单
+  xm-ims-legacy.exe                   旧平铺布局首次迁移时保留的旧程序
+  data\                               业务数据（安装器不携带、不覆盖、不删除）
+    desktop\profile\
+    update\last-update.json           最近一次被接受的更新记录
+    update\desktop\
+      selection.ini                   程序选择及启动阶段
+      attempts\<本次标识>\             首次启动交接与数据恢复资料
+  tools\                              局部安装的 Git / 登录组件
+  .XMTEMP\                            工具与更新临时目录
+    desktop-update\                   下载与尚未完成的解压
 ```
 
-- 默认安装目录 `%LOCALAPPDATA%\Programs\XM-IMS`，可在安装向导中选择其他可写目录。
-- 安装与卸载只处理程序文件清单登记的项目；`data`、`tools` 与用户文件保留。
+- 默认安装根 `%LOCALAPPDATA%\Programs\XM-IMS`，可在安装向导中选择其他可写目录。
+- 固定根始终只有一个启动器；完整的 Electron、Python 与应用载荷放在各自的版本目录里。
+- 安装与卸载只处理清单登记的程序文件；`data`、`tools` 与用户文件保留。
 - 安装器拒绝 32 位 Windows；不写系统 PATH，不设开机启动。
 
 ## 运行
 
-- 安装后从开始菜单或桌面快捷方式启动 `xm-ims.exe`，不出现控制台，不自动打开浏览器。
+- 安装后从开始菜单或桌面快捷方式启动固定根的 `xm-ims.exe`，它按选择资料启动当前版本后退出，不常驻。
 - 窗口关闭后隐藏到托盘，服务继续运行；托盘「退出」才停止服务。重复启动只聚焦已有窗口。
 - 两个内部服务只监听 `127.0.0.1`，端口被占用时按既有规则向后顺延。
 
@@ -58,36 +73,61 @@
 
 - 检查对象固定为仓库 `ximeng-y/XM-IMS` 的最新正式 Release，匿名读取，不携带备份账号凭据。
 - 版本标签使用 `vX.Y.Z` / `X.Y.Z`，按数值比较；正式发布草稿与预发布不作为更新来源。
-- 安装资产名固定为 `XM-IMS-<X.Y.Z>-win-x64-Setup.exe`。
-- 下载后使用 Release asset 的 `sha256` digest 校验，不一致不进入安装阶段。
-- 用户确认安装后：读取本机同步状态，备份或同步进行中先提示稍后再试；随后正常停止服务、启动安装程序并在原安装目录升级。
-- 更新安装完成后重新启动 XM-IMS；不会打开浏览器，也不会改动 `data`。
+- 软件内更新使用 `XM-IMS-<X.Y.Z>-win-x64.zip`；`XM-IMS-<X.Y.Z>-win-x64-Setup.exe` 继续负责首次安装、旧布局迁移、手动重装与卸载。同一版本缺少更新包时只展示「暂无可安装版本」，不会退回覆盖安装。
+- 下载后使用 Release asset 的 `sha256` digest 校验，不一致不进入解压阶段。
+
+更新过程不再关闭当前程序：
+
+1. 用户确认后，程序在后台下载更新包，界面显示实际已接收字节与总大小。
+2. 下载完成后由当前版本自带的 Python 在后台解压到新的版本槽，并按实际写出字节显示安装进度；这一步不停止服务、不改业务数据、不覆盖当前程序。
+3. 准备完成后提示「新版已准备就绪」，可选择「立即重启」或「稍后重启」。「稍后重启」不丢弃已准备的版本，状态跨页面导航和程序重开保存；普通启动仍使用当前版本。
+4. 点击「立即重启」时才写入待应用状态并退出。固定根启动器启动新版本后做一次首次启动确认：数据库在副本上迁移，确认前不开放业务写入、不执行本地备份、云端同步或冲突处理。
+5. 确认成功后保留当前版本与最近一个旧版本，按清单清理更旧的程序文件；此后普通崩溃不会触发自动回退。
+
+首次启动失败（Electron、Python、数据库迁移或本地首屏失败）时：
+
+- 启动器先终止本次启动的候选进程组，确认已清退后再用上一个稳定版本的嵌入式 Python 运行 `bootstrap-support\update_trial.py` 恢复原数据指针；原数据库在试运行中未被迁移，因此不需要用备份覆盖。
+- 恢复成功后启动上一个稳定版本，并提示「新版启动失败，已恢复到上一个版本」。
+- 同步冲突、网络离线和首次引导属于用户待处理状态，不计入启动失败；首次启动确认先于正常同步流程。
+- 全部程序文件替换完成前的确认点之前中断，下次启动会先处理该次未确认资料，不会直接按候选继续启动。
+- 全新安装没有旧版本时，首次失败保留恢复资料并提示重新安装。
+
+旧平铺安装版首次迁入新布局时仍使用一次「下载完成 → 退出 → Setup 安装 → 重新打开」：安装器把旧程序原位保留为 `xm-ims-legacy.exe` 作为该次回退目标，之后使用完整的新流程。
 
 界面状态与提示：
 
 | 情况 | 展示 |
 |---|---|
 | 暂无正式 Release | 暂无已发布版本 |
-| 正式 Release 缺少安装包 | 该版本暂未提供 Windows 安装包 |
+| 正式 Release 缺少更新包 | 该版本暂未提供 Windows 安装包 |
 | 网络不可用 | 暂时无法获取版本信息 |
 | 已是最新 | 已是最新 |
+| 准备完成 | 新版已准备就绪，可重启应用更新 |
+| 首次启动失败并恢复 | 新版启动失败，已恢复到上一个版本 |
 
-关闭「启动时自动检查新版本」后，启动不再自动查询；手动「检查更新」始终可用。
+关闭「启动时自动检查新版本」后，启动不再自动查询；手动「检查更新」始终可用。该开关只控制检查，不会因为新增进度展示而自动下载或安装。
 
 ## 发布约定
 
 1. 修改 `app/version.py` 的 `APP_VERSION`，并把代码提交到包含工作流的版本提交。
 2. 向 GitHub 推送与 `APP_VERSION` 一致的 `vX.Y.Z` 或 `X.Y.Z` tag。
-3. tag 构建先校验 tag 与 `APP_VERSION` 一致，再执行基础检查；通过后自动构建 `XM-IMS-<版本>-win-x64-Setup.exe` 并挂到同 tag 的 Release：
-   - 同 tag 的 Release 已存在（草稿或已正式发布）时保留它，只追加安装包，不改标题、说明、发布状态或已有资产。
-   - 尚无同 tag 的 Release 时自动创建草稿并挂包，之后由用户填写说明并正式发布。
-   - 也可以在构建完成前先正式发布 Release，安装包稍后补挂；不可变 Release 需要先挂齐文件再发布。
-   - 同名安装包已存在时不覆盖，构建在 Actions 日志中报失败。
+3. tag 构建先校验 tag 与 `APP_VERSION` 一致，再执行基础检查；通过后自动构建 `XM-IMS-<版本>-win-x64-Setup.exe` 与 `XM-IMS-<版本>-win-x64.zip`，一次调用同时挂到同 tag 的 Release：
+   - 同 tag 的 Release 已存在（草稿或已正式发布）时保留它，只追加两个产物，不改标题、说明、发布状态或已有资产。
+   - 尚无同 tag 的 Release 时自动创建草稿并挂载两个产物，之后由用户填写说明并正式发布。
+   - 也可以在构建完成前先正式发布 Release，产物稍后补挂；不可变 Release 需要先挂齐文件再发布。
+   - 任一产物缺失或同名已存在时不覆盖，构建在 Actions 日志中报失败。
 4. assets 中的 digest 由 GitHub 生成，无需人工另附校验文件。
 5. 已安装的客户机会在启动或手动检查时发现新版本。
 
 源码版按 Git tag 检查更新，桌面版等待正式 Release；Release 提前发布但尚未挂包时，桌面端显示「该版本暂未提供 Windows 安装包」，无需修改界面或更新逻辑。
 
-安装版更新与源码模式的 `/api/v1/update/*` 是两条独立通道：源码模式继续按 Git 标签更新检出目录，安装版按 Release 安装包升级，二者不会互相替代。
+安装版更新与源码模式的 `/api/v1/update/*` 是两条独立通道：源码模式继续按 Git 标签更新检出目录，源码模式的更新流程与接口契约保持不变；安装版按 Release 更新包升级，二者不会互相替代。
+
+## 程序保留与卸载
+
+- 准备期间可以同时存在当前版本、上一版本与已准备候选三份程序。
+- 新版首次启动确认成功后，保留当前版本与最近一个旧版本，更旧的版本按各自的受管理文件清单清理；清理只删除清单登记的程序文件，再删除空目录，不会递归删除 `versions`、`data`、`tools` 或用户文件。
+- 清理失败只保留对应清单供后续处理，不影响已确认的当前版本与上一版本。
+- 卸载覆盖所有版本、`legacy`、固定根组件、快捷方式与原有的 HKCU 登记；`data`、`tools`、profile、更新临时资料与未登记文件保留。存在运行中进程或首次启动事务时拒绝卸载。
 
 首版不提供网页版启动入口、内网访问开关或开机启动项。
