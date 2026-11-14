@@ -56,11 +56,7 @@ async def lifespan(app):
             if local_due or cloud_due:
                 runnable = not update.maintenance_error() and window["started"] \
                     and not window["busy"] and not window["session_open"]
-                # 到期后无论成功、失败还是因开关或门禁跳过，都只推进这一阶段自己的计时。
-                if local_due:
-                    last_local_run = now
-                if cloud_due:
-                    last_cloud_run = now
+                # 每个阶段在自己结束后重新计时；成功、失败或跳过都一样推进，只影响自己的间隔。
                 if local_due and window["local_auto"]:
                     if runnable:
                         try:
@@ -72,6 +68,8 @@ async def lifespan(app):
                                 "BACKUP_FAILED", "后台本地备份未完成，请进入同步页重试",
                                 user_message="后台备份没有完成",
                                 user_hint="请进入数据同步页面点击「立即备份」重试"))
+                if local_due:
+                    last_local_run = time.monotonic()
                 if cloud_due and window["auto"] and window["remote"]:
                     # 自动上传只发送已保存的本地备份候选，不因到期而补做本地备份。
                     if runnable:
@@ -84,6 +82,8 @@ async def lifespan(app):
                                 "SYNC_CHECK_FAILED", "后台同步未完成，请进入同步页重试",
                                 user_message="后台同步没有完成",
                                 user_hint="请进入同步页面点击「立即同步」重试"))
+                if cloud_due:
+                    last_cloud_run = time.monotonic()
     task = asyncio.create_task(loop())
     try:
         yield
