@@ -9,6 +9,7 @@
 单次保存只替换目标店铺、目标页面的记录，其余记录原样保留。
 """
 from pathlib import Path
+import threading
 
 from .. import db
 from ..config import DATA_ROOT
@@ -16,6 +17,11 @@ from ..errors import ApiError
 from ..storage.files import atomic_json, read_json
 
 VIEWS = ("spus", "items", "inventory")
+
+# 读—改—写必须是一个整体：两个标签页几乎同时保存时，后一次读取若发生在
+# 前一次写入之前，就会把对方刚写入的其他页面设置覆盖掉。
+# 写入只发生在后端进程内（单端口直连或前端代理转发到同一后端），进程内互斥即可。
+_lock = threading.Lock()
 
 
 def _path() -> Path:
@@ -81,16 +87,17 @@ def load(shop_id: int, view: str) -> dict:
 def save(shop_id: int, view: str, values: dict) -> dict:
     """整体替换目标店铺、目标页面的记录并落盘，返回保存后的完整设置"""
     uid = _shop_uid(shop_id)
-    data = _read_all()
-    shops = data.setdefault("shops", {})
-    if not isinstance(shops.get(uid), dict):
-        shops[uid] = {}
-    saved = _normalize(values)
-    shops[uid][view] = saved
-    try:
-        atomic_json(_path(), data)
-    except OSError as exc:
-        raise ApiError("VIEW_SETTINGS_WRITE_FAILED", f"页面设置写入失败：{exc}", status=500,
-                       user_message="保存页面设置失败",
-                       user_hint="请确认程序数据目录可写后重试")
-    return saved
+    with _lock:
+        data = _read_all()
+        shops = data.setdefault("shops", {})
+        if not isinstance(shops.get(uid), dict):
+            shops[uid] = {}
+        saved = _normalize(values)
+        shops[uid][view] = saved
+        try:
+            atomic_json(_path(), data)
+        except OSError as exc:
+            raise ApiError("VIEW_SETTINGS_WRITE_FAILED", f"页面设置写入失败：{exc}", status=500,
+                           user_message="保存页面设置失败",
+                           user_hint="请确认程序数据目录可写后重试")
+        return saved

@@ -103,11 +103,14 @@ function open({ title, width, content, footer, onWidthChange, onClose, holdEscap
   };
 }
 
-// Esc 关闭侧栏。内容区正在拖动（由调用方的 holdEscape 声明）时不关闭：
-// 那一刻用户要取消的是侧栏里的拖动，内容组件自己处理了这个 Esc
+// Esc 关闭侧栏。以下情况 Esc 属于更上层，不能同时关掉侧栏：
+//   - 上层还有原生模态弹窗（新建、编辑、确认等）：Esc 只关那个弹窗
+//   - 窄屏导航浮层展开中：Esc 只收起导航，它已经 preventDefault 标记过了
+//   - 侧栏内容正在拖动（调用方的 holdEscape 声明）：Esc 是取消拖动
 function bindEscape(state) {
   const onKey = (e) => {
     if (e.key !== "Escape" || opened !== state) return;
+    if (document.querySelector("dialog:modal") || e.defaultPrevented) return;
     if (state.holdEscape && state.holdEscape()) return;
     e.preventDefault();
     close();

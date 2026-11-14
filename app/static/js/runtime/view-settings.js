@@ -37,6 +37,27 @@ function save(view, values) {
   return next;
 }
 
+// 当前页可能暂时缺某些列（如库存页的自定义属性还没取回）：保存时把上次设置里
+// 存在、本次列清单里没有的列补回原位置，隐藏状态也保留，否则一次保存就会写没它们。
+// 已知列按面板给出的新顺序与隐藏状态排列
+function mergeUnknown(prev, next, known) {
+  const order = next.order.slice();
+  const inOrder = new Set(order);
+  // 从后往前回插：未知列放回它上次顺序里的后继之前，后继已不存在时放到末尾
+  for (let i = prev.order.length - 1; i >= 0; i--) {
+    const key = prev.order[i];
+    if (known.has(key) || inOrder.has(key)) continue;
+    const at = order.indexOf(prev.order[i + 1]);
+    order.splice(at < 0 ? order.length : at, 0, key);
+  }
+  const inHidden = new Set(next.hidden);
+  return {
+    order,
+    hidden: [...next.hidden,
+      ...prev.hidden.filter((k) => !known.has(k) && !inHidden.has(k))],
+  };
+}
+
 // opts:
 //   view     页面标识（spus / items / inventory）
 //   columns  当前页实际列 [{ key, label, control?, css? }]，顺序即默认列顺序；
@@ -50,7 +71,9 @@ function create({ view, columns, onApply }) {
   let pending = null;        // 首次读取的同一个 promise：ready 与 open 共用
 
   function apply(next) {
-    current = { ...current, order: next.order, hidden: next.hidden };
+    const known = new Set(columnList().map((c) => c.key));
+    const merged = mergeUnknown(current, next, known);
+    current = { ...current, order: merged.order, hidden: merged.hidden };
     onApply({ order: current.order, hidden: current.hidden });
   }
 
