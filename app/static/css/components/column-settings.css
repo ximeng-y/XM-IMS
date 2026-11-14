@@ -1,0 +1,84 @@
+/* 列设置侧栏内容：列名、隐藏/显示按钮与最右侧拖拽手柄
+
+   列表项自身的悬停与拖动反馈；拖拽期间让位与浮起的手感沿用 sortable-list。
+   列数较多时整份列表在侧栏内容区里滚动（滚动归通用右侧栏），
+   这里只保证列表项之间有稳定的间距，拖动时的落点判定才准确。 */
+
+.column-settings { display: block; }
+.column-settings-list { display: flex; flex-direction: column; gap: 2px; }
+
+.column-item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .35rem .5rem .35rem .7rem;
+  background: #fff;
+  border: 1px solid var(--line-light);
+  transition: background-color .15s ease, border-color .15s ease;
+}
+/* 悬停位移会跟拖动时的跟随位移、让位动画抢同一个 transform，只在未拖动时生效 */
+.column-settings-list:not(.sortable-active) .column-item:hover {
+  background: var(--blue-pale);
+  border-color: var(--line);
+}
+
+.column-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .9rem;
+}
+/* 已隐藏的列：名称压暗，清楚表示它当前不显示 */
+.column-item.is-hidden { background: #fbfcfe; }
+.column-item.is-hidden .column-item-name { color: var(--ink-soft); }
+
+.column-item-toggle {
+  flex: none;
+  margin: 0;
+  min-width: 3.6rem;
+  /* 窄侧栏下按钮文字不换行，宽度由 min-width 保证各按钮对齐 */
+  white-space: nowrap;
+}
+.column-item.is-hidden .column-item-toggle { color: var(--blue); }
+
+/* 拖拽手柄：与店铺卡片同一套点阵抓手，命中区与项等高，靠在最右侧 */
+.column-item-drag {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  align-self: stretch;
+  cursor: grab;
+  color: var(--ink-soft);
+  user-select: none;
+}
+.column-item-drag:hover { color: var(--blue-dark); background: var(--blue-pale-2); }
+.column-item-drag > span {
+  /* 2×5 点阵：宽 2 列、高 5 行，尺寸取节距的整数倍，边缘的点不会被裁掉 */
+  width: 1rem;
+  height: 2.5rem;
+  background-image: radial-gradient(circle, currentColor .14rem, transparent .14rem);
+  background-size: .5rem .5rem;
+  /* Pico 的通配重置把 background-repeat 压成 no-repeat，必须显式覆盖才画得出点阵 */
+  background-repeat: repeat;
+}
+.column-item-drag:active { cursor: grabbing; }
+
+/* 拖动中被抬起的列：阴影表示离开原位；位移与层级由 sortable-list 统一处理 */
+.column-item.sortable-lifted {
+  box-shadow: 0 8px 20px rgba(28, 39, 51, .2);
+  border-color: var(--blue-pale-2);
+  cursor: grabbing;
+}
+
+.column-settings-footer { margin: 0; }
+.column-settings-footer button { margin: 0; }
+
+@media (max-width: 860px) {
+  /* 窄屏触屏：隐藏/显示按钮给足点按高度，手型号的侧栏几乎占满屏宽 */
+  .column-item { padding-top: .25rem; padding-bottom: .25rem; }
+  .column-item-toggle { min-height: 44px; }
+}

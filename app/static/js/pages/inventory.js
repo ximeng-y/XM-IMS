@@ -13,6 +13,7 @@ import { ContextMenu } from "xm/components/context-menu";
 import { DeleteFlow } from "xm/components/delete-flow";
 import { createStore } from "xm/pages/inventory-data";
 import { createViewport } from "xm/pages/inventory-viewport";
+import { ViewSettings } from "xm/runtime/view-settings";
 
 // ---------- 页面状态 ----------
 let overviewRows = [];          // [{ spu, total }]：SPU 汇总行（SKU 明细不在此长期持有）
@@ -23,8 +24,34 @@ let searchTimer = null;         // 搜索防抖定时器
 let skuHits = new Map();        // 搜索命中的 SPU -> 命中 SKU 编号集合（仅识别信息）
 let searchError = null;         // 搜索失败文案（与「没有匹配结果」区分开）
 let lastAutoExpandQuery = null; // 上次自动展开过的搜索词（同一词只自动展开一次）
+let loadError = "";             // 列表加载失败的文案；空串表示正常
+let overviewLoaded = false;     // 概览是否已取到过数据：未取到前表格保持「加载中」
 
 const PAGE_SIZE = 200;          // /items 单页上限
+
+// ---------- 列描述 ----------
+// SPU 行与展开的 SKU 行共用同一份可见列顺序：系统列用固定语义标识，
+// 自定义属性用稳定 uid（field: 前缀），列宽只认列标识，不认「第几列」。
+// 展开控制与行内操作是交互控件，可以排序，但没有隐藏按钮。
+function columns() {
+  return [
+    { key: "expand", label: "展开控制", cls: "col-expand", control: true, header: "" },
+    { key: "id", label: "ID", cls: "col-id", headCls: "num" },
+    { key: "name", label: "名称", cls: "col-name" },
+    { key: "sku_count", label: "SKU 数", cls: "col-sku-count", headCls: "num" },
+    { key: "total", label: "合计库存", cls: "col-total", headCls: "num" },
+    ...fieldsMeta.map((f) => ({ key: `field:${f.uid}`, label: f.name, cls: "col-field", field: f })),
+    { key: "updated_at", label: "更新时间", cls: "col-updated" },
+  ];
+}
+
+const settings = ViewSettings.create({
+  view: "inventory",
+  columns,
+  // 列设置变化（含首次载入）后按新顺序与可见性重画表头与全部行类型
+  onApply: () => renderOverview(),
+});
+
 
 const store = createStore({
   fetchPage: (spuId, offset) =>
@@ -37,7 +64,8 @@ const viewport = createViewport({
   scroller: $("#inventoryScroll"),
   panel: $("#inventoryPanel"),
   tail: $("#inventoryTail"),
-  layoutNodes: [$(".topbar"), $(".sidenav"), $(".page-head"), $(".ops-bar")],
+  // 全隐藏提示出现/消失会改变表格上沿位置，与操作区一起参与限高重算
+  layoutNodes: [$(".topbar"), $(".sidenav"), $(".page-head"), $(".ops-bar"), $("#columnsHiddenHint")],
   hintOf: () => {
     const scroller = $("#inventoryScroll");
     const hint = scroller && scroller.nextElementSibling;
@@ -47,7 +75,6 @@ const viewport = createViewport({
 
 // ---------- 概览数据 ----------
 async function loadOverview() {
-  const tbody = $("#spuRows");
   try {
     // 首次只取 SPU 汇总与字段定义：SKU 明细按 SPU 展开时再分页加载（issue #49）
     const [spus, fields] = await Promise.all([XM.get("/spus"), XM.get("/fields")]);
@@ -56,9 +83,12 @@ async function loadOverview() {
     // 合计库存与 SKU 数直接取 SPU 列表的汇总字段，不再拉取全店 SKU
     overviewRows = spusList.map((s) => ({ spu: s, total: s.total_qty }));
     store.reconcile(new Map(spusList.map((s) => [s.id, s.sku_count])));
+    loadError = "";
+    overviewLoaded = true;
     renderOverview();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="6" class="t-empty">加载失败：${UI.esc(e.message)}</td></tr>`;
+    loadError = e.message;
+    renderOverview();
     UI.apiFail(e);
   }
 }
@@ -89,50 +119,68 @@ function renderOverview() {
   const tbody = $("#spuRows");
   const rows = filterRows();
   const query = $("#fltQ").value.trim();
-  const colCount = 6 + fieldsMeta.length;
+  const keys = settings.visible();
+  const cols = columns();
+  const byKey = new Map(cols.map((c) => [c.key, c]));
+  const colCount = keys.length;
   // 搜索、展开、数据刷新都会重排内容，旧的定位留白不再适用
   viewport.clearTail();
-  // 表头随本店自定义字段一起重建；列顺序 = 展开 / ID / 名称 / SKU 数 / 合计库存 / 自定义字段… / 更新时间
-  // 取值口径与单品页一致：计算字段取后端计算结果，普通字段取手填值
-  $("#spuHead").innerHTML =
-    `<tr><th></th><th class="num">ID</th><th>名称</th>` +
-    `<th class="num">SKU 数</th><th class="num">合计库存</th>` +
-    fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("") +
-    `<th>更新时间</th></tr>`;
+  // 表头随本店自定义字段与列设置一起重建，顺序与可见性与数据行完全一致
+  $("#spuHead").innerHTML = "<tr>" + keys.map((key) => {
+    const col = byKey.get(key);
+    const cls = [col.headCls, col.cls].filter(Boolean).join(" ");
+    return `<th class="${cls}">${UI.esc(col.header ?? col.label)}</th>`;
+  }).join("") + "</tr>";
+  // 全部信息列都被隐藏时给出页面级提示；展开与列设置入口始终可用
+  $("#columnsHiddenHint").hidden = settings.infoVisible();
 
+  if (loadError) {
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="t-empty">加载失败：${UI.esc(loadError)}</td></tr>`;
+    return;
+  }
+  if (!overviewLoaded) {
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="t-empty">加载中…</td></tr>`;
+    return;
+  }
   if (!rows.length) {
     const msg = searchError ? `搜索失败：${UI.esc(searchError)}`
       : query ? "没有匹配的 SPU / SKU"
       : '从第一个单品开始记录库存。<br><a href="/inventory?op=new-item">添加第一个单品</a><br>' +
-        '<a href="/fields">设置成本、售价等字段（可稍后）</a>';
+        '<a href="/fields">设置成本、售价等属性（可稍后）</a>';
     tbody.innerHTML = `<tr><td colspan="${colCount}" class="t-empty">${msg}</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map(({ spu, total, shown }) => {
     const open = store.isExpanded(spu.id);
-    // 只有存在附属 SKU 的 SPU 行才渲染展开三角
-    const tri = spu.sku_count > 0
-      ? `<button type="button" class="tri-btn${open ? " open" : ""}" data-spu="${spu.id}" aria-label="展开/收起 SKU">▼</button>`
-      : "";
     // data-spu 供右键菜单识别目标 SPU（菜单里可「在此 SPU 下新建单品」）
-    let row = `<tr class="spu-row" data-spu="${spu.id}">
-      <td class="tri-cell">${tri}</td>
-      <td class="num mono">${spu.id}</td>
-      <td title="${UI.esc(spu.name)}">${UI.esc(spu.name)}</td>
-      <td class="num">${spu.sku_count}</td>
-      <td class="num">${spu.sku_count > 0 ? total : "—"}</td>
-      ${fieldsMeta.map(() => `<td class="muted">—</td>`).join("")}
-      <td class="muted">${UI.esc(UI.fmtTime(spu.updated_at))}</td>
-    </tr>`;
-    if (open) row += skuGroupHtml(spu, shown, colCount);
+    let row = `<tr class="spu-row" data-spu="${spu.id}">` +
+      keys.map((key) => spuCellHtml(byKey.get(key), spu, total, open)).join("") + "</tr>";
+    if (open) row += skuGroupHtml(spu, shown, keys, byKey);
     return row;
   }).join("");
 }
 
+function spuCellHtml(col, spu, total, open) {
+  switch (col.key) {
+    case "expand":
+      // 只有存在附属 SKU 的 SPU 行才渲染展开三角；控件功能不依赖列位置
+      return `<td class="tri-cell">${spu.sku_count > 0
+        ? `<button type="button" class="tri-btn${open ? " open" : ""}" data-spu="${spu.id}" aria-label="展开/收起 SKU">▼</button>`
+        : ""}</td>`;
+    case "id": return `<td class="num mono">${spu.id}</td>`;
+    case "name": return `<td title="${UI.esc(spu.name)}">${UI.esc(spu.name)}</td>`;
+    case "sku_count": return `<td class="num">${spu.sku_count}</td>`;
+    case "total": return `<td class="num">${spu.sku_count > 0 ? total : "—"}</td>`;
+    case "updated_at": return `<td class="muted">${UI.esc(UI.fmtTime(spu.updated_at))}</td>`;
+    default: return `<td class="muted">—</td>`;
+  }
+}
+
 // 展开组内的行：未加载完 / 加载失败都不能伪装成「没有 SKU」
-function skuGroupHtml(spu, shown, colCount) {
+function skuGroupHtml(spu, shown, keys, byKey) {
+  // 占位行跨满全部可见列：展开控件已在 SPU 行上，占位不再单独预留首列
   const emptyRow = (html) =>
-    `<tr class="sku-sub-row"><td></td><td colspan="${colCount - 1}" class="t-empty">${html}</td></tr>`;
+    `<tr class="sku-sub-row"><td colspan="${keys.length}" class="t-empty">${html}</td></tr>`;
   const error = store.errorOf(spu.id);
   if (error) {
     return emptyRow(`${UI.esc(error)} ` +
@@ -143,28 +191,34 @@ function skuGroupHtml(spu, shown, colCount) {
   if (!items.length) {
     return emptyRow($("#fltQ").value.trim() ? "该 SPU 下没有匹配的 SKU" : "该 SPU 下还没有 SKU");
   }
-  // 普通字段与计算字段都挂 title：固定列宽下长值与长金额会被省略号截断，悬停需能看全文。
-  // 出错时的徽标自带 title（写明原因），悬停徽标显示的是它，不受这里的 title 影响。
-  const extraCells = (it) => fieldsMeta.map((f) => {
-    if (ItemForm.isComputed(f)) {
-      const calc = it.calculations?.[f.name];
-      const full = calc && !calc.error ? calc.display : "";
-      return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${ItemForm.calcHtml(calc)}</td>`;
-    }
-    const v = it.values[f.name];
-    const s = v === null || v === undefined || v === "" ? "" : String(v);
-    return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
-  }).join("");
   // data-item / data-item-name / data-spu 供右键菜单与后续操作识别目标 SKU
-  return items.map((it) => `<tr class="sku-sub-row" data-item="${UI.esc(it.id)}" data-item-name="${UI.esc(it.name)}" data-spu="${spu.id}">
-    <td></td>
-    <td class="num mono">${UI.esc(it.id)}</td>
-    <td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>
-    <td class="muted">—</td>
-    <td class="num">${it.qty}</td>
-    ${extraCells(it)}
-    <td class="muted">${UI.esc(UI.fmtTime(it.updated_at))}</td>
-  </tr>`).join("");
+  return items.map((it) => `<tr class="sku-sub-row" data-item="${UI.esc(it.id)}" data-item-name="${UI.esc(it.name)}" data-spu="${spu.id}">` +
+    keys.map((key) => skuCellHtml(byKey.get(key), it)).join("") + "</tr>").join("");
+}
+
+function skuCellHtml(col, it) {
+  switch (col.key) {
+    case "expand": return `<td></td>`;
+    case "id": return `<td class="num mono">${UI.esc(it.id)}</td>`;
+    case "name": return `<td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>`;
+    case "sku_count": return `<td class="muted">—</td>`;
+    case "total": return `<td class="num">${it.qty}</td>`;
+    case "updated_at": return `<td class="muted">${UI.esc(UI.fmtTime(it.updated_at))}</td>`;
+    default: return fieldCellHtml(col.field, it);
+  }
+}
+
+// 普通字段与计算字段都挂 title：固定列宽下长值与长金额会被省略号截断，悬停需能看全文。
+// 出错时的徽标自带 title（写明原因），悬停徽标显示的是它，不受这里的 title 影响。
+function fieldCellHtml(f, it) {
+  if (ItemForm.isComputed(f)) {
+    const calc = it.calculations?.[f.name];
+    const full = calc && !calc.error ? calc.display : "";
+    return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${ItemForm.calcHtml(calc)}</td>`;
+  }
+  const v = it.values[f.name];
+  const s = v === null || v === undefined || v === "" ? "" : String(v);
+  return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
 }
 
 // 完整明细到位后校正组头：本地数量与合计不再显示旧值
@@ -466,6 +520,9 @@ export const page = {
   async init() {
     if (ShopContext.currentId() === null) return;
     viewport.install();
+    $("#btnColumns").addEventListener("click", () => settings.open());
+    $$("[data-open-columns]").forEach((b) =>
+      b.addEventListener("click", () => settings.open()));
     // 事件委托绑在 tbody 上：重渲染后无需重绑
     // 三角按钮与 SPU 行空白区域都触发同一个展开/收起，一次点击只切换一次
     $("#spuRows").addEventListener("click", (e) => {
@@ -486,6 +543,8 @@ export const page = {
     setInterval(() => store.sweep(), 60 * 1000);    // 到期实际清理，不等下次点击
     const jumpSpuId = consumeSpuJumpParam();
     const jumpItemId = consumeItemJumpParam();      // 两个参数同时出现时以 item_id 为准
+    // 先取回本页已保存的列设置并应用，再加载数据，首次渲染就是用户上次的顺序
+    await settings.ready();
     await loadOverview();
     if (jumpItemId) await initItemJump(jumpItemId);
     else if (jumpSpuId) await initSpuJump(jumpSpuId);

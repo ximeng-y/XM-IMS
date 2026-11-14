@@ -6,7 +6,10 @@
   <div>
     <h1>单品（SKU）管理</h1>
   </div>
-  <div><button type="button" id="btnNewItem" class="btn-sm">＋ 新建单品</button></div>
+  <div class="head-actions">
+    <button type="button" id="btnColumns" class="btn-outline btn-sm">列设置</button>
+    <button type="button" id="btnNewItem" class="btn-sm">＋ 新建单品</button>
+  </div>
 </div>
 
 <div class="panel">
@@ -22,9 +25,12 @@
     </div>
     <div><button id="btnFilter" type="button" class="btn-outline btn-sm">查询</button></div>
   </div>
+  <div id="columnsHiddenHint" class="columns-hidden-hint" hidden>
+    表格中的信息列已全部隐藏。<button type="button" class="btn-outline btn-sm" data-open-columns>打开列设置</button>
+  </div>
   <div class="table-scroll">
-    <table>
-      <thead id="itemHead"><tr><th class="num">ID</th><th>名称</th><th>SPU</th><th class="num">库存</th><th>操作</th></tr></thead>
+    <table class="columns-table">
+      <thead id="itemHead"><tr><th class="col-id num">ID</th><th class="col-name">名称</th><th class="col-spu">SPU</th><th class="col-qty num">库存</th><th class="col-actions">操作</th></tr></thead>
       <tbody id="itemRows"><tr><td colspan="5" class="t-empty">加载中…</td></tr></tbody>
     </table>
   </div>

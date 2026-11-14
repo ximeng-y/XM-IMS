@@ -242,6 +242,25 @@ main.content.fade-in { animation: fadeIn .25s ease; }
 }
 .page-head h1 { margin: 0; font-size: 1.35rem; color: var(--ink); }
 .page-head .sub { color: var(--ink-soft); font-size: .85rem; margin-top: .25rem; }
+/* 页头右侧按钮组：列设置与各页原有业务按钮并排 */
+.head-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.head-actions button { margin: 0; }
+
+/* 表格信息列被全部隐藏时的页面级提示，恢复入口就在提示里 */
+.columns-hidden-hint {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+  margin-bottom: .75rem;
+  padding: .6rem .8rem;
+  background: var(--blue-pale);
+  border: 1px solid var(--blue-pale-2);
+  color: var(--ink);
+  font-size: .87rem;
+}
+.columns-hidden-hint[hidden] { display: none; }
+.columns-hidden-hint button { margin: 0; }
 
 .panel {
   background: #fff;

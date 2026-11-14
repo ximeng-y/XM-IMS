@@ -21,16 +21,16 @@
 
 /* ---------- 库存总览（SPU 分组 + 可展开 SKU 子行） ---------- */
 /* 列宽规范（issue #56）：fixed 布局下列宽只认表头行的宽度，与是否展开、单元格内容
-   长短无关。固定列在这里定死，名称列与各自定义字段列不给宽度 —— fixed 布局会把
-   扣掉固定列后的余量在它们之间平分，因此字段列是几个都成立，无需按字段数写样式。
-   余量平分让这几列随容器等比例收缩，不会出现某一列被内容挤没的情况。
-   固定列在这里一次写完（列宽只认表头行，故不另给 .tri-cell 写宽度）。 */
+   长短无关。固定列按列的语义标识定宽，不认「第几列」——列设置可以调整列的顺序与
+   显示，位置不再是列的身份；名称列与各自定义属性列不给宽度 —— fixed 布局会把
+   扣掉固定列后的余量在它们之间平分，因此属性列是几个都成立，无需按属性数写样式。
+   余量平分让这几列随容器等比例收缩，不会出现某一列被内容挤没的情况。 */
 /* 展开三角：3.5rem 才容得下 .tri-btn 的左右内边距加字形，2.5rem 会裁掉它右缘 */
-#inventoryScroll th:nth-child(1) { width: 3.5rem; }
-#inventoryScroll th:nth-child(2) { width: 5rem; }     /* ID */
-#inventoryScroll th:nth-child(4) { width: 5rem; }     /* SKU 数 */
-#inventoryScroll th:nth-child(5) { width: 7rem; }     /* 合计库存 */
-#inventoryScroll th:last-child { width: 12rem; }      /* 更新时间 */
+#inventoryScroll .columns-table .col-expand { width: 3.5rem; }
+#inventoryScroll .columns-table .col-id { width: 5rem; }          /* ID */
+#inventoryScroll .columns-table .col-sku-count { width: 5rem; }   /* SKU 数 */
+#inventoryScroll .columns-table .col-total { width: 7rem; }       /* 合计库存 */
+#inventoryScroll .columns-table .col-updated { width: 12rem; }    /* 更新时间 */
 
 .tri-btn {
   background: none;

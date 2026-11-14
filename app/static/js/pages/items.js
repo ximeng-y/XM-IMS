@@ -1,4 +1,4 @@
-/* 单品（SKU）管理页：搜索筛选分页 / 编辑（改名、换挂 SPU、改值/清除值）
+/* 单品（SKU）管理页：搜索筛选分页 / 编辑（改名、换挂 SPU、改值/清除值）/ 列设置
    新建走共享组件 components/item-form.js 的「新建单品」小窗（与库存页操作区同一实现） */
 "use strict";
 
@@ -7,11 +7,37 @@ import { UI, $, $$ } from "xm/ui";
 import { ShopContext } from "xm/shop-context";
 import { ItemForm } from "xm/components/item-form";
 import { DeleteFlow } from "xm/components/delete-flow";
+import { ViewSettings } from "xm/runtime/view-settings";
 
 const LIMIT = 50;
 let offset = 0;
 let fieldsMeta = [];   // 自定义字段定义
 let spusList = [];     // SPU 列表（与新建单品小窗内的组合框共享引用）
+let rows = null;       // 最近一次取回的列表；null 表示还没拿到数据
+let errorText = "";    // 加载失败的文案
+
+// 系统列用固定语义标识；自定义属性用已有稳定 uid（field: 前缀避免与系统列同名）。
+// 列的先后与是否隐藏由列设置按店铺保存，列宽也只认列标识
+function columns() {
+  return [
+    { key: "id", label: "ID", cls: "col-id", headCls: "num" },
+    { key: "name", label: "名称", cls: "col-name" },
+    { key: "spu", label: "SPU", cls: "col-spu" },
+    { key: "qty", label: "库存", cls: "col-qty", headCls: "num" },
+    ...fieldsMeta.map((f) => ({
+      key: `field:${f.uid}`, label: f.name, cls: "col-field", field: f,
+    })),
+    // 操作是交互控件：可以排序，不提供隐藏
+    { key: "actions", label: "操作", cls: "col-actions", control: true },
+  ];
+}
+
+const settings = ViewSettings.create({
+  view: "items",
+  columns,
+  // 列设置变化（含首次载入）后立即按新顺序与可见性重画表头与数据行
+  onApply: () => renderTable(),
+});
 
 // ---------- 数据加载 ----------
 async function loadMeta() {
@@ -29,7 +55,6 @@ function fillSpuSelects() {
 }
 
 async function loadItems() {
-  const tbody = $("#itemRows");
   const q = $("#fltQ").value.trim();
   const spu = $("#fltSpu").value;
   const params = new URLSearchParams({ offset: String(offset), limit: String(LIMIT) });
@@ -43,60 +68,86 @@ async function loadItems() {
       offset = lastOffset;
       return loadItems();
     }
-    renderTable(data);
+    rows = data.items;
+    errorText = "";
+    renderTable();
     UI.renderPager("#itemPager", { offset, limit: LIMIT, total: data.total },
       (go) => { offset = go; loadItems(); });
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="9" class="t-empty">加载失败：${UI.esc(e.message)}</td></tr>`;
+    rows = null;
+    errorText = e.message;
+    renderTable();
     UI.apiFail(e);
   }
 }
 
-function renderTable(data) {
+// 表头与数据行都由同一份可见列顺序生成；空态、加载失败也按可见列数占位
+function renderTable() {
+  const keys = settings.visible();
+  const cols = columns();
+  const byKey = new Map(cols.map((c) => [c.key, c]));
+  $("#itemHead").innerHTML = "<tr>" + keys.map((key) => {
+    const col = byKey.get(key);
+    const cls = [col.headCls, col.cls].filter(Boolean).join(" ");
+    return `<th class="${cls}">${UI.esc(col.label)}</th>`;
+  }).join("") + "</tr>";
+  $("#columnsHiddenHint").hidden = settings.infoVisible();
+
   const tbody = $("#itemRows");
-  // 表头：自定义字段列插在库存之后
-  const extraHead = fieldsMeta.map((f) => `<th>${UI.esc(f.name)}</th>`).join("");
-  $("#itemHead").innerHTML =
-    `<tr><th class="num">ID</th><th>名称</th><th>SPU</th><th class="num">库存</th>` +
-    extraHead + `<th>操作</th></tr>`;
-  if (!data.items.length) {
-    tbody.innerHTML = `<tr><td colspan="${5 + fieldsMeta.length}" class="t-empty">没有符合条件的单品</td></tr>`;
+  if (errorText) {
+    tbody.innerHTML = `<tr><td colspan="${keys.length}" class="t-empty">加载失败：${UI.esc(errorText)}</td></tr>`;
     return;
   }
-  tbody.innerHTML = data.items.map((it, idx) => {
-    // 计算字段与普通字段同列展示：普通字段取手填值，计算字段取后端算出的结果文本/错误
-    // 普通字段值与计算成功的结果都挂 title：固定列宽下长字符串、长金额会被省略号截断，
-    // 悬停需能看全文。出错时的徽标自带 title（写明原因），不受这里影响，故不重复挂。
-    const extra = fieldsMeta.map((f) => {
-      if (ItemForm.isComputed(f)) {
-        const calc = it.calculations?.[f.name];
-        const full = calc && !calc.error ? calc.display : "";
-        return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${ItemForm.calcHtml(calc)}</td>`;
-      }
-      const v = it.values[f.name];
-      const s = v === null || v === undefined || v === "" ? "" : String(v);
-      return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
-    }).join("");
+  if (rows === null) {
+    tbody.innerHTML = `<tr><td colspan="${keys.length}" class="t-empty">加载中…</td></tr>`;
+    return;
+  }
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="${keys.length}" class="t-empty">没有符合条件的单品</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map((it, idx) =>
     // item-row + data-item：供双击跳转库存页定位目标单品（issue #62）
-    return `<tr class="item-row" data-item="${UI.esc(it.id)}">
-      <td class="num mono">${UI.esc(it.id)}</td>
-      <td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>
-      <td title="${UI.esc(it.spu_name)} #${it.spu_id}">${UI.esc(it.spu_name)}<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>
-      <td class="num">${it.qty}</td>
-      ${extra}
-      <td class="row-actions">
-        <button type="button" class="btn-outline btn-sm" data-idx="${idx}">编辑</button>
-        <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${idx}">删除</button>
-      </td>
-    </tr>`;
-  }).join("");
+    `<tr class="item-row" data-item="${UI.esc(it.id)}">` +
+    keys.map((key) => cellHtml(byKey.get(key), it, idx)).join("") + "</tr>").join("");
   $$("button[data-idx]", tbody).forEach((b) =>
     b.addEventListener("click", () => {
-      try { editFlow(data.items[Number(b.dataset.idx)]); }
+      try { editFlow(rows[Number(b.dataset.idx)]); }
       catch (e) { UI.fail("打开编辑对话框失败：" + (e.message || e)); console.error(e); }
     }));
   $$("button[data-del]", tbody).forEach((b) =>
-    b.addEventListener("click", () => { void deleteFlow(data.items[Number(b.dataset.del)]); }));
+    b.addEventListener("click", () => { void deleteFlow(rows[Number(b.dataset.del)]); }));
+}
+
+function cellHtml(col, it, idx) {
+  switch (col.key) {
+    case "id": return `<td class="num mono">${UI.esc(it.id)}</td>`;
+    case "name": return `<td title="${UI.esc(it.name)}">${UI.esc(it.name)}</td>`;
+    case "spu":
+      return `<td title="${UI.esc(it.spu_name)} #${it.spu_id}">${UI.esc(it.spu_name)}` +
+             `<span class="muted mono" style="font-size:.75rem"> #${it.spu_id}</span></td>`;
+    case "qty": return `<td class="num">${it.qty}</td>`;
+    case "actions":
+      return `<td class="row-actions">
+        <button type="button" class="btn-outline btn-sm" data-idx="${idx}">编辑</button>
+        <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${idx}">删除</button>
+      </td>`;
+    default: return fieldCellHtml(col.field, it);
+  }
+}
+
+// 计算字段与普通字段同列展示：普通字段取手填值，计算字段取后端算出的结果文本/错误。
+// 普通字段值与计算成功的结果都挂 title：固定列宽下长字符串、长金额会被省略号截断，
+// 悬停需能看全文。出错时的徽标自带 title（写明原因），不受这里影响，故不重复挂。
+function fieldCellHtml(f, it) {
+  if (ItemForm.isComputed(f)) {
+    const calc = it.calculations?.[f.name];
+    const full = calc && !calc.error ? calc.display : "";
+    return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${ItemForm.calcHtml(calc)}</td>`;
+  }
+  const v = it.values[f.name];
+  const s = v === null || v === undefined || v === "" ? "" : String(v);
+  return `<td${s ? ` title="${UI.esc(s)}"` : ""}>${UI.fmtVal(v)}</td>`;
 }
 
 // ---------- 删除（仅限从未产生过流水的单品） ----------
@@ -150,9 +201,13 @@ function editFlow(item) {
 export const page = {
   shell: true, shopContext: "required", requireSyncReady: true, autoUpdatePrompt: true,
   async init() {
-      if (ShopContext.currentId() === null) return;
+    if (ShopContext.currentId() === null) return;
     try { await loadMeta(); } catch (e) { UI.apiFail(e, "加载字段/SPU 失败"); }
     fillSpuSelects();
+
+    $("#btnColumns").addEventListener("click", () => settings.open());
+    $$("[data-open-columns]").forEach((b) =>
+      b.addEventListener("click", () => settings.open()));
 
     $("#btnNewItem").addEventListener("click", openCreateDialog);
     $("#btnFilter").addEventListener("click", () => { offset = 0; loadItems(); });
@@ -173,6 +228,8 @@ export const page = {
       location.href = `/inventory?item_id=${encodeURIComponent(row.dataset.item)}`;
     });
 
+    // 先取回本页已保存的列设置并应用，首次渲染就是用户上次的顺序
+    await settings.ready();
     loadItems();
   },
 };

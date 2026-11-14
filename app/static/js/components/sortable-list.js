@@ -22,10 +22,12 @@ const DOWN_ITEMS = 5;                  // 一次拖动中向下自动滚动的�
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // opts:
-//   handle  拖拽起点的选择器（必填），只有从这些元素上按下才会开始拖动
-//   item    可拖项的选择器，默认容器内所有直接子元素
-//   onEnd   可选，拖动结束且顺序已落到 DOM 后调用，参数为按新顺序排列的元素数组
-function create(container, { handle, item, onEnd } = {}) {
+//   handle    拖拽起点的选择器（必填），只有从这些元素上按下才会开始拖动
+//   item      可拖项的选择器，默认容器内所有直接子元素
+//   onEnd     可选，拖动结束且顺序已落到 DOM 后调用，参数为按新顺序排列的元素数组
+//   downItems 可选，一次拖动中向下自动滚动的上限（按项间距计），默认 5 项；
+//             传入 Infinity 表示不设上限，用于侧栏内较长的设置列表
+function create(container, { handle, item, onEnd, downItems = DOWN_ITEMS } = {}) {
   if (!container) throw new TypeError("SortableList 需要一个容器元素");
   if (!handle) throw new TypeError("SortableList 需要 handle 选择器");
 
@@ -223,7 +225,7 @@ function create(container, { handle, item, onEnd } = {}) {
       startY: e.clientY, pointerY: e.clientY,
       startTop: el.getBoundingClientRect().top,
       ty: 0, raf: 0, paddingTop,
-      scrolledDown: 0, maxDown: Math.max(pitch, 1) * DOWN_ITEMS,
+      scrolledDown: 0, maxDown: Math.max(pitch, 1) * downItems,
       scroller: scrollerOf(el),
     };
     window.addEventListener("keydown", onKey);
@@ -305,6 +307,8 @@ function create(container, { handle, item, onEnd } = {}) {
   container.addEventListener("lostpointercapture", onLostCapture);
 
   return {
+    // 是否正在拖动：调用方据此让 Esc 先取消拖动而不是关闭所在浮层
+    isDragging: () => drag !== null,
     destroy() {
       finish(false);
       container.removeEventListener("pointerdown", onPointerDown);
