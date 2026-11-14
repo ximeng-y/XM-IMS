@@ -183,10 +183,11 @@ def install(app):
             error = update.maintenance_error()
             if error:
                 return JSONResponse(status_code=503, content=error)
-        # 首次启动确认前不开放业务写入：页面与只读设置仍可加载，同步状态与
-        # 本机更新设置除外；其他写请求一律拒绝
+        # 首次启动确认前不开放业务写入：页面与只读设置仍可加载，本机更新设置除外；
+        # 同步接口也按方法处理——读状态放行，写操作（含恢复）一律拒绝，避免在
+        # 确认前改动数据指针
         if _trial_active and request.method not in ("GET", "HEAD", "OPTIONS") \
-                and not request.url.path.startswith(("/api/v1/sync/", "/api/v1/update/settings")):
+                and not request.url.path.startswith("/api/v1/update/settings"):
             return JSONResponse(status_code=503, content=error_dict(
                 "UPDATE_TRIAL", "程序正在确认新版本，暂不能修改数据",
                 user_message="正在确认新版本，暂时不能修改数据",

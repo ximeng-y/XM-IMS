@@ -176,9 +176,11 @@ function watchRelease() {
     if (control.attempt !== trial.id || control.command !== "release") return;
     if (backend.sendTrial("release")) {
       clearInterval(timer);
+      // 放行后转入正常模式：补建托盘，窗口关闭才仍能回到程序或退出
+      if (!tray) createTray();
+      tray.setToolTip(APP_NAME);
       // 放行后显示正常窗口；窗口与首屏已经就绪，直接展示
       if (mainWindow) mainWindow.show();
-      if (tray) tray.setToolTip(APP_NAME);
     }
   }, CONTROL_POLL_MS);
   timer.unref?.();

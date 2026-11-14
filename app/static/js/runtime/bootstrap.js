@@ -69,9 +69,14 @@ export async function boot(module) {
     if (!loaded) return;
   }
 
-  try { await spec.init({ shopContext: spec.shopContext }); }
-  catch (e) { console.error(e); UI.fail("页面初始化失败：" + (e.message || e)); }
-  confirmDesktopReady();
+  try {
+    await spec.init({ shopContext: spec.shopContext });
+    // 首屏确认只在本页面初始化成功后上报；失败时保持候选未就绪，由监督回退
+    confirmDesktopReady();
+  } catch (e) {
+    console.error(e);
+    UI.fail("页面初始化失败：" + (e.message || e));
+  }
 }
 
 /** 首屏本地模块初始化成功后通知桌面；不等待远端更新检查。

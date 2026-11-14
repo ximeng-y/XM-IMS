@@ -18,7 +18,7 @@ import shutil
 import stat
 import sys
 import zipfile
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 MANIFEST = "version-manifest.json"
 # 版本载荷只能包含程序文件；数据、工具、固定根组件与卸载器一律拒绝
@@ -102,7 +102,7 @@ def main(argv=None):
 
     archive_path = os.path.abspath(args.zip)
     staging = os.path.abspath(args.target)
-    slot_root = os.path.abspath(args.slot_root)
+    slot_root = Path(os.path.abspath(args.slot_root))
     if not os.path.isfile(archive_path):
         fail("更新包不存在")
     if os.path.exists(staging):

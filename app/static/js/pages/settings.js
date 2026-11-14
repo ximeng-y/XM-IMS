@@ -69,11 +69,15 @@ export const page = {
       else renderLatest(st);
     }
 
+    // 回退提示只在本次页面会话内提示一次：快照每次进度事件都会重新下发，
+    // 去重状态不能写在快照对象上
+    let fallbackNotified = false;
+
     /** 桌面准备状态：进度区 + 待重启操作区。 */
     function showDesktopState(st) {
       if (!st) return;
-      if (st.fallback && !st.fallbackShown) {
-        st.fallbackShown = true;
+      if (st.fallback && !fallbackNotified) {
+        fallbackNotified = true;
         UI.toast("新版启动失败，已恢复到上一个版本", { title: "已恢复" });
       }
       const preparing = !!st.preparing;

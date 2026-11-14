@@ -65,13 +65,14 @@ function progressViewState(st) {
   };
 }
 
-/** 准备完成、准备中、失败与回退提示；业务文字只在这里决定。 */
+/** 准备完成、准备中、失败与回退提示；业务文字只在这里决定。
+    回退提示只在没有新作业状态时展示，避免覆盖当前的准备/就绪/失败文案。 */
 function renderNotice(st) {
   if (!st) return "";
-  if (st.fallback) return "新版启动失败，已恢复到上一个版本";
   if (st.stage === "prepared") return "新版已准备就绪，可重启应用更新";
   if (st.preparing) return "正在准备更新，可以继续使用";
   if (st.last_error) return "更新准备失败：" + st.last_error;
+  if (st.fallback) return "新版启动失败，已恢复到上一个版本";
   return "";
 }
 
@@ -295,7 +296,7 @@ async function check(tries) {
 }
 
 // 启动入口按页面描述调用：保持 load 之后的原始延迟；已过 load 时同样只延迟一次
-function startAutoCheck() {
+export function startAutoCheck() {
   // 先接上桌面状态并读快照：整页导航后立即恢复准备进度，不等远端检查
   if (Desktop.available()) connectDesktopState();
   setTimeout(() => check(0), UPDATE_FIRST_DELAY);

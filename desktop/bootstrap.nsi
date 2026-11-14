@@ -69,6 +69,9 @@ Var Result
 Var Failed
 Var Error
 Var WaitPid
+Var KeptAttempt
+Var SweepFailed
+Var SlotName
 
 ; ---------- 通用 ----------
 
@@ -102,55 +105,171 @@ Function WaitForPrevious
   System::Call 'kernel32::CloseHandle(p R1)'
 FunctionEnd
 
-Function ValidSlot
-  ; 只接受受管理的版本槽名或 legacy；$1 = 待检查值，$2 = 结果（1 合法）
-  StrCpy $2 "0"
-  ${If} $1 == "legacy"
-    StrCpy $2 "1"
-  ${ElseIf} $1 != ""
-    Call ValidateSlotChars
-    ${If} $2 == "1"
-      ; 必须是完整槽名：版本.版本.版本-32 位构建标识；这里只确认存在对应目录
-      ${IfNot} ${FileExists} "$INSTDIR\versions\$1\xm-ims.exe"
-        StrCpy $2 "0"
-      ${EndIf}
+; 去掉清单行尾的 CR / LF；清单按 CRLF 写出
+Function TrimLineEnd
+  ${Do}
+    StrCpy $R4 $Line 1 -1
+    ${If} $R4 == "$\r"
+    ${OrIf} $R4 == "$\n"
+      StrCpy $Line $Line -1
+    ${Else}
+      ${Break}
     ${EndIf}
+  ${Loop}
+FunctionEnd
+
+; 递归移除空目录：只删除已经空的目录，不删除任何文件。
+; 输入 $0 = 目录；目录中已空的子目录与目录本身都会被移除，未空的原样保留。
+Function PruneEmptyDirs
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  FindFirst $3 $1 "$0\*.*"
+  ${Do}
+    ${If} $1 == ""
+      ${Break}
+    ${EndIf}
+    ${If} $1 != "."
+    ${AndIf} $1 != ".."
+      StrCpy $2 "$0\$1"
+      Push $0
+      StrCpy $0 "$2"
+      Call PruneEmptyDirs
+      Pop $0
+    ${EndIf}
+    FindNext $3 $1
+  ${Loop}
+  FindClose $3
+  RMDir "$0"
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
+Function IsHex
+  ; 输入：$R1 = 单字符；输出：$R2 = "1" 表示 0-9 或小写 a-f
+  StrCpy $R2 "0"
+  ${If} $R1 == "0"
+  ${OrIf} $R1 == "1"
+  ${OrIf} $R1 == "2"
+  ${OrIf} $R1 == "3"
+  ${OrIf} $R1 == "4"
+  ${OrIf} $R1 == "5"
+  ${OrIf} $R1 == "6"
+  ${OrIf} $R1 == "7"
+  ${OrIf} $R1 == "8"
+  ${OrIf} $R1 == "9"
+  ${OrIf} $R1 == "a"
+  ${OrIf} $R1 == "b"
+  ${OrIf} $R1 == "c"
+  ${OrIf} $R1 == "d"
+  ${OrIf} $R1 == "e"
+  ${OrIf} $R1 == "f"
+    StrCpy $R2 "1"
   ${EndIf}
 FunctionEnd
 
-Function ValidateSlotChars
-  ; 输入：$1 = 槽名；输出：$2（1 合法）
-  ; 槽名只允许字母、数字、点、短横线与下划线；不含分隔符即无法跳出 versions 目录
-  StrCpy $2 "1"
-  StrCpy $R1 0
+Function IsDigit
+  ; 输入：$R1 = 单字符；输出：$R2 = "1" 表示 0-9
+  StrCpy $R2 "0"
+  ${If} $R1 == "0"
+  ${OrIf} $R1 == "1"
+  ${OrIf} $R1 == "2"
+  ${OrIf} $R1 == "3"
+  ${OrIf} $R1 == "4"
+  ${OrIf} $R1 == "5"
+  ${OrIf} $R1 == "6"
+  ${OrIf} $R1 == "7"
+  ${OrIf} $R1 == "8"
+  ${OrIf} $R1 == "9"
+    StrCpy $R2 "1"
+  ${EndIf}
+FunctionEnd
+
+Function ValidSlotName
+  ; 输入：$1 = 槽名；输出：$2 = "1" 表示受管理的版本槽名
+  ; 只接受 legacy 或 <X.Y.Z>-<32 位小写十六进制构建标识>。字符集不含路径分隔符，
+  ; 且显式拒绝 . 与 ..，因此不会跳出 versions 目录。
+  StrCpy $2 "0"
+  ${If} $1 == ""
+    Return
+  ${EndIf}
+  ${If} $1 == "."
+  ${OrIf} $1 == ".."
+  ${OrIf} $1 == "legacy"
+    ${If} $1 == "legacy"
+      StrCpy $2 "1"
+    ${EndIf}
+    Return
+  ${EndIf}
+  StrLen $R0 "$1"
+  ${If} $R0 < 38
+    Return
+  ${EndIf}
+  ; 末尾 33 个字符必须是 "-" 加 32 位小写十六进制
+  StrCpy $R3 "$1" 33 -33
+  StrCpy $R4 "$R3" 1
+  ${If} $R4 != "-"
+    Return
+  ${EndIf}
+  StrCpy $R3 "$R3" "" 1
+  StrCpy $R5 0
   ${Do}
-    StrCpy $R2 $1 1 $R1
-    ${If} $R2 == ""
+    StrCpy $R1 "$R3" 1 $R5
+    ${If} $R1 == ""
       ${Break}
     ${EndIf}
-    StrCmp $R2 "." +2 0
-    StrCmp $R2 "-" +1 0
-    StrCmp $R2 "_" +1 0
-    StrCmp $R2 "0" 0 +2
-    StrCmp $R2 "1" 0 +2
-    StrCmp $R2 "2" 0 +2
-    StrCmp $R2 "3" 0 +2
-    StrCmp $R2 "4" 0 +2
-    StrCmp $R2 "5" 0 +2
-    StrCmp $R2 "6" 0 +2
-    StrCmp $R2 "7" 0 +2
-    StrCmp $R2 "8" 0 +2
-    StrCmp $R2 "9" 0 +2
-    StrCmp $R2 "a" 0 +2
-    StrCmp $R2 "b" 0 +2
-    StrCmp $R2 "c" 0 +2
-    StrCmp $R2 "d" 0 +2
-    StrCmp $R2 "e" 0 +2
-    StrCmp $R2 "f" 0 +1
-      StrCpy $2 "0"
-      ${Break}
-    IntOp $R1 $R1 + 1
+    Call IsHex
+    ${If} $R2 != "1"
+      Return
+    ${EndIf}
+    IntOp $R5 $R5 + 1
   ${Loop}
+  ${If} $R5 != 32
+    Return
+  ${EndIf}
+  ; 版本段只能是 数字与点，且恰好两个点
+  StrCpy $R3 "$1" -33
+  ${If} $R3 == ""
+    Return
+  ${EndIf}
+  StrCpy $R5 0
+  StrCpy $R6 0
+  ${Do}
+    StrCpy $R1 "$R3" 1 $R5
+    ${If} $R1 == ""
+      ${Break}
+    ${EndIf}
+    ${If} $R1 == "."
+      IntOp $R6 $R6 + 1
+    ${Else}
+      Call IsDigit
+      ${If} $R2 != "1"
+        Return
+      ${EndIf}
+    ${EndIf}
+    IntOp $R5 $R5 + 1
+  ${Loop}
+  ${If} $R6 != 2
+    Return
+  ${EndIf}
+  StrCpy $2 "1"
+FunctionEnd
+
+Function ValidSlot
+  ; 输入：$1 = 槽名；输出：$2 = "1" 表示名字合法且对应程序文件存在
+  Call ValidSlotName
+  ${If} $2 != "1"
+    Return
+  ${EndIf}
+  Call ResolveProgram
+  ${If} $2 == ""
+    StrCpy $2 "0"
+  ${Else}
+    StrCpy $2 "1"
+  ${EndIf}
 FunctionEnd
 
 ; ---------- 选择资料 ----------
@@ -232,6 +351,8 @@ Function LaunchNormal
   ${EndIf}
   Call ResolveProgram
   StrCpy $Exe "$2"
+  ; 普通启动不携带首次启动标识：候选转稳定后残留的变量不能再触发试运行
+  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_DESKTOP_ATTEMPT", w "")'
   System::Call 'kernel32::SetEnvironmentVariableW(w "XM_INSTALL_ROOT", w "$INSTDIR")'
   System::Call 'kernel32::SetEnvironmentVariableW(w "XM_PROGRAM_ROOT", w "$INSTDIR")'
   Exec '"$Exe"'
@@ -289,6 +410,11 @@ Function LaunchCandidate
     Call FailHard
   ${EndIf}
   StrCpy $Exe "$2"
+  ; 候选只继承启动器环境：显式注入本次标识与固定根，候选才会进入首次启动确认；
+  ; 普通启动则清空残留标识，避免误入试运行
+  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_INSTALL_ROOT", w "$INSTDIR")'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_PROGRAM_ROOT", w "$INSTDIR")'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_DESKTOP_ATTEMPT", w "$Attempt")'
   ; 启动器是 x86：CREATE_SUSPENDED(0x4)、CREATE_NEW_PROCESS_GROUP 不加；
   ; STARTUPINFO 与 PROCESS_INFORMATION 按调用端位宽（x86）组织
   System::Call 'kernel32::CreateJobObjectW(p 0, w 0) p .R1'
@@ -401,6 +527,9 @@ Function Handoff
   ${Loop}
 
   ; 首次启动成功的持久确认点：此后中断不再自动倒退数据
+  ; 选择文件里的本次标识清空，但内存中的标识必须保留到 release 交接完成，
+  ; 否则 control.ini 写不出本次标识，候选不会接受放行命令
+  StrCpy $KeptAttempt "$Attempt"
   StrCpy $Phase "stable"
   StrCpy $PrevSlot "$ActiveSlot"
   StrCpy $ActiveSlot "$CandSlot"
@@ -412,6 +541,8 @@ Function Handoff
   StrCpy $FallbackTarget ""
   StrCpy $FallbackVersion ""
   Call WriteSelection
+  StrCpy $Attempt "$KeptAttempt"
+  StrCpy $KeptAttempt ""
 
   ; 解除本次 Job 的“退出即清退”设置，再放行候选进入正常同步启动
   System::Call '*(i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0) p .R2'
@@ -491,42 +622,61 @@ FunctionEnd
 
 ; 成功后按清单清理更旧的受管理程序文件，只保留当前与最近上一版
 Function CleanupOlder
-  FindFirst $Handle $R1 "$INSTDIR\versions\*.*"
+  FindFirst $Handle $SlotName "$INSTDIR\versions\*.*"
   ${Do}
-    ${If} $R1 == ""
+    ${If} $SlotName == ""
       ${Break}
     ${EndIf}
-    ${If} $R1 != "$ActiveSlot"
-    ${AndIf} $R1 != "$PrevSlot"
-    ${AndIf} ${FileExists} "$INSTDIR\versions\$R1\installed-program-files.txt"
-      FileOpen $R2 "$INSTDIR\versions\$R1\installed-program-files.txt" r
-      ${If} $R2 != ""
-        ${Do}
-          ClearErrors
-          FileReadUTF16LE $R2 $Line
-          ${If} ${Errors}
-            ${Break}
-          ${EndIf}
-          ${If} $Line == ""
-            ${Break}
-          ${EndIf}
-          StrCpy $FirstChar $Line 1
-          StrCpy $R3 $Line 2
-          ${If} $FirstChar != "\"
-          ${AndIf} $R3 != ".."
-          ${AndIf} $R3 != "%1"
-            Delete "$INSTDIR\versions\$R1\$Line"
-          ${EndIf}
-        ${Loop}
-        FileClose $R2
+    ; 只处理校验过的真实版本槽，绝不触碰 .. 或未登记目录
+    StrCpy $1 "$SlotName"
+    Call ValidSlotName
+    ${If} $2 == "1"
+    ${AndIf} $SlotName != "legacy"
+    ${AndIf} $SlotName != "$ActiveSlot"
+    ${AndIf} $SlotName != "$PrevSlot"
+      ${If} ${FileExists} "$INSTDIR\versions\$SlotName\installed-program-files.txt"
+        StrCpy $SweepFailed "0"
+        FileOpen $R2 "$INSTDIR\versions\$SlotName\installed-program-files.txt" r
+        ${If} $R2 != ""
+          ${Do}
+            ClearErrors
+            FileReadUTF16LE $R2 $Line
+            ${If} ${Errors}
+              ${Break}
+            ${EndIf}
+            ${If} $Line == ""
+              ${Break}
+            ${EndIf}
+            Call TrimLineEnd
+            StrCpy $FirstChar $Line 1
+            StrCpy $R3 $Line 2
+            ${If} $FirstChar != "\"
+            ${AndIf} $FirstChar != "."
+            ${AndIf} $R3 != ".."
+            ${AndIf} $R3 != "%1"
+            ${AndIf} $Line != "installed-program-files.txt"
+              ClearErrors
+              ${If} ${FileExists} "$INSTDIR\versions\$SlotName\$Line"
+                Delete "$INSTDIR\versions\$SlotName\$Line"
+              ${EndIf}
+              ${If} ${Errors}
+                StrCpy $SweepFailed "1"
+              ${EndIf}
+            ${EndIf}
+          ${Loop}
+          FileClose $R2
+        ${Else}
+          StrCpy $SweepFailed "1"
+        ${EndIf}
+        ; 只有清单登记的文件全部删除成功，才删清单并清理已空的目录
+        ${If} $SweepFailed == "0"
+          Delete "$INSTDIR\versions\$SlotName\installed-program-files.txt"
+          StrCpy $0 "$INSTDIR\versions\$SlotName"
+          Call PruneEmptyDirs
+        ${EndIf}
       ${EndIf}
-      Delete "$INSTDIR\versions\$R1\installed-program-files.txt"
-      RMDir /r "$INSTDIR\versions\$R1\resources"
-      RMDir /r "$INSTDIR\versions\$R1\locales"
-      Delete "$INSTDIR\versions\$R1\*.*"
-      RMDir "$INSTDIR\versions\$R1"
     ${EndIf}
-    FindNext $Handle $R1
+    FindNext $Handle $SlotName
   ${Loop}
   FindClose $Handle
 FunctionEnd

@@ -184,12 +184,17 @@ def program_manifest(stage, version):
 def version_manifest(stage, version, build, entry):
     """版本清单：格式、版本、构建标识、平台、入口与载荷相对路径及大小。
 
-    与程序文件清单来自同一次文件枚举；清单自身单独登记，避免自引用大小。
+    直接从载荷目录枚举（ZIP 成员用正斜杠，清单键必须一致）；清单自身不登记。
     不增加逐文件 SHA。
     """
     files = {}
-    for relative in read_program_manifest_files(stage):
-        files[relative] = (stage / relative).stat().st_size
+    for path in sorted(stage.rglob("*")):
+        if not path.is_file():
+            continue
+        name = path.relative_to(stage).as_posix()
+        if name in ("installed-program-files.txt", VERSION_MANIFEST):
+            continue
+        files[name] = path.stat().st_size
     manifest = {
         "format": 1,
         "version": version,
@@ -203,13 +208,6 @@ def version_manifest(stage, version, build, entry):
     (stage / VERSION_MANIFEST).write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
-
-
-def read_program_manifest_files(stage):
-    """按刚写出的程序清单枚举载荷；清单自身不在其中。"""
-    manifest = stage / "installed-program-files.txt"
-    lines = manifest.read_text(encoding="utf-16-le").splitlines()
-    return [line.strip() for line in lines if line.strip()]
 
 
 def read_program_manifest(target):
@@ -404,9 +402,10 @@ def main(argv=None):
     windows_resources.write_resources(electron_pkg / ELECTRON_EXE, PROJECT_ROOT / "icon.ico",
                                       APP_NAME, "XM-IMS 进销存", version)
 
-    # 6) 清单：程序文件清单与版本清单来自同一次枚举
-    program_manifest(electron_pkg, version)
+    # 6) 清单：先写版本清单，再写程序文件清单，让后者也登记版本清单文件，
+    #    清理与卸载按清单删文件时不留残余
     version_manifest(electron_pkg, version, build, ELECTRON_EXE)
+    program_manifest(electron_pkg, version)
 
     makensis = find_nsis(args.nsis)
     icon = str(electron_pkg / "resources" / "icons" / "icon.ico")

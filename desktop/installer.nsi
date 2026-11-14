@@ -256,41 +256,42 @@ Section "XM-IMS" SecMain
   Rename "$INSTDIR\versions\${SLOT}.installing" "$INSTDIR\versions\${SLOT}"
 
   ; 3) 固定根组件：启动器与独立恢复支持；同协议已存在时保留原组件
+  ;    启动器源码文件名与入口名不同，必须用 /oname 落到固定入口名
   SetOutPath "$INSTDIR"
-  File "${LAUNCHER_FILE}"
+  File /oname=${LAUNCHER} "${LAUNCHER_FILE}"
   CreateDirectory "$INSTDIR\bootstrap-support"
   ${IfNot} ${FileExists} "$INSTDIR\bootstrap-support\update_trial.py"
     File /oname=bootstrap-support\update_trial.py "${SUPPORT_DIR}\update_trial.py"
     File /oname=bootstrap-support\process_lock.py "${SUPPORT_DIR}\process_lock.py"
   ${EndIf}
 
-  ; 4) 选择资料：首装或旧平铺迁移后指向新槽；已有待应用状态不覆盖
-  ${If} $LegacyMode == "1"
-  ${OrIfNot} ${FileExists} "$INSTDIR\${SELECTION}"
+  ; 4) 选择资料：新槽一律先作为待确认候选，由启动器首次启动监督后写入 stable
+  ;    - 旧平铺迁移：回退目标为刚保留的 legacy，不沿用迁移前的选择
+  ;    - 已安装版本的手动升级：旧 active 与回退链保持不变，新槽只进候选
+  ;    - 全新首装：没有旧数据可回退，直接以新槽为稳定版本
+  ;    已有 prepared / pending 等待应用时不覆盖，避免丢掉已准备候选
+  ${If} ${FileExists} "$INSTDIR\${SELECTION}"
+    ReadINIStr $R6 "$INSTDIR\${SELECTION}" "selection" "phase"
+    ${If} $R6 == "stable"
+      ${If} $LegacyMode == "1"
+        WriteINIStr "$INSTDIR\${SELECTION}" "selection" "active" "legacy"
+        WriteINIStr "$INSTDIR\${SELECTION}" "selection" "previous" ""
+      ${EndIf}
+      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "phase" "pending"
+      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate" "${SLOT}"
+      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate_version" "${APP_VERSION}"
+      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate_tag" "v${APP_VERSION}"
+      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "attempt" ""
+    ${EndIf}
+  ${Else}
     WriteINIStr "$INSTDIR\${SELECTION}" "selection" "protocol" "1"
     WriteINIStr "$INSTDIR\${SELECTION}" "selection" "phase" "stable"
     WriteINIStr "$INSTDIR\${SELECTION}" "selection" "active" "${SLOT}"
-    ${If} $LegacyMode == "1"
-      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "previous" "legacy"
-    ${Else}
-      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "previous" ""
-    ${EndIf}
+    WriteINIStr "$INSTDIR\${SELECTION}" "selection" "previous" ""
     WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate" ""
     WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate_version" ""
     WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate_tag" ""
     WriteINIStr "$INSTDIR\${SELECTION}" "selection" "attempt" ""
-  ${ElseIf} ${FileExists} "$INSTDIR\${SELECTION}"
-    ; 已安装版本之间的手动升级：root 与新槽同时就位后，把选择资料切到新槽
-    ; 已有 prepared / pending 等待应用时不覆盖，避免丢掉已准备候选
-    ReadINIStr $R6 "$INSTDIR\${SELECTION}" "selection" "phase"
-    ${If} $R6 == "stable"
-      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "phase" "stable"
-      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "previous" "${SLOT}"
-      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "active" "${SLOT}"
-      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate" ""
-      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate_version" ""
-      WriteINIStr "$INSTDIR\${SELECTION}" "selection" "candidate_tag" ""
-    ${EndIf}
   ${EndIf}
 
   ; 5) 固定根的受管理文件清单：启动器与恢复支持
@@ -343,84 +344,267 @@ Section "Uninstall"
   DeleteRegKey HKCU "Software\XM-IMS"
 SectionEnd
 
-; 逐个删除 versions 下每个版本槽的受管理文件；data、tools 与未登记文件保留
+; 逐个删除 versions 下每个版本槽的受管理文件；data、tools 与未登记文件保留。
+; 只处理校验过的真实版本槽，严格按清单删文件；删除不完整时保留清单，
+; 目录只在已空时移除，绝不递归或通配删除未登记文件。
 Function un.DeleteVersionFiles
   FindFirst $R8 $R9 "$INSTDIR\versions\*.*"
   ${Do}
     ${If} $R9 == ""
       ${Break}
     ${EndIf}
-    ${If} ${FileExists} "$INSTDIR\versions\$R9\${MANIFEST}"
-      FileOpen $ManifestHandle "$INSTDIR\versions\$R9\${MANIFEST}" r
-      ${If} $ManifestHandle != ""
-        ${Do}
-          ClearErrors
-          FileReadUTF16LE $ManifestHandle $ManifestLine
-          ${If} ${Errors}
-            ${Break}
-          ${EndIf}
-          ${If} $ManifestLine == ""
-            ${Break}
-          ${EndIf}
-          Call un.TrimLineEnd
-          StrCpy $R4 $ManifestLine 1
-          StrCpy $R7 $ManifestLine 2
-          ${If} $R4 != "\"
-          ${AndIf} $R7 != "../"
-          ${AndIf} $R7 != "%1"
-          ${AndIf} $ManifestLine != "${MANIFEST}"
-            Delete "$INSTDIR\versions\$R9\$ManifestLine"
-          ${EndIf}
-        ${Loop}
-        FileClose $ManifestHandle
+    StrCpy $1 "$R9"
+    Call un.ValidSlotName
+    ${If} $2 == "1"
+      ${If} ${FileExists} "$INSTDIR\versions\$R9\${MANIFEST}"
+        StrCpy $ManifestFailed "0"
+        FileOpen $ManifestHandle "$INSTDIR\versions\$R9\${MANIFEST}" r
+        ${If} $ManifestHandle != ""
+          ${Do}
+            ClearErrors
+            FileReadUTF16LE $ManifestHandle $ManifestLine
+            ${If} ${Errors}
+              ${Break}
+            ${EndIf}
+            ${If} $ManifestLine == ""
+              ${Break}
+            ${EndIf}
+            Call un.TrimLineEnd
+            Call un.DeleteSlotListedFile
+          ${Loop}
+          FileClose $ManifestHandle
+        ${Else}
+          StrCpy $ManifestFailed "1"
+        ${EndIf}
+        ${If} $ManifestFailed == "0"
+          Delete "$INSTDIR\versions\$R9\${MANIFEST}"
+          StrCpy $0 "$INSTDIR\versions\$R9"
+          Call un.PruneEmptyDirs
+        ${EndIf}
       ${EndIf}
-      Delete "$INSTDIR\versions\$R9\${MANIFEST}"
     ${EndIf}
-    RMDir /r "$INSTDIR\versions\$R9\resources"
-    RMDir /r "$INSTDIR\versions\$R9\locales"
-    Delete "$INSTDIR\versions\$R9\*.dll"
-    Delete "$INSTDIR\versions\$R9\*.exe"
-    Delete "$INSTDIR\versions\$R9\*.json"
-    RMDir "$INSTDIR\versions\$R9"
     FindNext $R8 $R9
   ${Loop}
   FindClose $R8
 FunctionEnd
 
-; 旧平铺布局保留的 legacy 程序：按迁移时保留的清单删除
+; 删除版本槽清单登记的一行；清单自身与越出行跳过
+Function un.DeleteSlotListedFile
+  ${If} $ManifestLine == ""
+  ${OrIf} $ManifestLine == "${MANIFEST}"
+    Return
+  ${EndIf}
+  StrCpy $R4 $ManifestLine 1
+  StrCpy $R7 $ManifestLine 2
+  ${If} $R4 != "\"
+  ${AndIf} $R4 != "."
+  ${AndIf} $R7 != ".."
+  ${AndIf} $R7 != "%1"
+    ${If} ${FileExists} "$INSTDIR\versions\$R9\$ManifestLine"
+      ClearErrors
+      Delete "$INSTDIR\versions\$R9\$ManifestLine"
+      ${If} ${Errors}
+        StrCpy $ManifestFailed "1"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+; 旧平铺布局保留的 legacy 程序：按迁移时保留的清单删除。
+; 清单登记的文件删除不完整时保留清单，目录只在已空时移除。
 Function un.DeleteLegacyFiles
-  ${IfNot} ${FileExists} "$INSTDIR\installed-program-files.legacy.txt"
-    Return
+  ${If} ${FileExists} "$INSTDIR\installed-program-files.legacy.txt"
+    StrCpy $ManifestFailed "0"
+    FileOpen $ManifestHandle "$INSTDIR\installed-program-files.legacy.txt" r
+    ${If} $ManifestHandle != ""
+      ${Do}
+        ClearErrors
+        FileReadUTF16LE $ManifestHandle $ManifestLine
+        ${If} ${Errors}
+          ${Break}
+        ${EndIf}
+        ${If} $ManifestLine == ""
+          ${Break}
+        ${EndIf}
+        Call un.TrimLineEnd
+        Call un.DeleteLegacyListedFile
+      ${Loop}
+      FileClose $ManifestHandle
+    ${Else}
+      StrCpy $ManifestFailed "1"
+    ${EndIf}
+    ${If} $ManifestFailed == "0"
+      Delete "$INSTDIR\installed-program-files.legacy.txt"
+    ${EndIf}
   ${EndIf}
-  FileOpen $ManifestHandle "$INSTDIR\installed-program-files.legacy.txt" r
-  ${If} $ManifestHandle == ""
-    Return
-  ${EndIf}
-  ${Do}
-    ClearErrors
-    FileReadUTF16LE $ManifestHandle $ManifestLine
-    ${If} ${Errors}
-      ${Break}
-    ${EndIf}
-    ${If} $ManifestLine == ""
-      ${Break}
-    ${EndIf}
-    Call un.TrimLineEnd
-    StrCpy $R4 $ManifestLine 1
-    StrCpy $R7 $ManifestLine 2
-    ${If} $R4 != "\"
-    ${AndIf} $R7 != "../"
-    ${AndIf} $R7 != "%1"
-      Delete "$INSTDIR\$ManifestLine"
-    ${EndIf}
-  ${Loop}
-  FileClose $ManifestHandle
-  Delete "$INSTDIR\installed-program-files.legacy.txt"
+  ; 迁移时复制的 WER 命名副本与改名后的入口不在旧清单登记范围，单独删除
   Delete "$INSTDIR\xm-ims_wer.dll"
   Delete "$INSTDIR\xm-ims-legacy_wer.dll"
   Delete "$INSTDIR\${LEGACY}"
-  RMDir /r "$INSTDIR\resources"
-  RMDir /r "$INSTDIR\locales"
+  StrCpy $0 "$INSTDIR\resources"
+  Call un.PruneEmptyDirs
+  StrCpy $0 "$INSTDIR\locales"
+  Call un.PruneEmptyDirs
+FunctionEnd
+
+; 删除旧平铺清单登记的一行；清单自身与固定根清单、越出行跳过
+Function un.DeleteLegacyListedFile
+  ${If} $ManifestLine == ""
+  ${OrIf} $ManifestLine == "${MANIFEST}"
+  ${OrIf} $ManifestLine == "uninstall.exe"
+  ${OrIf} $ManifestLine == "installed-program-files.legacy.txt"
+    Return
+  ${EndIf}
+  StrCpy $R4 $ManifestLine 1
+  StrCpy $R7 $ManifestLine 2
+  ${If} $R4 != "\"
+  ${AndIf} $R4 != "."
+  ${AndIf} $R7 != ".."
+  ${AndIf} $R7 != "%1"
+    ${If} ${FileExists} "$INSTDIR\$ManifestLine"
+      ClearErrors
+      Delete "$INSTDIR\$ManifestLine"
+      ${If} ${Errors}
+        StrCpy $ManifestFailed "1"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+; 递归移除空目录：只删除已经空的目录，不删除任何文件。
+; 输入 $0 = 目录；目录中已空的子目录与目录本身都会被移除，未空的原样保留。
+Function un.PruneEmptyDirs
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  FindFirst $3 $1 "$0\*.*"
+  ${Do}
+    ${If} $1 == ""
+      ${Break}
+    ${EndIf}
+    ${If} $1 != "."
+    ${AndIf} $1 != ".."
+      StrCpy $2 "$0\$1"
+      Push $0
+      StrCpy $0 "$2"
+      Call un.PruneEmptyDirs
+      Pop $0
+    ${EndIf}
+    FindNext $3 $1
+  ${Loop}
+  FindClose $3
+  RMDir "$0"
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
+Function un.IsHex
+  ; 输入：$R1 = 单字符；输出：$R2 = "1" 表示 0-9 或小写 a-f
+  StrCpy $R2 "0"
+  ${If} $R1 == "0"
+  ${OrIf} $R1 == "1"
+  ${OrIf} $R1 == "2"
+  ${OrIf} $R1 == "3"
+  ${OrIf} $R1 == "4"
+  ${OrIf} $R1 == "5"
+  ${OrIf} $R1 == "6"
+  ${OrIf} $R1 == "7"
+  ${OrIf} $R1 == "8"
+  ${OrIf} $R1 == "9"
+  ${OrIf} $R1 == "a"
+  ${OrIf} $R1 == "b"
+  ${OrIf} $R1 == "c"
+  ${OrIf} $R1 == "d"
+  ${OrIf} $R1 == "e"
+  ${OrIf} $R1 == "f"
+    StrCpy $R2 "1"
+  ${EndIf}
+FunctionEnd
+
+Function un.IsDigit
+  ; 输入：$R1 = 单字符；输出：$R2 = "1" 表示 0-9
+  StrCpy $R2 "0"
+  ${If} $R1 == "0"
+  ${OrIf} $R1 == "1"
+  ${OrIf} $R1 == "2"
+  ${OrIf} $R1 == "3"
+  ${OrIf} $R1 == "4"
+  ${OrIf} $R1 == "5"
+  ${OrIf} $R1 == "6"
+  ${OrIf} $R1 == "7"
+  ${OrIf} $R1 == "8"
+  ${OrIf} $R1 == "9"
+    StrCpy $R2 "1"
+  ${EndIf}
+FunctionEnd
+
+; 输入：$1 = 槽名；输出：$2 = "1" 表示受管理的版本槽名。
+; 只接受 <X.Y.Z>-<32 位小写十六进制构建标识>；字符集不含路径分隔符，
+; 显式拒绝 . 与 ..，因此不会跳出 versions 目录。
+Function un.ValidSlotName
+  StrCpy $2 "0"
+  ${If} $1 == ""
+    Return
+  ${EndIf}
+  ${If} $1 == "."
+  ${OrIf} $1 == ".."
+    Return
+  ${EndIf}
+  StrLen $R0 "$1"
+  ${If} $R0 < 38
+    Return
+  ${EndIf}
+  ; 末尾 33 个字符必须是 "-" 加 32 位小写十六进制
+  StrCpy $R3 "$1" 33 -33
+  StrCpy $R4 "$R3" 1
+  ${If} $R4 != "-"
+    Return
+  ${EndIf}
+  StrCpy $R3 "$R3" "" 1
+  StrCpy $R5 0
+  ${Do}
+    StrCpy $R1 "$R3" 1 $R5
+    ${If} $R1 == ""
+      ${Break}
+    ${EndIf}
+    Call un.IsHex
+    ${If} $R2 != "1"
+      Return
+    ${EndIf}
+    IntOp $R5 $R5 + 1
+  ${Loop}
+  ${If} $R5 != 32
+    Return
+  ${EndIf}
+  ; 版本段只能是数字与点，且恰好两个点
+  StrCpy $R3 "$1" -33
+  ${If} $R3 == ""
+    Return
+  ${EndIf}
+  StrCpy $R5 0
+  StrCpy $R6 0
+  ${Do}
+    StrCpy $R1 "$R3" 1 $R5
+    ${If} $R1 == ""
+      ${Break}
+    ${EndIf}
+    ${If} $R1 == "."
+      IntOp $R6 $R6 + 1
+    ${Else}
+      Call un.IsDigit
+      ${If} $R2 != "1"
+        Return
+      ${EndIf}
+    ${EndIf}
+    IntOp $R5 $R5 + 1
+  ${Loop}
+  ${If} $R6 != 2
+    Return
+  ${EndIf}
+  StrCpy $2 "1"
 FunctionEnd
 
 ; 程序是否被占用：以独占方式打开可执行文件判断，不按进程名结束任何进程

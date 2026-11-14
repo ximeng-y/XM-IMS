@@ -351,33 +351,47 @@ async function prepare(tag) {
     return { ok: true, accepted: true, existing: true, version: prepared.version,
              user_message: "新版本已准备就绪，可重启应用更新" };
   }
-  const state = await check(true);
-  if (!state || state.availability !== "available" || state.latest_tag !== tag) {
-    return { ok: false, user_message: "暂时无法确认这个版本，请重新检查更新" };
-  }
-  const target = confirmed;
-  if (!target) return fail("暂时无法确认要安装的版本，请重新检查更新");
-  try {
-    recordUpdateRequest(tag);
-  } catch (_) {
-    return { ok: false, user_message: "无法保存更新记录，请确认数据目录可写后重试" };
-  }
+  // 先占住作业槽再等远端检查：检查期间再次请求会看到进行中的作业，
+  // 不会与本次并发下载到同一个临时文件
   job = {
     id: crypto.randomBytes(8).toString("hex"),
-    targetVersion: target.version,
-    targetTag: target.tag,
-    stage: "downloading",
+    targetVersion: null,
+    targetTag: tag,
+    stage: "checking",
     downloadDone: 0,
-    downloadTotal: target.assetSize,
+    downloadTotal: null,
     installDone: 0,
     installTotal: null,
   };
   lastFailure = "";
-  lastStage = "downloading";
+  lastStage = "checking";
   publish({});
-  runPrepareJob(target, buildSlot(target.version));
-  return { ok: true, accepted: true, version: target.version,
-           user_message: "正在准备更新，可以继续使用，完成后会提示重启" };
+  try {
+    const state = await check(true);
+    if (!state || state.availability !== "available" || state.latest_tag !== tag) {
+      return finishJob("暂时无法确认这个版本，请重新检查更新");
+    }
+    const target = confirmed;
+    if (!target) return finishJob("暂时无法确认要安装的版本，请重新检查更新");
+    try {
+      recordUpdateRequest(tag);
+    } catch (_) {
+      return finishJob("无法保存更新记录，请确认数据目录可写后重试");
+    }
+    Object.assign(job, {
+      targetVersion: target.version,
+      targetTag: target.tag,
+      stage: "downloading",
+      downloadTotal: target.assetSize,
+    });
+    lastStage = "downloading";
+    publish({});
+    runPrepareJob(target, buildSlot(target.version));
+    return { ok: true, accepted: true, version: target.version,
+             user_message: "正在准备更新，可以继续使用，完成后会提示重启" };
+  } catch (error) {
+    return finishJob(error && error.message ? error.message : "更新准备失败，请稍后重试");
+  }
 }
 
 /** 后台作业：主进程持有 Promise，权威快照在结束或失败时更新。 */
@@ -407,6 +421,7 @@ function finishJob(failure) {
   lastFailure = failure || "";
   lastStage = failure ? "failed" : "prepared";
   publish({});
+  return failure ? fail(lastFailure) : { ok: true };
 }
 
 /** 用户请求重启：只使用已准备目标，不停留中间状态。 */

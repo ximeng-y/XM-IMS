@@ -192,17 +192,46 @@ def _same_pointer(left, right):
     return (left.get("generation"), left.get("dataset")) == (right.get("generation"), right.get("dataset"))
 
 
+def _selection_phase(data_root):
+    """读取桌面程序选择资料的持久阶段；文件缺失或无法读取时返回空串。
+
+    启动器只在首屏与数据都确认后写入 phase=stable，因此它也是“本次换版已确认”
+    的唯一权威标记。选择资料由 NSIS 以 UTF-16LE 或 ANSI 写出，这里两种都接受。
+    """
+    path = Path(data_root) / "update" / "desktop" / "selection.ini"
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return ""
+    encoding = "utf-16-le" if b"\x00" in raw[:64] else "utf-8"
+    try:
+        text = raw.decode(encoding, errors="ignore")
+    except (UnicodeDecodeError, ValueError):
+        return ""
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == "phase":
+            return value.strip()
+    return ""
+
+
+def _trial_confirmed(data_root):
+    return _selection_phase(data_root) == "stable"
+
+
 def restore(data_root, attempt, remove_copy=True):
     """恢复本次未确认试运行：只在指针仍是原指针或本次副本指针时执行。
 
-    返回 no_data / committed / unchanged / restored / mismatch。前四种都不写正式
-    指针；mismatch 表示资料与当前指针不一致，调用方必须停止自动交接。
+    返回 no_data / committed / unchanged / restored / mismatch。committed 表示本次
+    换版已被启动器持久确认（phase=stable），不再回退，调用方必须保留现有数据；
+    unchanged / restored 不写正式指针以外的东西。mismatch 表示资料与当前指针
+    不一致，调用方必须停止自动交接。
     """
     data_root = Path(data_root)
     record = read_trial(data_root, attempt)
     if record is None:
         return "no_data"
-    if record.get("status") == "committed":
+    if record.get("status") == "committed" and _trial_confirmed(data_root):
         return "committed"
     current = _read_json(active_path(data_root))
     original = record["original"]
