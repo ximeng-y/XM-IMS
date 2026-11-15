@@ -7,7 +7,7 @@
 "use strict";
 
 import { XM } from "xm/api";
-import { UI } from "xm/ui";
+import { UI, $ } from "xm/ui";
 import { ItemInfo } from "xm/components/item-info";
 
 const ItemForm = (() => {
@@ -299,6 +299,11 @@ const ItemForm = (() => {
         const orig = item.values[f.name];
         const origStr = f.type === "bool" ? (valStr(orig) || "") : String(orig ?? "");
         const v = readFieldInput(f, el);
+        // 开关改为“不设置”时清空已有值，原本未设置则保持不提交。
+        if (f.type === "bool" && v === undefined) {
+          if (typeof orig === "boolean") values[f.name] = null;
+          return;
+        }
         if (v === null) { bad = true; return; }
         if (v !== undefined && el.value.trim() !== origStr) values[f.name] = v;
       });
