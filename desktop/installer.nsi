@@ -60,16 +60,34 @@ Var RepairBackup
 Var VersionStaging
 Var VersionTarget
 
-; 停止本次安装 / 卸载：静默调用不能弹窗等用户确认，直接以非零退出码结束，
-; 由调用方判定失败；交互安装才提示原因。Abort 在静默模式下会卡在 MessageBox，
-; 卸载段同样使用本宏。
+; 自动更新的调用方退出后无法接收安装结果，失败时需直接告知用户。
+; 普通 /S 调用仍只返回非零退出码；交互安装显示原因并停止。
 !macro FailStop Message
   ${If} ${Silent}
+    ${If} $UpdateMode == "1"
+      MessageBox MB_ICONSTOP|MB_OK "${Message}$\r$\n$\r$\n安装目录：$INSTDIR"
+    ${EndIf}
     SetErrorLevel 2
     Quit
   ${EndIf}
   MessageBox MB_ICONSTOP|MB_OK "${Message}"
   Abort
+!macroend
+
+; NSIS 的 GetFullPathName 会查找目标，尚未创建的目录会返回空字符串。
+; Win32 API 只解析绝对路径，适用于首次安装与尚未创建的新版本槽。
+!macro AbsolutePath Output Input
+  System::Call 'kernel32::GetFullPathNameW(w "${Input}", i ${NSIS_MAX_STRLEN}, w .R6, p 0) i .R7'
+  ${If} $R7 == 0
+  ${OrIf} $R7 >= ${NSIS_MAX_STRLEN}
+    !insertmacro FailStop "安装路径无法解析或过长，请选择较短的安装目录。"
+  ${EndIf}
+  StrCpy ${Output} $R6
+!macroend
+
+; 阶段值直接由调用点提供，避免依赖共享寄存器中遗留的内容。
+!macro WriteMigrateStage Stage
+  WriteINIStr "$INSTDIR\data\update\desktop\migrate.ini" "migrate" "stage" "${Stage}"
 !macroend
 
 ; ---------- 命令行参数 ----------
@@ -141,13 +159,6 @@ Function CheckRunning
       System::Call 'kernel32::CloseHandle(p R3)'
     ${EndIf}
   ${EndIf}
-FunctionEnd
-
-; 迁移阶段标记：记录“新载荷已准备／旧入口已改名／新根入口已安装”，成功后删除
-Function WriteMigrateStage
-  ; $0 = 阶段名
-  CreateDirectory "$INSTDIR\data\update\desktop"
-  WriteINIStr "$INSTDIR\data\update\desktop\migrate.ini" "migrate" "stage" "$0"
 FunctionEnd
 
 ; 检查指定程序是否仍被使用；不把中断更新的阶段标记当作运行进程。
@@ -287,7 +298,7 @@ UninstallIcon "${STAGE_DIR}\resources\icons\icon.ico"
 
 ; ---------- 安装 ----------
 Section "XM-IMS" SecMain
-  GetFullPathName $INSTDIR "$INSTDIR"
+  !insertmacro AbsolutePath $INSTDIR "$INSTDIR"
   Call WaitForPrevious
   ; 手动重装 / 升级没有 /XM_PID，同样不能在程序运行时覆盖程序文件：
   ; 托盘隐藏窗口后进程仍在，覆盖会失败并留下新旧混合的安装
@@ -297,45 +308,31 @@ Section "XM-IMS" SecMain
   ${EndIf}
   Call RepairInterruptedUpdate
 
-  ; 1) 旧平铺布局：先把旧程序原位保留为 legacy，作为该次唯一回退目标
+  ; 1) 在准备新版前辨认旧入口，但暂不改名。失败重试时 versions 可能已存在，
+  ;    不能再用该目录是否存在判断平铺布局；已改名但未装入根入口的状态也可继续。
   StrCpy $LegacyMode "0"
-  ${IfNot} ${FileExists} "$INSTDIR\versions"
-    ${If} ${FileExists} "$INSTDIR\${LAUNCHER}"
-    ${AndIf} ${FileExists} "$INSTDIR\resources\app\main.js"
+  ${If} ${FileExists} "$INSTDIR\resources\app\main.js"
+    ${IfNot} ${FileExists} "$INSTDIR\${LEGACY}"
+      ${If} ${FileExists} "$INSTDIR\${LAUNCHER}"
+        StrCpy $LegacyMode "1"
+      ${EndIf}
+    ${ElseIfNot} ${FileExists} "$INSTDIR\${LAUNCHER}"
       StrCpy $LegacyMode "1"
-      Call WriteMigrateStage
-      ; 保留旧清单：legacy 清理与卸载仍按原文件归属处理
-      ${If} ${FileExists} "$INSTDIR\${ROOT_MANIFEST}"
-        CopyFiles /SILENT "$INSTDIR\${ROOT_MANIFEST}" "$INSTDIR\installed-program-files.legacy.txt"
-      ${EndIf}
-      ${If} ${FileExists} "$INSTDIR\${LEGACY}"
-        Delete "$INSTDIR\${LEGACY}"
-      ${EndIf}
-      ClearErrors
-      Rename "$INSTDIR\${LAUNCHER}" "$INSTDIR\${LEGACY}"
-      ${If} ${Errors}
-        !insertmacro FailStop "旧版程序未能保留，已停止安装。请保留原目录后重试。"
-      ${EndIf}
-      ; WER 文件需要 legacy 命名副本，原文件保留在原归属清单中
-      ${If} ${FileExists} "$INSTDIR\xm-ims_wer.dll"
-        CopyFiles /SILENT "$INSTDIR\xm-ims_wer.dll" "$INSTDIR\xm-ims-legacy_wer.dll"
-      ${EndIf}
-      ; 旧入口改名后仍保留可启动的 legacy，安装失败也不会留下无入口状态
     ${EndIf}
   ${EndIf}
-  ${If} $LegacyMode == "1"
-    WriteINIStr "$INSTDIR\data\update\desktop\selection.ini" "selection" "protocol" "1"
-    WriteINIStr "$INSTDIR\data\update\desktop\selection.ini" "selection" "phase" "stable"
-    WriteINIStr "$INSTDIR\data\update\desktop\selection.ini" "selection" "active" "legacy"
-    WriteINIStr "$INSTDIR\data\update\desktop\selection.ini" "selection" "previous" ""
+
+  ClearErrors
+  CreateDirectory "$INSTDIR\data\update\desktop"
+  !insertmacro WriteMigrateStage "preparing"
+  ${If} ${Errors}
+    !insertmacro FailStop "安装目录无法写入，请选择可写目录后重试。"
   ${EndIf}
 
   ; 2) 新版本载荷先写临时目录，成功后再提升为正式槽
-  Call WriteMigrateStage
-  GetFullPathName $VersionStaging "$INSTDIR\versions\${SLOT}.installing"
-  GetFullPathName $VersionTarget "$INSTDIR\versions\${SLOT}"
+  !insertmacro AbsolutePath $VersionStaging "$INSTDIR\versions\${SLOT}.installing"
+  !insertmacro AbsolutePath $VersionTarget "$INSTDIR\versions\${SLOT}"
   ; 删除目标先核对绝对目录边界，只处理本包对应的版本与暂存槽。
-  GetFullPathName $R7 "$INSTDIR\versions"
+  !insertmacro AbsolutePath $R7 "$INSTDIR\versions"
   StrLen $R8 "$R7\"
   StrCpy $R9 $VersionStaging $R8
   ${If} $R9 != "$R7\"
@@ -381,12 +378,11 @@ Section "XM-IMS" SecMain
   ${OrIfNot} ${FileExists} "$VersionTarget\resources\app\main.js"
     !insertmacro FailStop "新版程序文件不完整，已停止安装。"
   ${EndIf}
+  !insertmacro WriteMigrateStage "payload_ready"
 
-  ; 3) 手动安装刷新固定根组件，已有恢复脚本也必须获得本包的修复。
-  ;    启动器源码文件名与入口名不同，必须用 /oname 落到固定入口名
+  ; 3) 先备齐恢复支持，再改动旧入口。支持文件写入失败时旧入口保持原状。
   ClearErrors
   SetOutPath "$INSTDIR"
-  File /oname=${LAUNCHER} "${LAUNCHER_FILE}"
   CreateDirectory "$INSTDIR\bootstrap-support"
   File /oname=bootstrap-support\update_trial.py "${SUPPORT_DIR}\update_trial.py"
   File /oname=bootstrap-support\process_lock.py "${SUPPORT_DIR}\process_lock.py"
@@ -394,6 +390,38 @@ Section "XM-IMS" SecMain
   ${If} ${Errors}
     !insertmacro FailStop "恢复组件未能安装完整，已停止安装。"
   ${EndIf}
+
+  ; 新载荷与恢复支持均已写入后，才把旧平铺入口保留为 legacy。
+  ; 重试已改名的安装时直接沿用原副本，不再次改名或覆盖旧版清单。
+  ${If} $LegacyMode == "1"
+    ${IfNot} ${FileExists} "$INSTDIR\${LEGACY}"
+      ClearErrors
+      CopyFiles /SILENT "$INSTDIR\${ROOT_MANIFEST}" "$INSTDIR\installed-program-files.legacy.txt"
+      ${If} ${FileExists} "$INSTDIR\xm-ims_wer.dll"
+        CopyFiles /SILENT "$INSTDIR\xm-ims_wer.dll" "$INSTDIR\xm-ims-legacy_wer.dll"
+      ${EndIf}
+      ${If} ${Errors}
+        !insertmacro FailStop "旧版程序清单未能保留，已停止安装。请保留原目录后重试。"
+      ${EndIf}
+      Rename "$INSTDIR\${LAUNCHER}" "$INSTDIR\${LEGACY}"
+      ${If} ${Errors}
+        !insertmacro FailStop "旧版程序未能保留，已停止安装。请保留原目录后重试。"
+      ${EndIf}
+    ${EndIf}
+    WriteINIStr "$INSTDIR\${SELECTION}" "selection" "protocol" "1"
+    WriteINIStr "$INSTDIR\${SELECTION}" "selection" "phase" "stable"
+    WriteINIStr "$INSTDIR\${SELECTION}" "selection" "active" "legacy"
+    WriteINIStr "$INSTDIR\${SELECTION}" "selection" "previous" ""
+    !insertmacro WriteMigrateStage "legacy_ready"
+  ${EndIf}
+
+  ; 启动器源码文件名与入口名不同，必须用 /oname 落到固定入口名。
+  ClearErrors
+  File /oname=${LAUNCHER} "${LAUNCHER_FILE}"
+  ${If} ${Errors}
+    !insertmacro FailStop "程序启动入口未能安装完整，已停止安装。请重新运行安装包。"
+  ${EndIf}
+  !insertmacro WriteMigrateStage "entry_ready"
 
   ; 4) 选择资料：新槽一律先作为待确认候选，由启动器首次启动监督后写入 stable
   ;    - 旧平铺迁移：回退目标为刚保留的 legacy，不沿用迁移前的选择
