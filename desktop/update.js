@@ -14,6 +14,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const paths = require("./paths");
 const store = require("./version-store");
+const { downloadAsset } = require("./update-download");
 
 const REPOSITORY = "ximeng-y/XM-IMS";
 const USER_AGENT = "XM-IMS-Desktop";
@@ -64,6 +65,8 @@ function emptySnapshot(extra) {
     stage: "idle",
     download_done: 0,
     download_total: null,
+    download_source: null,
+    download_speed: 0,
     install_done: 0,
     install_total: null,
     can_restart: false,
@@ -92,6 +95,8 @@ function snapshot() {
     job_id: job ? job.id : null,
     download_done: job ? job.downloadDone : 0,
     download_total: job ? job.downloadTotal : null,
+    download_source: job ? job.downloadSource : null,
+    download_speed: job ? job.downloadSpeed : 0,
     install_done: job ? job.installDone : 0,
     install_total: job ? job.installTotal : null,
   });
@@ -232,52 +237,16 @@ function fail(message) {
   return { ok: false, user_message: message };
 }
 
-/** 下载并校验已确认的更新包；只有校验通过才返回本地路径。 */
-async function download(target, onProgress) {
-  const digest = /^sha256:([0-9a-f]{64})$/i.exec(target.digest);
-  if (!digest) return fail("该版本缺少完整性信息，已停止更新");
+/** 下载并校验已确认的更新包；测速、换源与流式写入由下载模块负责。 */
+async function download(target, onState) {
   const folder = paths.updateStaging(target.version);
   const finalPath = path.join(folder, target.assetName);
-  const partPath = finalPath + ".part";
-  try {
-    fs.mkdirSync(folder, { recursive: true });
-    fs.rmSync(partPath, { force: true });
-  } catch (_) {
-    return fail("无法写入更新目录，请检查磁盘空间后重试");
-  }
-  try {
-    const { response } = await open(assetDownloadUrl(target));
-    if (response.statusCode !== 200) {
-      response.resume();
-      return fail("下载更新包失败，请检查网络后重试");
-    }
-    const length = Number(response.headers["content-length"]);
-    const total = target.assetSize || (Number.isFinite(length) && length > 0 ? length : null);
-    onProgress(0, total);
-    const hash = crypto.createHash("sha256");
-    const output = fs.createWriteStream(partPath);
-    let received = 0;
-    await new Promise((resolve, reject) => {
-      response.on("data", chunk => {
-        hash.update(chunk);
-        received += chunk.length;
-        onProgress(received, total);
-      });
-      response.on("error", reject);
-      output.on("error", reject);
-      output.on("finish", resolve);
-      response.pipe(output);
-    });
-    if (hash.digest("hex").toLowerCase() !== digest[1].toLowerCase()) {
-      fs.rmSync(partPath, { force: true });
-      return fail("下载的更新包校验失败，已停止更新");
-    }
-    fs.renameSync(partPath, finalPath);
-    return { ok: true, path: finalPath };
-  } catch (_) {
-    try { fs.rmSync(partPath, { force: true }); } catch (__) { /* 忽略 */ }
-    return fail("下载更新包失败，请检查网络后重试");
-  }
+  return downloadAsset({
+    originUrl: assetDownloadUrl(target),
+    finalPath,
+    expectedSize: target.assetSize,
+    expectedDigest: target.digest,
+  }, onState);
 }
 
 function assetDownloadUrl(target) {
@@ -360,6 +329,8 @@ async function prepare(tag) {
     stage: "checking",
     downloadDone: 0,
     downloadTotal: null,
+    downloadSource: null,
+    downloadSpeed: 0,
     installDone: 0,
     installTotal: null,
   };
@@ -381,10 +352,12 @@ async function prepare(tag) {
     Object.assign(job, {
       targetVersion: target.version,
       targetTag: target.tag,
-      stage: "downloading",
+      stage: "selecting_source",
       downloadTotal: target.assetSize,
+      downloadSource: null,
+      downloadSpeed: 0,
     });
-    lastStage = "downloading";
+    lastStage = "selecting_source";
     publish({});
     runPrepareJob(target, buildSlot(target.version));
     return { ok: true, accepted: true, version: target.version,
@@ -396,23 +369,39 @@ async function prepare(tag) {
 
 /** 后台作业：主进程持有 Promise，权威快照在结束或失败时更新。 */
 async function runPrepareJob(target, slot) {
-  const downloaded = await download(target, (done, total) => {
-    publish({ stage: "downloading", downloadDone: done, downloadTotal: total });
-  });
-  if (!downloaded.ok) return finishJob(downloaded.user_message);
-  publish({ stage: "installing", downloadDone: target.assetSize || job.downloadDone,
-            downloadTotal: target.assetSize || job.downloadTotal,
-            installDone: 0, installTotal: null });
-  const extracted = await extract(target, downloaded.path, slot);
-  if (!extracted.ok) return finishJob(extracted.user_message);
-  let failure = "";
   try {
-    const saved = store.savePreparedCandidate({ slot, version: target.version, tag: target.tag });
-    if (!saved.ok) failure = "程序状态已经变化，请稍后重新检查更新";
+    const downloaded = await download(target, state => {
+      const probing = state.phase === "probing";
+      publish({
+        stage: probing ? "selecting_source" : "downloading",
+        downloadDone: probing ? 0 : state.done,
+        downloadTotal: state.total,
+        downloadSource: state.source,
+        downloadSpeed: probing ? 0 : state.speed,
+      });
+    });
+    if (!downloaded.ok) return finishJob(downloaded.user_message);
+    publish({
+      stage: "installing",
+      downloadDone: target.assetSize || job.downloadDone,
+      downloadTotal: target.assetSize || job.downloadTotal,
+      downloadSpeed: 0,
+      installDone: 0,
+      installTotal: null,
+    });
+    const extracted = await extract(target, downloaded.path, slot);
+    if (!extracted.ok) return finishJob(extracted.user_message);
+    let failure = "";
+    try {
+      const saved = store.savePreparedCandidate({ slot, version: target.version, tag: target.tag });
+      if (!saved.ok) failure = "程序状态已经变化，请稍后重新检查更新";
+    } catch (_) {
+      failure = "无法保存更新准备结果，请确认数据目录可写后重试";
+    }
+    finishJob(failure);
   } catch (_) {
-    failure = "无法保存更新准备结果，请确认数据目录可写后重试";
+    finishJob("更新准备失败，请稍后重试");
   }
-  finishJob(failure);
 }
 
 /** 结束本次作业：清空作业槽并发布最终阶段；失败文案保留在快照里。 */

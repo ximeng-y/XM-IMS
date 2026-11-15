@@ -49,19 +49,40 @@ function onDesktopState(listener) {
   return () => desktopState.listeners.delete(listener);
 }
 
+function formatSpeed(value) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let speed = value;
+  let index = 0;
+  while (speed >= 1024 && index < units.length - 1) {
+    speed /= 1024;
+    index += 1;
+  }
+  const text = speed >= 100 || index === 0 ? Math.round(speed) : speed.toFixed(1);
+  return `${text} ${units[index]}`;
+}
+
 /** 桌面快照 → 进度组件的展示数据；下载完成保留 100%，安装单独推进。 */
 function progressViewState(st) {
   const preparing = !!(st && st.preparing);
   const installing = !!st && st.stage === "installing";
+  const selecting = !!st && st.stage === "selecting_source";
+  const downloading = !!st && st.stage === "downloading";
+  const source = st && st.download_source ? String(st.download_source) : "";
+  const speed = st && Number.isFinite(st.download_speed) ? formatSpeed(st.download_speed) : "";
+  const sourceNote = downloading && source
+    ? `下载线路：${source}${speed ? ` · ${speed}` : ""}`
+    : "";
   return {
     showDownload: preparing,
     showInstall: preparing || (!!st && st.stage === "prepared"),
-    downloadDone: st ? st.download_done || 0 : 0,
-    downloadTotal: st ? st.download_total : null,
+    downloadDone: selecting ? 0 : (st ? st.download_done || 0 : 0),
+    downloadTotal: selecting ? null : (st ? st.download_total : null),
     installDone: st ? st.install_done || 0 : 0,
     installTotal: st ? st.install_total : null,
     installComplete: !!st && st.stage === "prepared",
-    downloadLabel: installing ? "下载完成" : "下载更新",
+    downloadLabel: selecting ? "正在选择最快下载线路" : (installing ? "下载完成" : "下载更新"),
+    note: sourceNote,
   };
 }
 
@@ -70,6 +91,7 @@ function progressViewState(st) {
 function renderNotice(st) {
   if (!st) return "";
   if (st.stage === "prepared") return "新版已准备就绪，可重启应用更新";
+  if (st.stage === "selecting_source") return "正在选择下载线路，可以继续使用";
   if (st.preparing) return "正在准备更新，可以继续使用";
   if (st.last_error) return "更新准备失败：" + st.last_error;
   if (st.fallback) return "新版启动失败，已恢复到上一个版本";
