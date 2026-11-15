@@ -263,6 +263,8 @@ def _load_lock():
     if __package__:
         from ..storage.process_lock import LockBusy, ProcessLock
     else:
+        # 嵌入式 Python 的 _pth 不包含脚本目录，也不读取 PYTHONPATH。
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
         from process_lock import LockBusy, ProcessLock
     return ProcessLock, LockBusy
 
