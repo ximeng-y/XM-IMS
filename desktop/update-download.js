@@ -9,8 +9,6 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const https = require("node:https");
 const path = require("node:path");
-const { Transform } = require("node:stream");
-const { pipeline } = require("node:stream/promises");
 
 const USER_AGENT = "XM-IMS-Desktop";
 const PROBE_BYTES = 2 * 1024 * 1024;
@@ -127,6 +125,18 @@ async function closeStream(stream) {
   await closed;
 }
 
+async function writeChunk(file, chunk, position) {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const { bytesWritten } = await file.write(chunk, offset, chunk.length - offset, position + offset);
+    if (!Number.isSafeInteger(bytesWritten) || bytesWritten <= 0) {
+      throw new Error("更新包写入未取得进展");
+    }
+    offset += bytesWritten;
+  }
+  return position + chunk.length;
+}
+
 function candidates(originUrl) {
   let origin;
   try {
@@ -237,8 +247,8 @@ async function downloadCandidate(candidate, options) {
   const controller = new AbortController();
   const hash = crypto.createHash("sha256");
   let response = null;
-  let output = null;
-  let localError = null;
+  let outputFile = null;
+  let writePosition = 0;
   let stopReason = "";
   let connectionTimer = null;
   let idleTimer = null;
@@ -262,6 +272,18 @@ async function downloadCandidate(candidate, options) {
     connectionTimer = null;
     idleTimer = null;
     windowTimer = null;
+  };
+
+  const closeOutput = async () => {
+    if (!outputFile) return true;
+    const file = outputFile;
+    outputFile = null;
+    try {
+      await file.close();
+      return true;
+    } catch (_) {
+      return false;
+    }
   };
 
   const abort = reason => {
@@ -311,7 +333,6 @@ async function downloadCandidate(candidate, options) {
   };
 
   const onAbort = () => {
-    if (output && !output.destroyed) output.destroy();
     if (response && !response.destroyed) response.destroy();
   };
   controller.signal.addEventListener("abort", onAbort, { once: true });
@@ -344,18 +365,16 @@ async function downloadCandidate(candidate, options) {
     }
 
     try {
-      output = fs.createWriteStream(partPath, { flags: "w" });
+      outputFile = await fs.promises.open(partPath, "w");
     } catch (_) {
       stopReason = "write";
       await closeStream(response);
       return { kind: "local" };
     }
-    output.on("error", error => {
-      localError = error;
-    });
 
-    const meter = new Transform({
-      transform(chunk, _encoding, callback) {
+    // 响应读取与文件写入分开处理，避免上游网络错误被流管线误报为本地写入失败。
+    try {
+      for await (const chunk of response) {
         if (!firstData) {
           firstData = true;
           clearTimeout(connectionTimer);
@@ -373,13 +392,11 @@ async function downloadCandidate(candidate, options) {
           const combined = prefix.length ? Buffer.concat([prefix, data]) : data;
           if (combined.length < 4) {
             prefix = combined;
-            callback();
-            return;
+            continue;
           }
           if (!isZipPrefix(combined)) {
             abort("payload");
-            callback(new Error("更新包内容无效"));
-            return;
+            return { kind: "network" };
           }
           prefixValid = true;
           prefix = Buffer.alloc(0);
@@ -390,34 +407,32 @@ async function downloadCandidate(candidate, options) {
         received += data.length;
         windowBytes += data.length;
         publish(false);
-        callback(null, data);
-      },
-    });
 
-    let streamError = null;
-    try {
-      await pipeline(response, meter, output);
-    } catch (error) {
-      streamError = error;
+        try {
+          writePosition = await writeChunk(outputFile, data, writePosition);
+        } catch (_) {
+          abort("write");
+          return { kind: "local" };
+        }
+      }
+    } catch (_) {
+      return { kind: stopReason === "write" ? "local" : "network" };
     }
 
-    if (localError) {
-      await closeStream(output);
-      await closeStream(response);
+    if (!await closeOutput()) {
       return { kind: "local" };
     }
-    if (streamError || !firstData || !prefixValid || response.complete === false) {
-      await closeStream(output);
-      await closeStream(response);
+    if (stopReason) {
+      return { kind: stopReason === "write" ? "local" : "network" };
+    }
+    if (!firstData || !prefixValid || response.complete === false) {
       return { kind: "network" };
     }
     if (responseLength && received !== responseLength) {
-      await closeStream(output);
       await closeStream(response);
       return { kind: "network" };
     }
     if (expectedSize && received !== expectedSize) {
-      await closeStream(output);
       await closeStream(response);
       return { kind: "network" };
     }
@@ -433,10 +448,12 @@ async function downloadCandidate(candidate, options) {
     }
     return { kind: "success" };
   } catch (_) {
-    await closeStream(output);
     await closeStream(response);
     return { kind: stopReason === "write" ? "local" : "network" };
   } finally {
+    if (outputFile) {
+      try { await outputFile.close(); } catch (_) { /* 忽略收尾错误 */ }
+    }
     clearTimers();
     controller.signal.removeEventListener("abort", onAbort);
   }
