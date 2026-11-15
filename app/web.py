@@ -24,7 +24,7 @@ MODULES = {
     "xm/ui": ("/static/js/ui.js", 22),
     "xm/shop-context": ("/static/js/runtime/shop-context.js", 1),
     "xm/sync": ("/static/js/sync-common.js", 7),
-    "xm/update": ("/static/js/update.js", 7),
+    "xm/update": ("/static/js/update.js", 8),
     "xm/runtime/desktop": ("/static/js/runtime/desktop.js", 2),
     "xm/runtime/view-settings": ("/static/js/runtime/view-settings.js", 3),
     "xm/responsive": ("/static/js/runtime/responsive.js", 3),

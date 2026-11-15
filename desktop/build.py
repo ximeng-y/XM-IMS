@@ -42,7 +42,7 @@ PROTOCOL = 1
 BACKEND_EXCLUDE_DIRS = {"__pycache__", ".pytest_cache"}
 BACKEND_EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".db", ".db-wal", ".db-shm", ".sqlite"}
 DESKTOP_FILES = ("main.js", "preload.js", "paths.js", "backend.js", "update.js",
-                 "version-store.js", "backend_runner.py")
+                 "update-download.js", "version-store.js", "backend_runner.py")
 # 固定根独立恢复入口的源码：只复制，不另写一套恢复算法
 BOOTSTRAP_SUPPORT = (("app/sync/update_trial.py", "update_trial.py"),
                      ("app/storage/process_lock.py", "process_lock.py"),
