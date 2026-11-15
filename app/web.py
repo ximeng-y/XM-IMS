@@ -37,7 +37,7 @@ MODULES = {
     "xm/components/column-settings": ("/static/js/components/column-settings.js", 1),
     "xm/components/progress-view": ("/static/js/components/progress-view.js", 1),
     "xm/components/formula-editor": ("/static/js/components/formula-editor.js", 5),
-    "xm/components/item-form": ("/static/js/components/item-form.js", 12),
+    "xm/components/item-form": ("/static/js/components/item-form.js", 13),
     "xm/components/item-info": ("/static/js/components/item-info.js", 1),
     "xm/components/item-picker": ("/static/js/components/item-picker.js", 2),
     "xm/components/ops-forms": ("/static/js/components/ops-forms.js", 10),
