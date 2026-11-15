@@ -34,6 +34,7 @@ BrandingText "XM-IMS Launcher"
 !define RECOVERY "bootstrap-support\update_trial.py"
 !define STAGE_TIMEOUT_TICKS 360
 !define POLL_MS 500
+!define JOB_LIMIT_INFO_BYTES 112
 
 Var Phase
 Var ActiveSlot
@@ -45,6 +46,7 @@ Var Attempt
 Var AttemptDir
 Var Exe
 Var Job
+Var JobAssigned
 Var LimitInfo
 Var StartupInfo
 Var ProcInfo
@@ -397,50 +399,79 @@ Function MakeAttempt
 FunctionEnd
 
 Function LaunchCandidate
-  StrCpy $1 "$CandSlot"
-  Call ValidSlot
-  ${If} $2 != "1"
-  ${OrIf} $CandSlot == "legacy"
-    StrCpy $0 "新版本的选择资料无法识别，已停止本次更新。"
-    Call FailHard
-  ${EndIf}
-  Call ResolveProgram
-  ${If} $2 == ""
-    StrCpy $0 "新版本的程序文件不完整，已停止本次更新。"
-    Call FailHard
-  ${EndIf}
-  StrCpy $Exe "$2"
+  ; 候选入口已在 pending 阶段校验；starting 后的失败统一交给 .onInit 恢复。
+  StrCpy $Failed "1"
+  StrCpy $FallbackCode "7"
   ; 候选只继承启动器环境：显式注入本次标识与固定根，候选才会进入首次启动确认；
   ; 普通启动则清空残留标识，避免误入试运行
-  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_INSTALL_ROOT", w "$INSTDIR")'
-  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_PROGRAM_ROOT", w "$INSTDIR")'
-  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_DESKTOP_ATTEMPT", w "$Attempt")'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_INSTALL_ROOT", w "$INSTDIR") i .R1'
+  ${If} $R1 == 0
+    Return
+  ${EndIf}
+  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_PROGRAM_ROOT", w "$INSTDIR") i .R1'
+  ${If} $R1 == 0
+    Return
+  ${EndIf}
+  System::Call 'kernel32::SetEnvironmentVariableW(w "XM_DESKTOP_ATTEMPT", w "$Attempt") i .R1'
+  ${If} $R1 == 0
+    Return
+  ${EndIf}
   ; 启动器是 x86：CREATE_SUSPENDED(0x4)、CREATE_NEW_PROCESS_GROUP 不加；
   ; STARTUPINFO 与 PROCESS_INFORMATION 按调用端位宽（x86）组织
-  System::Call 'kernel32::CreateJobObjectW(p 0, w 0) p .R1'
-  StrCpy $Job $R1
-  ; JOBOBJECT_EXTENDED_LIMIT_INFORMATION = 108 字节（x86）：27 个 DWORD，
-  ; 第 5 个是 LimitFlags，只启用 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE(0x2000)
-  System::Call '*(i 0,i 0,i 0,i 0,i 0x2000,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0) p .R2'
-  StrCpy $LimitInfo $R2
-  System::Call 'kernel32::SetInformationJobObject(p $Job, i 9, p $LimitInfo, i 108) i .R3'
-  System::Call '*(&i2 68, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0, &i2 0) p .R4'
-  StrCpy $StartupInfo $R4
-  System::Call '*(i 0,i 0,i 0,i 0) p .R5'
-  StrCpy $ProcInfo $R5
-  System::Call 'kernel32::CreateProcessW(w "$Exe", w "\"$Exe\"", p 0, p 0, i 0, i 0x4, p 0, w "$INSTDIR", p $StartupInfo, p $ProcInfo) i .R6'
-  ${If} $R6 == 0
-    StrCpy $0 "无法启动新版本，已停止本次更新。"
-    Call FailHard
+  StrCpy $FallbackCode "8"
+  System::Call 'kernel32::CreateJobObjectW(p 0, p 0) p .R1'
+  ${If} $R1 == 0
+    Return
   ${EndIf}
-  System::Call '*$ProcInfo(i .R7, i .R8, i .R9, i .R10)'
+  StrCpy $Job $R1
+  ; x86 的 BasicLimitInformation 含尾部填充，占 48 字节；IoInfo 占 48 字节，
+  ; 再加 4 个 SIZE_T，共 112 字节。LimitFlags 在偏移 16，只启用退出即清退。
+  System::Call '*(i 0,i 0,i 0,i 0,i 0x2000,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0) p .R2'
+  ${If} $R2 == 0
+    Return
+  ${EndIf}
+  StrCpy $LimitInfo $R2
+  System::Call 'kernel32::SetInformationJobObject(p $Job, i 9, p $LimitInfo, i ${JOB_LIMIT_INFO_BYTES}) i .R3'
+  ${If} $R3 == 0
+    Return
+  ${EndIf}
+  StrCpy $FallbackCode "9"
+  ; STARTUPINFOW 为 68 字节：DWORD、指针及相邻的两个 WORD 都按 4 字节槽初始化。
+  System::Call '*(i 68,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0) p .R4'
+  ${If} $R4 == 0
+    Return
+  ${EndIf}
+  StrCpy $StartupInfo $R4
+  System::Call '*(p 0,p 0,i 0,i 0) p .R5'
+  ${If} $R5 == 0
+    Return
+  ${EndIf}
+  StrCpy $ProcInfo $R5
+  StrCpy $R0 '"$Exe"'
+  System::Call 'kernel32::CreateProcessW(w "$Exe", w R0, p 0, p 0, i 0, i 0x4, p 0, w "$INSTDIR", p $StartupInfo, p $ProcInfo) i .R6'
+  ${If} $R6 == 0
+    Return
+  ${EndIf}
+  ; System 的 R0-R9 对应 NSIS $R0-$R9；进程与线程句柄使用指针类型。
+  System::Call '*$ProcInfo(p .R7, p .R8, i .R9, i .R0)'
   StrCpy $ProcHandle $R7
   StrCpy $ThreadHandle $R8
   StrCpy $ProcPid $R9
-  StrCpy $ThreadId $R10
+  StrCpy $ThreadId $R0
   ; 先加入本次 Job，再恢复线程：候选的子进程都在监督范围内
-  System::Call 'kernel32::AssignProcessToJobObject(p $Job, p $ProcHandle) i .R11'
-  System::Call 'kernel32::ResumeThread(p $ThreadHandle) i .R12'
+  StrCpy $FallbackCode "10"
+  System::Call 'kernel32::AssignProcessToJobObject(p $Job, p $ProcHandle) i .R1'
+  ${If} $R1 == 0
+    Return
+  ${EndIf}
+  StrCpy $JobAssigned "1"
+  StrCpy $FallbackCode "11"
+  System::Call 'kernel32::ResumeThread(p $ThreadHandle) i .R1'
+  ${If} $R1 == -1
+    Return
+  ${EndIf}
+  StrCpy $Failed "0"
+  StrCpy $FallbackCode ""
 FunctionEnd
 
 Function CandidateExited
@@ -452,7 +483,7 @@ Function CandidateExited
   ${EndIf}
 FunctionEnd
 
-; 等待本次阶段推进；$Result = 0 成功，1 失败。失败原因写 $FallbackCode
+; 等待本次阶段推进；失败时设置 $Failed 与 $FallbackCode。
 Function WaitTrial
   StrCpy $Failed "0"
   StrCpy $LastPhase ""
@@ -545,9 +576,13 @@ Function Handoff
   StrCpy $KeptAttempt ""
 
   ; 解除本次 Job 的“退出即清退”设置，再放行候选进入正常同步启动
-  System::Call '*(i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0) p .R2'
-  StrCpy $LimitInfo $R2
-  System::Call 'kernel32::SetInformationJobObject(p $Job, i 9, p $LimitInfo, i 108) i .R3'
+  System::Call '*$LimitInfo(&v16, i 0)'
+  System::Call 'kernel32::SetInformationJobObject(p $Job, i 9, p $LimitInfo, i ${JOB_LIMIT_INFO_BYTES}) i .R3'
+  ${If} $R3 == 0
+    ; 稳定选择已确认，不能再回退数据；退出清退本次进程，下次按稳定版本启动。
+    StrCpy $0 "更新已保存，但新版本没有完成启动，请重新打开程序。"
+    Call FailHard
+  ${EndIf}
   StrCpy $0 "release"
   Call WriteControl
   StrCpy $Ticks 0
@@ -564,19 +599,36 @@ Function Handoff
   ${Loop}
 FunctionEnd
 
-; 成功或失败的清退都必须先终止本次 Job 并确认候选进程真正退出
+; 失败恢复前清退本次候选；$Result = 0 表示进程已退出或尚未创建。
 Function TerminateCandidate
-  ${If} $Job != ""
+  StrCpy $Result "0"
+  ${If} $JobAssigned == "1"
     System::Call 'kernel32::TerminateJobObject(p $Job, i 1) i .R1'
+    ${If} $R1 == 0
+      StrCpy $Result "1"
+      Return
+    ${EndIf}
+  ${ElseIf} $ProcHandle != ""
+    ; 加入 Job 失败时进程仍处于挂起状态，必须单独清退，不能只终止空 Job。
+    System::Call 'kernel32::TerminateProcess(p $ProcHandle, i 1) i .R1'
   ${EndIf}
   ${If} $ProcHandle != ""
+    ; 是否可以恢复以实际退出为准；进程已退出时，重复终止可能返回失败。
     System::Call 'kernel32::WaitForSingleObject(p $ProcHandle, i 15000) i .R2'
+    ${If} $R2 != 0
+      StrCpy $Result "1"
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
 ; 恢复原数据指针并启动上一个稳定版本
 Function Recover
   Call TerminateCandidate
+  ${If} $Result != "0"
+    MessageBox MB_ICONSTOP|MB_OK "新版本进程尚未退出，更新资料已保留。请关闭 XM-IMS 后重试。"
+    SetErrorLevel 3
+    Quit
+  ${EndIf}
   ${If} $ActiveSlot == ""
     MessageBox MB_ICONSTOP|MB_OK "新版本没有启动成功，本机也没有可回退的旧版本。更新资料已保留，请重新安装 XM-IMS。"
     SetErrorLevel 3
@@ -684,6 +736,7 @@ FunctionEnd
 Function .onInit
   StrCpy $INSTDIR $EXEDIR
   StrCpy $Job ""
+  StrCpy $JobAssigned "0"
   StrCpy $ProcHandle ""
   StrCpy $FallbackCode ""
   StrCpy $FallbackTarget ""
@@ -723,12 +776,28 @@ Function .onInit
       StrCpy $0 "没有待应用的新版本，请重新打开程序。"
       Call FailHard
     ${EndIf}
+    ; 校验名字与真实入口后才创建本次资料，缺失候选不能留下假的 starting。
+    StrCpy $1 "$CandSlot"
+    Call ValidSlot
+    ${If} $2 != "1"
+    ${OrIf} $CandSlot == "legacy"
+      StrCpy $0 "新版本的选择资料无法识别，已停止本次更新。"
+      Call FailHard
+    ${EndIf}
+    Call ResolveProgram
+    ${If} $2 == ""
+      StrCpy $0 "新版本的程序文件不完整，已停止本次更新。"
+      Call FailHard
+    ${EndIf}
+    StrCpy $Exe "$2"
     Call WaitForPrevious
     Call MakeAttempt
     StrCpy $Phase "starting"
     Call WriteSelection
     Call LaunchCandidate
-    Call WaitTrial
+    ${If} $Failed == "0"
+      Call WaitTrial
+    ${EndIf}
     ${If} $Failed == "0"
       Call Handoff
     ${EndIf}

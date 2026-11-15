@@ -45,7 +45,8 @@ DESKTOP_FILES = ("main.js", "preload.js", "paths.js", "backend.js", "update.js",
                  "version-store.js", "backend_runner.py")
 # 固定根独立恢复入口的源码：只复制，不另写一套恢复算法
 BOOTSTRAP_SUPPORT = (("app/sync/update_trial.py", "update_trial.py"),
-                     ("app/storage/process_lock.py", "process_lock.py"))
+                     ("app/storage/process_lock.py", "process_lock.py"),
+                     ("desktop/installer_repair.py", "installer_repair.py"))
 
 
 def fail(message):
@@ -261,12 +262,12 @@ def sync_portable(stage, slot, launcher):
     shutil.copytree(stage, destination)
     # 固定根启动器：ZIP 与便携共用同一份编译结果
     shutil.copy2(launcher, target / LAUNCHER_EXE)
-    # 独立恢复支持文件与启动器同一协议，普通更新不覆盖
+    # 手动构建刷新同协议恢复支持，避免继续保留已修复的旧脚本。
     support_source = CACHE_ROOT / "bootstrap-support"
     support = target / "bootstrap-support"
     if support_source.is_dir():
         support.mkdir(parents=True, exist_ok=True)
-        for name in ("update_trial.py", "process_lock.py"):
+        for _, name in BOOTSTRAP_SUPPORT:
             source = support_source / name
             if source.is_file():
                 shutil.copy2(source, support / name)

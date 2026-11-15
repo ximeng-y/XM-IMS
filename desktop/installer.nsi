@@ -14,6 +14,7 @@
 ;   - data、tools、.XMTEMP 从不作为安装输入，也从不删除
 ;   - 版本载荷独立保存在 versions\<槽名>；固定根只放启动器与恢复支持
 ;   - 旧平铺布局首次迁移保留旧程序为 xm-ims-legacy.exe，作为回退目标
+;   - 中断更新先确认退出、备份 data 到 repair-backups，再恢复旧选择后继续安装
 
 Unicode true
 SetCompressor /SOLID lzma
@@ -50,6 +51,14 @@ Var ManifestFailed
 Var TailChar
 Var LegacyMode
 Var EntryReady
+Var CheckPath
+Var RepairPython
+Var RepairExit
+Var RepairOutput
+Var RepairMessage
+Var RepairBackup
+Var VersionStaging
+Var VersionTarget
 
 ; 停止本次安装 / 卸载：静默调用不能弹窗等用户确认，直接以非零退出码结束，
 ; 由调用方判定失败；交互安装才提示原因。Abort 在静默模式下会卡在 MessageBox，
@@ -141,35 +150,103 @@ Function WriteMigrateStage
   WriteINIStr "$INSTDIR\data\update\desktop\migrate.ini" "migrate" "stage" "$0"
 FunctionEnd
 
-; 运行检查：当前版本、legacy 与首次启动事务都算运行中，不能只检查根启动器
+; 检查指定程序是否仍被使用；不把中断更新的阶段标记当作运行进程。
+Function CheckOneProgram
+  ${If} ${FileExists} "$CheckPath"
+    System::Call 'kernel32::CreateFileW(w "$CheckPath", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .R3'
+    ${If} $R3 == -1
+      StrCpy $R5 "1"
+    ${ElseIf} $R3 != 0
+      System::Call 'kernel32::CloseHandle(p R3)'
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+; 根入口、legacy、当前槽与候选槽都要检查，不能遗漏已退出启动器的版本进程。
 Function CheckProgramFiles
   StrCpy $R5 "0"
-  ${If} ${FileExists} "$INSTDIR\${LAUNCHER}"
-    System::Call 'kernel32::CreateFileW(w "$INSTDIR\${LAUNCHER}", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .R3'
-    ${If} $R3 == -1
-      StrCpy $R5 "1"
-    ${ElseIf} $R3 != 0
-      System::Call 'kernel32::CloseHandle(p R3)'
-    ${EndIf}
+  StrCpy $CheckPath "$INSTDIR\${LAUNCHER}"
+  Call CheckOneProgram
+  StrCpy $CheckPath "$INSTDIR\${LEGACY}"
+  Call CheckOneProgram
+  ReadINIStr $R6 "$INSTDIR\${SELECTION}" "selection" "active"
+  ${If} $R6 != ""
+  ${AndIf} $R6 != "legacy"
+    StrCpy $CheckPath "$INSTDIR\versions\$R6\xm-ims.exe"
+    Call CheckOneProgram
   ${EndIf}
-  ${If} $R5 == "0"
-  ${AndIf} ${FileExists} "$INSTDIR\${LEGACY}"
-    System::Call 'kernel32::CreateFileW(w "$INSTDIR\${LEGACY}", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .R3'
-    ${If} $R3 == -1
-      StrCpy $R5 "1"
-    ${ElseIf} $R3 != 0
-      System::Call 'kernel32::CloseHandle(p R3)'
-    ${EndIf}
+  ReadINIStr $R6 "$INSTDIR\${SELECTION}" "selection" "candidate"
+  ${If} $R6 != ""
+  ${AndIf} $R6 != "legacy"
+    StrCpy $CheckPath "$INSTDIR\versions\$R6\xm-ims.exe"
+    Call CheckOneProgram
   ${EndIf}
-  ${If} $R5 == "0"
-    ClearErrors
-    ReadINIStr $R6 "$INSTDIR\${SELECTION}" "selection" "phase"
-    ${If} $R6 == "pending"
-    ${OrIf} $R6 == "starting"
-    ${OrIf} $R6 == "committing"
-      StrCpy $R5 "1"
-    ${EndIf}
+FunctionEnd
+
+; 目标目录确认后、覆盖程序前处理该目录的中断更新；始终运行包内最新恢复源码。
+Function RepairInterruptedUpdate
+  ReadINIStr $R6 "$INSTDIR\${SELECTION}" "selection" "phase"
+  ${If} $R6 != "pending"
+  ${AndIf} $R6 != "starting"
+  ${AndIf} $R6 != "committing"
+    Return
   ${EndIf}
+  ReadINIStr $R6 "$INSTDIR\${SELECTION}" "selection" "active"
+  ${If} $R6 == "legacy"
+    StrCpy $RepairPython "$INSTDIR\resources\python\python.exe"
+  ${Else}
+    StrCpy $RepairPython "$INSTDIR\versions\$R6\resources\python\python.exe"
+  ${EndIf}
+  ${IfNot} ${FileExists} "$RepairPython"
+    !insertmacro FailStop "找不到用于恢复的旧版程序，已停止安装。请保留原目录中的数据。"
+  ${EndIf}
+
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR\repair"
+  File /oname=installer_repair.py "${SUPPORT_DIR}\installer_repair.py"
+  File /oname=update_trial.py "${SUPPORT_DIR}\update_trial.py"
+  File /oname=process_lock.py "${SUPPORT_DIR}\process_lock.py"
+  nsExec::ExecToStack '"$RepairPython" -B "$PLUGINSDIR\repair\installer_repair.py" check --root "$INSTDIR" --result "$PLUGINSDIR\repair-result.ini"'
+  Pop $RepairExit
+  Pop $RepairOutput
+  ${If} $RepairExit == 0
+    Return
+  ${EndIf}
+  ${If} $RepairExit != 10
+    ReadINIStr $RepairMessage "$PLUGINSDIR\repair-result.ini" "repair" "message"
+    ${If} $RepairMessage == ""
+      StrCpy $RepairMessage "无法检查上次更新，已停止安装。请保留原目录中的数据。"
+    ${EndIf}
+    !insertmacro FailStop "$RepairMessage"
+  ${EndIf}
+
+  ; 补救可能恢复数据指针，静默安装不能代替用户确认。
+  ${If} ${Silent}
+    !insertmacro FailStop "上次更新未完成，请手动运行安装包，确认恢复后再安装。"
+  ${EndIf}
+  MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "检测到上次更新未完成。继续安装将先创建保护备份，再恢复更新前状态，之后安装新版。$\r$\n$\r$\n备份目录：$INSTDIR\repair-backups$\r$\n$\r$\n是否继续？" IDYES repair_confirmed
+  SetErrorLevel 2
+  Quit
+  repair_confirmed:
+  Delete "$PLUGINSDIR\repair-result.ini"
+  nsExec::ExecToStack '"$RepairPython" -B "$PLUGINSDIR\repair\installer_repair.py" repair --root "$INSTDIR" --result "$PLUGINSDIR\repair-result.ini"'
+  Pop $RepairExit
+  Pop $RepairOutput
+  ReadINIStr $RepairBackup "$PLUGINSDIR\repair-result.ini" "repair" "backup"
+  ${If} $RepairBackup != ""
+    DetailPrint "保护备份保留在：$RepairBackup"
+  ${EndIf}
+  ${If} $RepairExit != 0
+    ReadINIStr $RepairMessage "$PLUGINSDIR\repair-result.ini" "repair" "message"
+    ${If} $RepairMessage == ""
+      StrCpy $RepairMessage "上次更新未能恢复，已停止安装。请保留原目录中的数据。"
+    ${EndIf}
+    ${If} $RepairBackup != ""
+      StrCpy $RepairMessage "$RepairMessage$\r$\n$\r$\n备份目录：$RepairBackup"
+    ${EndIf}
+    !insertmacro FailStop "$RepairMessage"
+  ${EndIf}
+  DetailPrint "上次更新已恢复，继续安装新版。"
 FunctionEnd
 
 ; 去掉清单行尾的 CR / LF；写出的清单使用 CRLF
@@ -210,13 +287,15 @@ UninstallIcon "${STAGE_DIR}\resources\icons\icon.ico"
 
 ; ---------- 安装 ----------
 Section "XM-IMS" SecMain
+  GetFullPathName $INSTDIR "$INSTDIR"
   Call WaitForPrevious
   ; 手动重装 / 升级没有 /XM_PID，同样不能在程序运行时覆盖程序文件：
   ; 托盘隐藏窗口后进程仍在，覆盖会失败并留下新旧混合的安装
   Call CheckProgramFiles
   ${If} $R5 == "1"
-    !insertmacro FailStop "XM-IMS 正在运行或有更新待确认。请在托盘菜单中选择退出后重试。"
+    !insertmacro FailStop "XM-IMS 正在运行。请退出后重新安装。"
   ${EndIf}
+  Call RepairInterruptedUpdate
 
   ; 1) 旧平铺布局：先把旧程序原位保留为 legacy，作为该次唯一回退目标
   StrCpy $LegacyMode "0"
@@ -232,7 +311,11 @@ Section "XM-IMS" SecMain
       ${If} ${FileExists} "$INSTDIR\${LEGACY}"
         Delete "$INSTDIR\${LEGACY}"
       ${EndIf}
+      ClearErrors
       Rename "$INSTDIR\${LAUNCHER}" "$INSTDIR\${LEGACY}"
+      ${If} ${Errors}
+        !insertmacro FailStop "旧版程序未能保留，已停止安装。请保留原目录后重试。"
+      ${EndIf}
       ; WER 文件需要 legacy 命名副本，原文件保留在原归属清单中
       ${If} ${FileExists} "$INSTDIR\xm-ims_wer.dll"
         CopyFiles /SILENT "$INSTDIR\xm-ims_wer.dll" "$INSTDIR\xm-ims-legacy_wer.dll"
@@ -249,20 +332,67 @@ Section "XM-IMS" SecMain
 
   ; 2) 新版本载荷先写临时目录，成功后再提升为正式槽
   Call WriteMigrateStage
-  RMDir /r "$INSTDIR\versions\${SLOT}.installing"
-  SetOutPath "$INSTDIR\versions\${SLOT}.installing"
+  GetFullPathName $VersionStaging "$INSTDIR\versions\${SLOT}.installing"
+  GetFullPathName $VersionTarget "$INSTDIR\versions\${SLOT}"
+  ; 删除目标先核对绝对目录边界，只处理本包对应的版本与暂存槽。
+  GetFullPathName $R7 "$INSTDIR\versions"
+  StrLen $R8 "$R7\"
+  StrCpy $R9 $VersionStaging $R8
+  ${If} $R9 != "$R7\"
+    !insertmacro FailStop "安装暂存目录不正确，已停止安装。"
+  ${EndIf}
+  StrCpy $R9 $VersionTarget $R8
+  ${If} $R9 != "$R7\"
+    !insertmacro FailStop "安装版本目录不正确，已停止安装。"
+  ${EndIf}
+  ${If} ${FileExists} "$VersionStaging"
+    ClearErrors
+    RMDir /r "$VersionStaging"
+    ${If} ${Errors}
+      !insertmacro FailStop "暂存程序文件无法清理，已停止安装。请退出程序后重试。"
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  SetOutPath "$VersionStaging"
   File /r "${STAGE_DIR}\*.*"
-  RMDir /r "$INSTDIR\versions\${SLOT}"
-  Rename "$INSTDIR\versions\${SLOT}.installing" "$INSTDIR\versions\${SLOT}"
+  ${If} ${Errors}
+    !insertmacro FailStop "新版程序文件没有完整写入，已停止安装。"
+  ${EndIf}
+  ; File /r 会把工作目录恢复到暂存槽，必须先切出，再删除或改名目录。
+  ClearErrors
+  SetOutPath "$INSTDIR"
+  ${If} ${Errors}
+    !insertmacro FailStop "无法进入安装目录，已停止安装。"
+  ${EndIf}
+  ${If} ${FileExists} "$VersionTarget"
+    ClearErrors
+    RMDir /r "$VersionTarget"
+    ${If} ${Errors}
+      !insertmacro FailStop "旧程序文件无法替换，已停止安装。请退出程序后重试。"
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  Rename "$VersionStaging" "$VersionTarget"
+  ${If} ${Errors}
+    !insertmacro FailStop "新版程序目录未能准备完成，已停止安装。"
+  ${EndIf}
+  ${IfNot} ${FileExists} "$VersionTarget\xm-ims.exe"
+  ${OrIfNot} ${FileExists} "$VersionTarget\resources\python\python.exe"
+  ${OrIfNot} ${FileExists} "$VersionTarget\resources\app\main.js"
+    !insertmacro FailStop "新版程序文件不完整，已停止安装。"
+  ${EndIf}
 
-  ; 3) 固定根组件：启动器与独立恢复支持；同协议已存在时保留原组件
+  ; 3) 手动安装刷新固定根组件，已有恢复脚本也必须获得本包的修复。
   ;    启动器源码文件名与入口名不同，必须用 /oname 落到固定入口名
+  ClearErrors
   SetOutPath "$INSTDIR"
   File /oname=${LAUNCHER} "${LAUNCHER_FILE}"
   CreateDirectory "$INSTDIR\bootstrap-support"
-  ${IfNot} ${FileExists} "$INSTDIR\bootstrap-support\update_trial.py"
-    File /oname=bootstrap-support\update_trial.py "${SUPPORT_DIR}\update_trial.py"
-    File /oname=bootstrap-support\process_lock.py "${SUPPORT_DIR}\process_lock.py"
+  File /oname=bootstrap-support\update_trial.py "${SUPPORT_DIR}\update_trial.py"
+  File /oname=bootstrap-support\process_lock.py "${SUPPORT_DIR}\process_lock.py"
+  File /oname=bootstrap-support\installer_repair.py "${SUPPORT_DIR}\installer_repair.py"
+  ${If} ${Errors}
+    !insertmacro FailStop "恢复组件未能安装完整，已停止安装。"
   ${EndIf}
 
   ; 4) 选择资料：新槽一律先作为待确认候选，由启动器首次启动监督后写入 stable
@@ -299,6 +429,7 @@ Section "XM-IMS" SecMain
   FileWriteUTF16LE $ManifestHandle "${LAUNCHER}$\r$\n"
   FileWriteUTF16LE $ManifestHandle "bootstrap-support\update_trial.py$\r$\n"
   FileWriteUTF16LE $ManifestHandle "bootstrap-support\process_lock.py$\r$\n"
+  FileWriteUTF16LE $ManifestHandle "bootstrap-support\installer_repair.py$\r$\n"
   FileWriteUTF16LE $ManifestHandle "${ROOT_MANIFEST}$\r$\n"
   FileWriteUTF16LE $ManifestHandle "uninstall.exe$\r$\n"
   FileClose $ManifestHandle
