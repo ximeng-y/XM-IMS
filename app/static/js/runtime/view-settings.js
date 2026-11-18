@@ -60,16 +60,55 @@ function mergeUnknown(prev, next, known) {
   };
 }
 
+// 可选分组：各组共用同一份 order / hidden，但分别维护自己的列清单和恢复默认入口。
+// 组定义可以是函数，页面数据取回后新增的列下次打开设置时会自然出现。
+function resolveGroups(groups, fallbackColumns) {
+  const raw = typeof groups === "function" ? groups() : groups;
+  if (!Array.isArray(raw) || !raw.length) return null;
+  return raw.map((group, index) => ({
+    key: String(group.key ?? index),
+    label: group.label || `列组 ${index + 1}`,
+    columns: group.columns || fallbackColumns,
+    inherit: group.inherit || null,
+  }));
+}
+
+function columnsOf(group) {
+  return typeof group.columns === "function" ? group.columns() : group.columns;
+}
+
+// 旧页面版本使用平面列键。新分组首次读取时，让新键沿用它对应的旧键顺序与隐藏状态；
+// 旧键继续保留，避免用户在页面版本回退时丢失原设置。
+function inheritKeys(values, groups) {
+  if (!groups) return values;
+  const order = [...values.order];
+  const hidden = [...values.hidden];
+  for (const group of groups) {
+    for (const [nextKey, oldKey] of Object.entries(group.inherit || {})) {
+      if (order.includes(nextKey) || hidden.includes(nextKey)) continue;
+      const at = order.indexOf(oldKey);
+      if (at >= 0) order.splice(at + 1, 0, nextKey);
+      if (hidden.includes(oldKey) && !hidden.includes(nextKey)) hidden.push(nextKey);
+    }
+  }
+  return { ...values, order: [...new Set(order)], hidden: [...new Set(hidden)] };
+}
+
 // opts:
 //   view     页面标识（spus / items / inventory）
-//   columns  当前页实际列 [{ key, label, control?, css? }]，顺序即默认列顺序；
+//   columns  不分组的当前页实际列 [{ key, label, control?, css? }]，顺序即默认列顺序；
 //            自定义属性随字段定义变化，可传函数返回最新列
+//   groups   可选分组函数/数组：[{ key, label, columns, inherit? }]；传了 groups 时忽略 columns
 //   onApply  设置变化时回调 {order, hidden}，调用方据此重排表头与各类数据行
 // 返回 { ready, open, visible, infoVisible, settings }
-function create({ view, columns, onApply }) {
-  const columnList = () => (typeof columns === "function" ? columns() : columns);
+function create({ view, columns, groups, onApply }) {
+  const columnList = () => {
+    const list = typeof columns === "function" ? columns() : columns;
+    return Array.isArray(list) ? list : [];
+  };
+  const groupList = () => resolveGroups(groups, columnList);
   let current = EMPTY();
-  let instance = null;       // 打开中的列设置内容组件
+  let instances = [];        // 打开中的列设置内容组件；分组时每组一个
   let pending = null;        // 首次读取的同一个 promise：ready 与 open 共用
 
   // knownColumns 必须是产生 next 的那份列清单，而不是页面此刻的列清单：
@@ -79,7 +118,7 @@ function create({ view, columns, onApply }) {
     const known = new Set(knownColumns.map((c) => c.key));
     const merged = mergeUnknown(current, next, known);
     current = { ...current, order: merged.order, hidden: merged.hidden };
-    onApply({ order: current.order, hidden: current.hidden });
+    if (onApply) onApply({ order: current.order, hidden: current.hidden });
   }
 
   function persist() {
@@ -93,12 +132,16 @@ function create({ view, columns, onApply }) {
   function ready() {
     if (pending) return pending;
     pending = XM.get(`/view-settings/${view}`).then((data) => {
-      current = normalize(data);
+      current = inheritKeys(normalize(data), groupList());
     }).catch((e) => {
       current = EMPTY();
       UI.apiFail(e, "读取列设置失败");
     }).then(() => {
-      apply(current, columnList());
+      const activeGroups = groupList();
+      const knownColumns = activeGroups
+        ? activeGroups.flatMap((group) => columnsOf(group))
+        : columnList();
+      apply(current, knownColumns);
       return current;
     });
     return pending;
@@ -108,42 +151,84 @@ function create({ view, columns, onApply }) {
     // 已经打开同一个侧栏时不再叠加第二个
     if (RightSidebar.isOpen()) return;
     await ready();
-    // 面板列清单在这里固定一次：之后页面列再怎么变（如属性元数据到达），
-    // 面板仍只列出挂载时的列，保存时也按这份清单判定哪些列缺失需要补齐
-    const panelColumns = columnList();
-    instance = ColumnSettings.mount({
-      columns: panelColumns,
-      settings: current,
-      onChange: (next) => {
-        apply(next, panelColumns);
-        persist();
-      },
-    });
+    const activeGroups = groupList();
+    const root = document.createElement("div");
+    root.className = "column-settings";
+    instances = [];
+
+    const mountGroup = (panelColumns, label) => {
+      const groupRoot = document.createElement("section");
+      groupRoot.className = "column-settings-group";
+      if (label) {
+        const heading = document.createElement("h3");
+        heading.className = "column-settings-group-title";
+        heading.textContent = label;
+        groupRoot.appendChild(heading);
+      }
+      const instance = ColumnSettings.mount({
+        columns: panelColumns,
+        settings: current,
+        onChange: (next) => {
+          apply(next, panelColumns);
+          persist();
+        },
+      });
+      groupRoot.append(instance.root, instance.footer);
+      root.appendChild(groupRoot);
+      instances.push(instance);
+    };
+
+    if (activeGroups) {
+      for (const group of activeGroups) mountGroup(columnsOf(group), group.label);
+    } else {
+      // 面板列清单在这里固定一次：之后页面列再怎么变（如属性元数据到达），
+      // 面板仍只列出挂载时的列，保存时也按这份清单判定哪些列缺失需要补齐
+      mountGroup(columnList(), "");
+    }
     RightSidebar.open({
       title: "列设置",
       width: current.sidebar_width || RightSidebar.DEFAULT_WIDTH,
-      content: instance.root,
-      footer: instance.footer,
-      holdEscape: () => !!instance && instance.dragging(),
+      content: root,
+      holdEscape: () => instances.some((instance) => instance.dragging()),
       onWidthChange: (width) => {
         current = { ...current, sidebar_width: width };
         persist();
       },
       onClose: () => {
-        if (instance) instance.destroy();
-        instance = null;
+        instances.forEach((instance) => instance.destroy());
+        instances = [];
       },
     });
+  }
+
+  function visible(groupKey) {
+    const activeGroups = groupList();
+    if (!activeGroups) return ColumnSettings.visibleKeys(columnList(), current);
+    const group = activeGroups.find((item) => item.key === groupKey);
+    return group ? ColumnSettings.visibleKeys(columnsOf(group), current) : [];
+  }
+
+  function infoVisible(groupKey) {
+    const activeGroups = groupList();
+    if (!activeGroups) {
+      const cols = columnList();
+      return ColumnSettings.visibleKeys(cols, current)
+        .some((key) => !(cols.find((c) => c.key === key) || {}).control);
+    }
+    const group = activeGroups.find((item) => item.key === groupKey);
+    if (!group) return false;
+    const cols = columnsOf(group);
+    return ColumnSettings.visibleKeys(cols, current)
+      .some((key) => !(cols.find((c) => c.key === key) || {}).control);
   }
 
   return {
     ready,
     open,
-    // 当前可见列（完整顺序去掉已隐藏的信息列）
-    visible: () => ColumnSettings.visibleKeys(columnList(), current),
+    // 当前可见列（完整顺序去掉已隐藏的信息列）；分组时传组 key
+    visible,
     // 是否还有信息列可见：全隐藏时页面给出提示与恢复入口
-    infoVisible: () => ColumnSettings.visibleKeys(columnList(), current)
-      .some((key) => !(columnList().find((c) => c.key === key) || {}).control),
+    infoVisible,
     settings: () => ({ ...current }),
   };
 }

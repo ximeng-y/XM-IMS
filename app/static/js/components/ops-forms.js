@@ -52,7 +52,7 @@ const OpsForm = (() => {
 
   // 属性定义供信息区展示：当前店铺的自定义属性（不含系统字段），只取一次
   async function loadFields() {
-    const data = await XM.get("/fields");
+    const data = await XM.get("/fields?target=sku");
     return data.fields.filter((f) => !f.system);
   }
 

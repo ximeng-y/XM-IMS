@@ -3,7 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
 
-from ...schemas import SpuCreate, SpuList, SpuOut
+from ...schemas import SpuCreate, SpuList, SpuOut, SpuPatch
 from ...service import spus
 from ..deps import require_shop
 
@@ -14,7 +14,7 @@ ShopDep = Annotated[int, Depends(require_shop)]
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=SpuOut,
              summary="创建 SPU")
 def create_spu(shop_id: ShopDep, body: SpuCreate):
-    return spus.create_spu(shop_id, body.name)
+    return spus.create_spu(shop_id, body.name, body.values)
 
 
 @router.get("", response_model=SpuList, summary="SPU 列表（含 SKU 计数）")
@@ -22,9 +22,14 @@ def list_spus(shop_id: ShopDep):
     return spus.list_spus(shop_id)
 
 
-@router.patch("/{spu_id}", response_model=SpuOut, summary="SPU 改名（全局一处生效）")
-def rename_spu(shop_id: ShopDep, spu_id: int, body: SpuCreate):
-    return spus.rename_spu(shop_id, spu_id, body.name)
+@router.get("/{spu_id}", response_model=SpuOut, summary="查看 SPU 详情")
+def get_spu(shop_id: ShopDep, spu_id: int):
+    return spus.get_spu(shop_id, spu_id)
+
+
+@router.patch("/{spu_id}", response_model=SpuOut, summary="修改 SPU 名称与属性值")
+def update_spu(shop_id: ShopDep, spu_id: int, body: SpuPatch):
+    return spus.update_spu(shop_id, spu_id, body)
 
 
 @router.delete("/{spu_id}", response_model=None, summary="删除 SPU（仅限其下已无单品）")

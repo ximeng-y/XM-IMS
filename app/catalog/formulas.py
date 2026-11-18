@@ -1,11 +1,14 @@
-"""数学计算字段：公式解析、依赖校验与逐 SKU 求值（纯领域逻辑，不访问数据库）
+"""数学计算字段：公式解析、依赖校验与逐对象求值（纯领域逻辑，不访问数据库）
 
 公式是版本化的结构化 token 序列，不保存可执行的 Python / JavaScript / SQL 表达式，
-也不使用 eval。四类 token：
+也不使用 eval。四类基础 token：
     {"kind": "number", "value": "12.5"}      数字常量（十进制文本，可为负）
     {"kind": "field",  "uid": "<sync_uid>"}  本店自定义字段或计算字段
     {"kind": "system", "key": "qty"}         数值型系统字段（显式白名单）
     {"kind": "symbol", "value": "*"}         运算符或括号
+SPU 公式还支持一个聚合 token：
+    {"kind": "aggregate", "op": "sum", "tokens": [...]}
+聚合内部只允许基础 token，对每个子 SKU 求值后相加。
 
 数值语义：普通字段的编码值先按 fieldtypes.logical_exp 还原成数学值（百分比 25% → 0.25），
 全部运算用 Decimal、局部精度 50 位；中间结果不按显示位数取舍，只有输出当前字段时才
@@ -21,8 +24,10 @@ from decimal import Decimal, DecimalException, ROUND_HALF_UP, localcontext
 from . import fieldtypes
 from ..errors import ApiError
 
-# 公式对象版本；本次固定为 1
-VERSION = 1
+# 普通公式仍为 v1；只有包含聚合的公式使用 v2
+BASE_VERSION = 1
+AGGREGATE_VERSION = 2
+VERSION = AGGREGATE_VERSION
 # 局部计算精度（有效数字）
 PRECISION = 50
 # 显示精度统一 0~6 位（默认 2 位由调用方给出）
@@ -30,9 +35,14 @@ MAX_SCALE = 6
 # 十进制常量：普通整数/小数，允许前导零与负号；不接受布尔、NaN、Infinity、科学计数法
 NUMBER_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 
-# 可引用的系统字段白名单：库内 ID 恰为整数不代表它可参与数学运算
-# 只列库存数量：SPU ID 是编号而非可运算的数量，不参与数学计算（外层 ID 系统字段照常保留）
-SYSTEM_KEYS = {"qty": "库存数量"}
+# 可引用的系统字段白名单：库内 ID 恰为整数不代表它可参与数学运算。
+# 内层聚合只允许 SKU 的 qty；SPU 外层还可引用合计库存与 SKU 数。
+SYSTEM_KEYS_BY_TARGET = {
+    "sku": {"qty": "库存数量"},
+    "spu": {"total_qty": "合计库存", "sku_count": "SKU 数"},
+}
+AGGREGATE_SYSTEM_KEYS = {"qty": "库存数量"}
+SYSTEM_KEYS = {**SYSTEM_KEYS_BY_TARGET["sku"], **SYSTEM_KEYS_BY_TARGET["spu"]}
 # 计算字段的结果类型（写入 custom_fields.type 的值）：整数按四舍五入取整，供下游引用取整后的值
 RESULT_TYPES = ("int", "decimal", "percent")
 
@@ -94,7 +104,7 @@ def canonical_number(text: str) -> str:
     return format(d.normalize(), "f")
 
 
-def _one_token(token) -> dict:
+def _one_token(token, allow_aggregate=True) -> dict:
     item = _as_dict(token)
     kind = item.get("kind")
     if kind == "number":
@@ -132,30 +142,71 @@ def _one_token(token) -> dict:
                            user_message=f"无效的运算符：{value}",
                            user_hint="支持的运算符与括号：+ − × ÷ ( )")
         return {"kind": "symbol", "value": value}
+    if kind == "aggregate":
+        if not allow_aggregate:
+            raise _invalid("对子 SKU 求和不能再次嵌套",
+                           hint="SUM 内部只允许字段、数字、运算符与括号",
+                           user_message="对子 SKU 求和中不能再放一个求和",
+                           user_hint="请先完成当前求和表达式，或把内部内容改成字段、数字与运算符")
+        if item.get("op") != "sum":
+            raise _invalid(f"不支持的聚合运算：{item.get('op')}",
+                           hint="当前只支持 sum（对子 SKU 表达式求和）",
+                           user_message="当前只支持对子 SKU 求和",
+                           user_hint="请使用「对子 SKU 求和」入口")
+        raw_tokens = item.get("tokens")
+        if not isinstance(raw_tokens, list):
+            raise _invalid("对子 SKU 求和的内部表达式格式无效",
+                           user_message="对子 SKU 求和的内容无法识别",
+                           user_hint="请删除这一项后重新添加求和")
+        child = parse(raw_tokens, allow_aggregate=False)
+        return {"kind": "aggregate", "op": "sum", "tokens": child.tokens}
     raise _invalid(f"无效的公式组件类型：{kind}",
-                   hint="可用组件类型：number / field / system / symbol",
+                   hint="可用组件类型：number / field / system / symbol / aggregate",
                    user_message="公式里有无法识别的内容",
                    user_hint="请清空公式后重新从下方按钮逐项加入")
+
+
+def version_of(tokens) -> int:
+    """公式内容对应的版本：含聚合为 v2，否则继续使用 v1。"""
+    return AGGREGATE_VERSION if any(
+        isinstance(t, dict) and t.get("kind") == "aggregate" for t in (tokens or [])
+    ) else BASE_VERSION
 
 
 # ---------- 解析 ----------
 
 class Parsed:
-    """一次解析的结果：规范化 token + RPN + 引用集合"""
+    """一次解析的结果：规范化 token + RPN + 外层/聚合内层引用集合"""
 
-    __slots__ = ("tokens", "rpn", "fields", "systems")
+    __slots__ = ("tokens", "rpn", "outer_fields", "aggregate_fields", "fields",
+                 "outer_systems", "aggregate_systems", "systems", "has_aggregate")
 
     def __init__(self, tokens, rpn):
         self.tokens = tokens
         self.rpn = rpn
-        self.fields = {t["uid"] for t in tokens if t["kind"] == "field"}
-        self.systems = {t["key"] for t in tokens if t["kind"] == "system"}
+        self.outer_fields = {t["uid"] for t in tokens if t["kind"] == "field"}
+        self.outer_systems = {t["key"] for t in tokens if t["kind"] == "system"}
+        aggregates = [t for t in tokens if t["kind"] == "aggregate"]
+        self.has_aggregate = bool(aggregates)
+        self.aggregate_fields = {
+            child["uid"] for item in aggregates for child in item["tokens"]
+            if child["kind"] == "field"
+        }
+        self.aggregate_systems = {
+            child["key"] for item in aggregates for child in item["tokens"]
+            if child["kind"] == "system"
+        }
+        self.fields = self.outer_fields | self.aggregate_fields
+        self.systems = self.outer_systems | self.aggregate_systems
 
 
 def _static_check(rpn) -> None:
     """对纯常数子表达式求值，拒绝可直接确定的除零（如 A/0、A/(2-2)）"""
     stack = []
     for item in rpn:
+        if item[0] == "agg":
+            stack.append(None)
+            continue
         if item[0] != "op":
             stack.append(Decimal(item[1]) if item[0] == "num" else None)
             continue
@@ -183,14 +234,14 @@ def _static_check(rpn) -> None:
             stack.append(a / b)
 
 
-def parse(tokens) -> Parsed:
+def parse(tokens, allow_aggregate=True) -> Parsed:
     """校验并解析公式 token 序列；返回供校验与求值使用的内部表示。
 
     语法：乘除同级、加减同级、同级从左向右；负号只允许出现在公式开头及左括号之后
     （负常量本身是一个操作数，如 A × [-3] 合法）；不支持隐式乘法。使用显式栈
     （调度场算法）而非递归下降，任意嵌套深度都不会触发递归限制。
     """
-    items = [_one_token(t) for t in (tokens or [])]
+    items = [_one_token(t, allow_aggregate=allow_aggregate) for t in (tokens or [])]
     if not items:
         raise _invalid("公式为空：请至少加入一个字段或数字",
                        hint="空公式没有可计算的内容，无法保存",
@@ -206,9 +257,13 @@ def parse(tokens) -> Parsed:
                                hint="如 A(B+C) 需要写成 A×(B+C)；不支持隐式乘法",
                                user_message="两个字段或数字相邻，缺少运算符",
                                user_hint="如 A(B+C) 需要写成 A×(B+C)")
-            key = item["value"] if item["kind"] == "number" else (
-                item["uid"] if item["kind"] == "field" else item["key"])
-            output.append(({"number": "num", "field": "field", "system": "sys"}[item["kind"]], key))
+            if item["kind"] == "aggregate":
+                output.append(("agg", parse(item["tokens"], allow_aggregate=False)))
+            else:
+                key = item["value"] if item["kind"] == "number" else (
+                    item["uid"] if item["kind"] == "field" else item["key"])
+                output.append(({"number": "num", "field": "field", "system": "sys"}[item["kind"]],
+                               key))
             prev, expect_operand = "operand", False
             continue
 
@@ -276,10 +331,16 @@ def parse(tokens) -> Parsed:
     return Parsed(items, output)
 
 
-def dump(tokens) -> str:
-    """规范 JSON：固定键顺序与分隔符，避免同样的公式产生无意义的同步差异"""
+def dump(tokens, version=None) -> str:
+    """规范 JSON：版本由内容决定，固定键顺序与分隔符，避免同步差异。"""
     items = [_one_token(t) for t in (tokens or [])]
-    return json.dumps({"version": VERSION, "tokens": items},
+    actual = version_of(items)
+    if version is not None and int(version) != actual:
+        raise _invalid(f"公式版本与内容不匹配：版本 {version}，内容应为版本 {actual}",
+                       hint="不含聚合的公式使用版本 1；包含「对子 SKU 求和」的公式使用版本 2",
+                       user_message="公式版本与当前内容不一致",
+                       user_hint="请关闭窗口后重新打开公式编辑器再保存")
+    return json.dumps({"version": actual, "tokens": items},
                       ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -289,14 +350,22 @@ def load(text) -> dict:
         data = json.loads(text)
     except (TypeError, ValueError):
         raise ApiError("FORMULA_INVALID", "公式定义不是合法 JSON", status=409)
-    if not isinstance(data, dict) or data.get("version") != VERSION:
+    version = data.get("version") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or version not in (BASE_VERSION, AGGREGATE_VERSION):
         raise ApiError("FORMULA_INVALID",
-                       f"公式定义版本不受支持：{data.get('version') if isinstance(data, dict) else '?'}",
-                       hint=f"当前支持的公式版本为 {VERSION}，请升级应用后重试", status=409,
+                       f"公式定义版本不受支持：{version if version is not None else '?'}",
+                       hint="当前支持的公式版本为 1 和 2，请升级应用后重试", status=409,
                        user_message="该公式由更高版本的程序保存，当前版本无法识别",
                        user_hint="请升级程序后重新打开该字段的公式")
-    parse(data.get("tokens") or [])
-    return {"version": VERSION, "tokens": [_one_token(t) for t in (data.get("tokens") or [])]}
+    parsed = parse(data.get("tokens") or [])
+    actual = version_of(parsed.tokens)
+    if actual != version:
+        raise ApiError("FORMULA_INVALID",
+                       f"公式版本与内容不匹配：版本 {version}，内容应为版本 {actual}",
+                       status=409,
+                       user_message="公式的版本信息与内容不一致",
+                       user_hint="请回到字段页重新打开该公式并保存")
+    return {"version": actual, "tokens": parsed.tokens}
 
 
 def tokens_of(text) -> list | None:
@@ -308,25 +377,64 @@ def tokens_of(text) -> list | None:
 
 # ---------- 引用、依赖图与循环检测 ----------
 
-def check_refs(parsed: Parsed, by_uid: dict) -> None:
-    """引用必须指向本店存在的数值型字段（整数/小数/百分比/计算字段）"""
-    for uid in sorted(parsed.fields):
-        target = by_uid.get(uid)
-        if target is None:
-            raise ApiError("FORMULA_REF_INVALID",
-                           f"公式引用的字段不存在（标识 {uid[:8]}）",
-                           hint="该字段可能已被删除；请重新从「可引用字段」区域选择", status=400,
-                           user_message="公式引用的字段不存在",
-                           user_hint="该字段可能已被删除；请重新从「可引用字段」区域选择")
-        if target["type"] not in fieldtypes.NUMERIC_TYPES:
-            raise ApiError("FORMULA_REF_INVALID",
-                           f"字段「{target['name']}」是{TYPE_NAMES.get(target['type'], target['type'])}类型，"
-                           "不能参与数学计算",
-                           hint="只有整数、小数、百分比字段以及计算字段可以引用", status=400,
-                           user_message=f"字段「{target['name']}」是"
-                                        f"{TYPE_NAMES.get(target['type'], target['type'])}类型，"
-                                        "不能参与数学计算",
-                           user_hint="只有整数、小数、百分比字段以及计算字段可以引用")
+def _check_one_ref(uid, by_uid, target):
+    target_row = by_uid.get(uid)
+    if target_row is None:
+        raise ApiError("FORMULA_REF_INVALID",
+                       f"公式引用的字段不存在（标识 {uid[:8]}）",
+                       hint="该字段可能已被删除；请重新从「可引用字段」区域选择", status=400,
+                       user_message="公式引用的字段不存在",
+                       user_hint="该字段可能已被删除；请重新从「可引用字段」区域选择")
+    if target_row.get("target", "sku") != target:
+        target_name = "SPU" if target == "spu" else "单品"
+        raise ApiError("FORMULA_REF_INVALID",
+                       f"字段「{target_row['name']}」不属于 {target_name} 属性，不能在此公式引用",
+                       hint=f"外层公式只能引用{target_name}属性；对子 SKU 求和请在求和表达式内选择单品属性",
+                       status=400,
+                       user_message=f"字段「{target_row['name']}」不能在这里引用",
+                       user_hint=f"外层公式只能引用{target_name}属性；单品属性可放进「对子 SKU 求和」")
+    if target_row["type"] not in fieldtypes.NUMERIC_TYPES:
+        raise ApiError("FORMULA_REF_INVALID",
+                       f"字段「{target_row['name']}」是{TYPE_NAMES.get(target_row['type'], target_row['type'])}类型，"
+                       "不能参与数学计算",
+                       hint="只有整数、小数、百分比字段以及计算字段可以引用", status=400,
+                       user_message=f"字段「{target_row['name']}」是"
+                                    f"{TYPE_NAMES.get(target_row['type'], target_row['type'])}类型，"
+                                    "不能参与数学计算",
+                       user_hint="只有整数、小数、百分比字段以及计算字段可以引用")
+
+
+def check_refs(parsed: Parsed, by_uid: dict, target: str = "sku") -> None:
+    """按公式作用域校验引用：外层归属目标，SUM 内层固定为 SKU。"""
+    if target not in SYSTEM_KEYS_BY_TARGET:
+        raise _invalid(f"未知的公式作用域：{target}",
+                       user_message="公式作用域无法识别",
+                       user_hint="请关闭窗口后重新打开公式编辑器")
+    allowed_systems = SYSTEM_KEYS_BY_TARGET[target]
+    invalid_systems = sorted(parsed.outer_systems - set(allowed_systems))
+    if invalid_systems:
+        key = invalid_systems[0]
+        raise _invalid(f"当前公式不能引用系统字段：{key}",
+                       hint="可引用的系统字段只有：" +
+                            "、".join(f"{v}（{k}）" for k, v in allowed_systems.items()),
+                       user_message=f"不能引用系统字段：{key}",
+                       user_hint="可引用的系统字段只有：" + "、".join(allowed_systems.values()))
+    for uid in sorted(parsed.outer_fields):
+        _check_one_ref(uid, by_uid, target)
+    if parsed.has_aggregate:
+        if target != "spu":
+            raise _invalid("普通单品公式不能包含「对子 SKU 求和」",
+                           user_message="对子 SKU 求和只能用于 SPU 属性",
+                           user_hint="请在 SPU 属性的公式中新增求和，或删除这一项")
+        invalid_inner = sorted(parsed.aggregate_systems - set(AGGREGATE_SYSTEM_KEYS))
+        if invalid_inner:
+            key = invalid_inner[0]
+            raise _invalid(f"对子 SKU 求和不能引用系统字段：{key}",
+                           hint="求和内部只允许单品库存数量（qty）",
+                           user_message=f"对子 SKU 求和不能引用系统字段：{key}",
+                           user_hint="求和内部只允许引用单品库存数量")
+        for uid in sorted(parsed.aggregate_fields):
+            _check_one_ref(uid, by_uid, "sku")
 
 
 def graph_of(parsed_by_uid: dict) -> dict:
@@ -423,8 +531,9 @@ def check(defs, candidate=None) -> dict:
             parsed[row["uid"]] = parse(row["formula"])
     if candidate is not None and candidate["formula"]:
         parsed[candidate_uid] = parse(candidate["formula"])
-    for item in parsed.values():
-        check_refs(item, by_uid)
+    for uid, item in parsed.items():
+        row = by_uid.get(uid) or {}
+        check_refs(item, by_uid, row.get("target", "sku"))
     cycle = find_cycle(graph_of(parsed))
     if cycle:
         raise _cycle_error(cycle_text(cycle, {key: row["name"] for key, row in by_uid.items()}))
@@ -469,10 +578,16 @@ def display_number(field: dict, value: Decimal) -> int | float:
 
 
 class Engine:
-    """一批查询内共用：公式只解析一次，每个 SKU 按拓扑序对每个计算字段求值一次"""
+    """一批查询内共用：公式只解析一次，按拓扑序求值。
 
-    def __init__(self, defs):
+    SKU 引擎按单品上下文求值；SPU 引擎通过 sku_engine 对每个子 SKU 计算 SUM
+    内部表达式。聚合内部只读取 SKU 引擎的 Decimal 规范值，不经过 JSON 或显示文本。
+    """
+
+    def __init__(self, defs, target="sku", sku_engine=None):
         self.fields = list(defs)
+        self.target = target
+        self.sku_engine = sku_engine
         self.by_uid = {f["uid"]: f for f in self.fields}
         self.plain = [f for f in self.fields
                       if not f["formula"] and f["type"] in fieldtypes.NUMERIC_TYPES]
@@ -481,29 +596,61 @@ class Engine:
         self.order = topological([f["uid"] for f in self.computed], graph_of(self.parsed),
                                  {f["uid"]: f["name"] for f in self.fields})
 
-    def _reference(self, kind, key, values, errors, systems, field):
+    def _reference(self, kind, key, values, errors, systems, field, definitions=None):
         if kind == "sys":
             return systems[key]
+        definitions = definitions or self.by_uid
         if key in errors:
-            return _raise_upstream(field, self.by_uid.get(key), errors[key])
+            return _raise_upstream(field, definitions.get(key), errors[key])
         if key not in values:
-            name = (self.by_uid.get(key) or {}).get("name") or key[:8]
+            name = (definitions.get(key) or {}).get("name") or key[:8]
+            where = "SPU" if self.target == "spu" else "单品"
             raise CellError("FORMULA_SOURCE_MISSING",
                             f"字段「{field['name']}」引用的「{name}」没有值",
-                            hint=f"请先为该 SKU 填写「{name}」，或调整公式",
+                            hint=f"请先为该{where}填写「{name}」，或调整公式",
                             user_message=f"字段「{field['name']}」引用的「{name}」没有值",
-                            user_hint=f"请先为该单品填写「{name}」，或调整公式")
+                            user_hint=f"请先为该{where}填写「{name}」，或调整公式")
         return values[key]
 
-    def _evaluate(self, parsed, values, errors, systems, field):
+    def _sum(self, child, field, skus):
+        if self.target != "spu" or self.sku_engine is None:
+            raise CellError("FORMULA_SUM_SCOPE",
+                            f"字段「{field['name']}」的对子 SKU 求和不能在此作用域计算",
+                            user_message=f"字段「{field['name']}」的求和作用域不正确",
+                            user_hint="对子 SKU 求和只能用于 SPU 属性")
+        total = Decimal(0)
+        for sku in skus or []:
+            ref = sku.get("ref") or str(sku.get("id", "")) or "未知单品"
+            try:
+                raw_values, raw_errors = self.sku_engine.compute_raw(sku)
+                term = self.sku_engine._evaluate(
+                    child, raw_values, raw_errors, {"qty": Decimal(sku.get("qty", 0))},
+                    field, definitions=self.sku_engine.by_uid, check_negative=False)
+            except CellError as exc:
+                payload = exc.payload
+                raise CellError(
+                    "FORMULA_SUM_SOURCE",
+                    f"字段「{field['name']}」汇总子单品「{ref}」时失败",
+                    hint=payload.get("message") or "",
+                    user_message=f"字段「{field['name']}」汇总子单品「{ref}」时失败",
+                    user_hint=payload.get("user_hint") or payload.get("hint") or "")
+            total += term
+        return total
+
+    def _evaluate(self, parsed, values, errors, systems, field,
+                  definitions=None, check_negative=True, skus=None):
         stack = []
         try:
             for item in parsed.rpn:
                 if item[0] == "num":
                     stack.append(Decimal(item[1]))
                     continue
+                if item[0] == "agg":
+                    stack.append(self._sum(item[1], field, skus))
+                    continue
                 if item[0] != "op":
-                    stack.append(self._reference(item[0], item[1], values, errors, systems, field))
+                    stack.append(self._reference(
+                        item[0], item[1], values, errors, systems, field, definitions))
                     continue
                 op = item[1]
                 if op == "neg":
@@ -539,13 +686,44 @@ class Engine:
                             hint="请检查公式取值范围是否过大",
                             user_message=f"字段「{field['name']}」的计算结果无法表示",
                             user_hint="请检查公式取值范围是否过大")
-        if result < 0 and not field["allow_negative"]:
+        if check_negative and result < 0 and not field["allow_negative"]:
             raise CellError("FORMULA_NEGATIVE",
                             f"字段「{field['name']}」的计算结果为负数，但该字段不允许负数",
                             hint="如确需负值，请编辑该字段并勾选「允许负数」；否则请调整公式",
                             user_message=f"字段「{field['name']}」的计算结果为负数，但该字段不允许负数",
                             user_hint="如确需负值，请编辑该字段并勾选「允许负数」；否则请调整公式")
         return result
+
+    def _calculate(self, context):
+        """返回内部 Decimal 值 {(uid): Decimal} 与错误，供聚合复用。"""
+        values, errors = {}, {}
+        stored = context.get("stored") or {}
+        for field in self.plain:
+            raw = stored.get(field["uid"])
+            if raw is None:
+                continue
+            values[field["uid"]] = Decimal(raw).scaleb(-fieldtypes.logical_exp(
+                field["type"], field["scale"]))
+        if self.target == "spu":
+            systems = {"total_qty": Decimal(context.get("total_qty", 0)),
+                       "sku_count": Decimal(context.get("sku_count", 0))}
+        else:
+            systems = {"qty": Decimal(context.get("qty", 0))}
+        skus = context.get("skus") or []
+        for uid in self.order:
+            field = self.by_uid[uid]
+            try:
+                result = self._evaluate(
+                    self.parsed[uid], values, errors, systems, field, skus=skus)
+                values[uid] = _normalize(field, result)
+            except CellError as exc:
+                errors[uid] = exc.payload
+        return values, errors
+
+    def compute_raw(self, context):
+        with localcontext() as ctx:
+            ctx.prec = PRECISION
+            return self._calculate(context)
 
     def _output(self, field, result):
         """结果 → (供下游引用与显示共用的规范值, 显示文本, 显示数值)。
@@ -562,28 +740,23 @@ class Engine:
                             user_hint="结果数值过大或位数过多，请缩小公式的取值范围")
 
     def compute(self, context):
-        """context: {"qty": int, "stored": {字段 uid: 编码值}}
+        """context: {"qty": int, "stored": {字段 uid: 编码值}}；
+        SPU 另含 {"total_qty", "sku_count", "skus": [{"qty","stored","ref"}]}。
 
         返回 (计算字段的显示数值 {字段名: 数值或 None}, calculations {字段名: {display, error}})。
         失败只记为该单元格错误，不影响同批其它 SKU 与其它字段。
         """
         with localcontext() as ctx:
             ctx.prec = PRECISION
-            values, errors = {}, {}
-            stored = context.get("stored") or {}
-            for field in self.plain:
-                raw = stored.get(field["uid"])
-                if raw is None:
-                    continue
-                values[field["uid"]] = Decimal(raw).scaleb(-fieldtypes.logical_exp(
-                    field["type"], field["scale"]))
-            systems = {"qty": Decimal(context["qty"])}
+            values, errors = self._calculate(context)
             out_values, calculations = {}, {}
             for uid in self.order:
                 field = self.by_uid[uid]
                 try:
-                    result = self._evaluate(self.parsed[uid], values, errors, systems, field)
-                    value, shown, number = self._output(field, result)
+                    if uid in errors:
+                        raise CellError(**errors[uid])
+                    value = values[uid]
+                    _, shown, number = self._output(field, value)
                 except CellError as exc:
                     errors[uid] = exc.payload
                     out_values[field["name"]] = None

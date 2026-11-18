@@ -26,11 +26,26 @@
    扣掉固定列后的余量在它们之间平分，因此属性列是几个都成立，无需按属性数写样式。
    余量平分让这几列随容器等比例收缩，不会出现某一列被内容挤没的情况。 */
 /* 展开三角：3.5rem 才容得下 .tri-btn 的左右内边距加字形，2.5rem 会裁掉它右缘 */
-#inventoryScroll .columns-table .col-expand { width: 3.5rem; }
-#inventoryScroll .columns-table .col-id { width: 5rem; }          /* ID */
-#inventoryScroll .columns-table .col-sku-count { width: 5rem; }   /* SKU 数 */
-#inventoryScroll .columns-table .col-total { width: 7rem; }       /* 合计库存 */
-#inventoryScroll .columns-table .col-updated { width: 12rem; }    /* 更新时间 */
+#inventoryScroll .inventory-spu-table .col-expand { width: 3.5rem; }
+#inventoryScroll .inventory-spu-table .col-id { width: 5rem; }          /* ID */
+#inventoryScroll .inventory-spu-table .col-sku-count { width: 5rem; }   /* SKU 数 */
+#inventoryScroll .inventory-spu-table .col-total { width: 7rem; }       /* 合计库存 */
+#inventoryScroll .inventory-spu-table .col-updated { width: 12rem; }    /* 更新时间 */
+
+/* SKU 子表独立按自己的表头分配列宽；名称与自定义属性平分剩余宽度。 */
+#inventoryScroll .inventory-sku-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+#inventoryScroll .inventory-sku-table .col-sku-id { width: 6rem; }
+#inventoryScroll .inventory-sku-table .col-sku-qty { width: 6rem; }
+#inventoryScroll .inventory-sku-table .col-sku-updated { width: 12rem; }
+#inventoryScroll .inventory-sku-table .col-sku-empty { white-space: nowrap; }
+#inventoryScroll .inventory-sku-table .col-sku-empty button {
+  width: auto;
+  margin: 0 0 0 .35rem;
+}
 
 .tri-btn {
   background: none;
@@ -54,14 +69,38 @@
    使「SPU 凸起 / SKU 凹陷」的层次在悬停时依然成立 */
 tbody tr.sku-sub-row:hover { background: var(--row-hover-sub); }
 
+/* 展开容器只负责跨列承载独立 SKU 表，不把内表单元格当作外层表格单元格裁剪。 */
+#inventoryScroll .inventory-spu-table > tbody > tr.sku-group-row {
+  background: #fff;
+}
+#inventoryScroll .inventory-spu-table > tbody > tr.sku-group-row:hover {
+  background: #fff;
+}
+#inventoryScroll .inventory-spu-table > tbody > tr.sku-group-row > td.sku-group-cell {
+  padding: 0;
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  border-bottom-color: var(--line-deep) !important;
+}
+/* SKU 表头只在各自子表内作为分区标题，不参与外层库存表的吸顶。 */
+#inventoryScroll .inventory-sku-table thead th {
+  position: static;
+  z-index: auto;
+  background: var(--blue-pale-2);
+  font-size: .8rem;
+  border-top: 1px solid var(--line);
+}
+
 /* 分组分界线（深一档，突出 SPU 组的边界）：
    .spu-row                    → SPU 行下沿：SPU↔其首个 SKU、折叠时 SPU↔下一个 SPU
    .sku-sub-row:has(+ .spu-row) → SKU 组末尾那行：该组↔下一个 SPU
    .sku-sub-row:last-child      → 页面末尾的 SKU 组收口
    同组内部相邻 SKU 行仍用浅线，避免一组 SKU 被深线割裂 */
 .spu-row > td,
-.sku-sub-row:has(+ .spu-row) > td,
-#spuRows .sku-sub-row:last-child > td { border-bottom-color: var(--line-deep) !important; }
+#inventoryScroll .inventory-sku-table tbody tr:last-child > td {
+  border-bottom-color: var(--line-deep) !important;
+}
 
 /* 有附属 SKU 的 SPU 行整行可点击展开/收起（见 inventory.js 的点击委托） */
 tr.spu-row:has(.tri-btn) { cursor: pointer; }
@@ -76,8 +115,8 @@ tr.spu-row:has(.tri-btn) { cursor: pointer; }
   /* 内部滚动容器禁用滚动锚定：定位与底部留白回收都是显式的，不希望浏览器再自动补偿 */
   overflow-anchor: none;
 }
-/* 表头在容器内吸顶，沿用既有表头底色（仅库存页，不动全站规则） */
-#inventoryScroll thead th {
+/* 只让外层 SPU 表头在容器内吸顶；SKU 子表头保持在展开组内。 */
+#inventoryScroll .inventory-spu-table > thead th {
   position: sticky;
   top: 0;
   z-index: 2;

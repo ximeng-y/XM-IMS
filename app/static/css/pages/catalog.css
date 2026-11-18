@@ -16,11 +16,11 @@
    SPU、单品两页由下面的 .col-* 规则控制，库存页在 inventory.css 里给同名类另定数值。
    数值选的是各列内容宽度加内边距后的一个区间，不求穷尽最长值：定宽列里内容短、
    不会换行，略宽一点即够，真正长的取值走 title 悬停展示。 */
-/* SPU 管理页：ID 5 + 名称(余) + SKU 数 5 + 更新时间 12 + 操作 9 */
+/* SPU 管理页：ID 5 + 名称(余) + SKU 数 5 + 更新时间 12 + 操作 12 */
 body[data-page="spus"] .columns-table .col-id { width: 5rem; }
 body[data-page="spus"] .columns-table .col-sku-count { width: 5rem; }
 body[data-page="spus"] .columns-table .col-updated { width: 12rem; }
-body[data-page="spus"] .columns-table .col-actions { width: 9rem; }
+body[data-page="spus"] .columns-table .col-actions { width: 12rem; }
 /* 单品页：ID 5 + 名称(余) + SPU 14 + 库存 6 + 自定义属性(余) + 操作 9 */
 body[data-page="items"] .columns-table .col-id { width: 5rem; }
 body[data-page="items"] .columns-table .col-spu { width: 14rem; }

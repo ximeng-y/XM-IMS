@@ -28,10 +28,11 @@
 
 <div class="panel" id="inventoryPanel">
   <div id="columnsHiddenHint" class="columns-hidden-hint" hidden>
-    表格中的信息列已全部隐藏。<button type="button" class="btn-outline btn-sm" data-open-columns>打开列设置</button>
+    <span data-columns-hidden-text>表格中的信息列已全部隐藏。</span>
+    <button type="button" class="btn-outline btn-sm" data-open-columns>打开列设置</button>
   </div>
   <div class="table-scroll table-scroll-auto" id="inventoryScroll">
-    <table class="columns-table">
+    <table class="columns-table inventory-spu-table">
       <thead id="spuHead"><tr><th class="col-expand"></th><th class="col-id num">ID</th><th class="col-name">名称</th><th class="col-sku-count num">SKU 数</th><th class="col-total num">合计库存</th><th class="col-updated">更新时间</th></tr></thead>
       <tbody id="spuRows"><tr><td colspan="6" class="t-empty">加载中…</td></tr></tbody>
     </table>

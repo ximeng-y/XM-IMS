@@ -1,5 +1,5 @@
 """自定义字段端点"""
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
@@ -28,9 +28,12 @@ def create_field(shop_id: ShopDep, body: FieldCreate, response: Response):
     return fields.create_field(shop_id, body)
 
 
-@router.get("", response_model=FieldList, summary="字段列表（5 个系统字段 + 自定义字段）")
-def list_fields(shop_id: ShopDep):
-    return fields.list_fields(shop_id)
+@router.get("", response_model=FieldList, summary="字段列表（按 SKU/SPU 归属）")
+def list_fields(
+        shop_id: ShopDep,
+        target: Literal["sku", "spu"] = Query(
+            default="sku", description="属性归属；省略时保持原 SKU 列表行为")):
+    return fields.list_fields(shop_id, target)
 
 
 @router.patch("/{field_id}", response_model=FieldOut, summary="字段改名（数据不动）")
@@ -55,12 +58,13 @@ def update_formula(shop_id: ShopDep, field_id: int, body: FieldFormulaIn):
 @router.post("/{field_id}/convert", response_model=None, summary="转换字段结构")
 def convert_field(shop_id: ShopDep, field_id: int, body: FieldConvert) -> Any:
     """转换字段结构，返回转换报告：
-    {description, lossy, affected_items,
-     samples: [{item_id, item_name, old, new}]}，其中 item_id 为单品标识
-    「SPU 号-组内序号」（如 1-2）。
+    SKU 字段返回 affected_items，
+    samples: [{item_id, item_name, old, new}]，其中 item_id 为单品标识
+    「SPU 号-组内序号」（如 1-2）；SPU 字段返回 affected_spus 和
+    samples: [{spu_id, spu_name, old, new}]。
 
     - string/bool 与其他类型互转需 confirm_clear=true（清空全部值）；
-      dry_run=true 时只返回 {requires_clear, affected_items, samples} 作为预览，
+      dry_run=true 时只返回 {requires_clear, affected_*, samples} 作为预览，
       不要求 confirm_clear
     - 有损转换必须带 rounding（ceil/floor/round），缺失返回 400 ROUNDING_REQUIRED
     - dry_run=true 只返回报告不落库

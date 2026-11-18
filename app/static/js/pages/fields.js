@@ -14,8 +14,12 @@ const TYPE_LABEL = {
   decimal: "小数", percent: "百分比",
 };
 const ROUND_LABEL = { ceil: "向上取整", floor: "向下取整", round: "四舍五入" };
+const TARGET_LABEL = { sku: "单品", spu: "SPU" };
 
 const COMPUTED_VALUE = "__computed__";
+let currentTarget = "sku";
+let fieldCache = [];
+let cacheByTarget = { sku: [], spu: [] };
 
 // 计算字段的类型呈现：类型 + 显示位数 + 是否允许负数
 function computedText(f) {
@@ -34,24 +38,19 @@ function typeText(f) {
 function formulaText(f) {
   const tokens = (f.formula && f.formula.tokens) || [];
   if (!tokens.length) return "";
-  const defs = fieldCache;
-  return tokens.map((t) => {
-    if (t.kind === "number") return t.value;
-    if (t.kind === "system") return { qty: "库存数量" }[t.key] || t.key;
-    if (t.kind === "field") {
-      const ref = defs.find((x) => x.uid === t.uid);
-      return ref ? ref.name : "已失效的属性";
-    }
-    return FormulaEditor.SYMBOL_TEXT[t.value] || t.value;
-  }).join(" ");
+  return FormulaEditor.formatTokens(
+    tokens, cacheByTarget.sku.concat(cacheByTarget.spu));
 }
-
-let fieldCache = [];
 
 async function loadFields() {
   const tbody = $("#fieldRows");
   try {
-    const data = await XM.get("/fields");
+    const [skuData, spuData] = await Promise.all([
+      XM.get("/fields?target=sku"),
+      XM.get("/fields?target=spu"),
+    ]);
+    cacheByTarget = { sku: skuData.fields, spu: spuData.fields };
+    const data = { fields: cacheByTarget[currentTarget] };
     fieldCache = data.fields;
     if (!data.fields.length) {
       tbody.innerHTML = `<tr><td colspan="8" class="t-empty">属性列表为空，请刷新页面后重试</td></tr>`;
@@ -116,9 +115,10 @@ async function renameFlow(f) {
 }
 
 function deleteFlow(f) {
+  const objectLabel = f.target === "spu" ? "SPU" : "单品";
   return DeleteFlow.run({
     title: `删除属性「${f.name}」`,
-    bodyHtml: `<p>将删除该属性（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">一并清空所有单品的该属性值</b>，操作不可恢复。</p>`,
+    bodyHtml: `<p>将删除该属性（<b>${typeText(f)}</b>）并<b style="color:var(--danger)">一并清空所有${objectLabel}的该属性值</b>，操作不可恢复。</p>`,
     path: `/fields/${f.id}?confirm=true`,
     okText: (res) => `属性「${res.field.name}」已删除，连带清除 ${res.deleted_values} 个属性值`,
     onDone: loadFields,
@@ -132,8 +132,11 @@ function deleteFlow(f) {
 // 只更新错误区域，不重建编辑器、不关闭对话框。
 function fieldDialog({ field = null, onSaved }) {
   const creating = field === null;
+  const target = creating ? currentTarget : field.target;
   const selfUid = field ? field.uid : null;
-  const others = fieldCache.filter((f) => !f.system && f.uid !== selfUid);
+  const targetFields = cacheByTarget[target] || [];
+  const skuFields = cacheByTarget.sku || [];
+  const others = targetFields.filter((f) => !f.system && f.uid !== selfUid);
   const initials = field && field.formula ? field.formula.tokens : [];
 
   const wrap = document.createElement("div");
@@ -144,8 +147,12 @@ function fieldDialog({ field = null, onSaved }) {
       <div>
         <label>属性名称 <span class="fieldreq">*</span></label>
         <input data-fd-name maxlength="50" value="${UI.esc(field ? field.name : "")}"
-               placeholder="如：成本 / 售价 / 供应商" autocomplete="off"
+               placeholder="如：颜色 / 材质规格" autocomplete="off"
                ${creating ? "" : "readonly"}>
+      </div>
+      <div>
+        <label>属性归属</label>
+        <input value="${TARGET_LABEL[target]}" readonly>
       </div>
       ${creating ? `
       <div>
@@ -229,8 +236,8 @@ function fieldDialog({ field = null, onSaved }) {
     typeEl.addEventListener("change", () => {
       syncMode();
       // 切到数学计算时提示可引用属性；没有可引用属性也能用数字常量与库存数量组公式
-      if (isComputed() && !fieldCache.some((f) => !f.system)) {
-        UI.toast("该店铺还没有可引用的数值属性；公式仍可用数字常量与库存数量组成");
+      if (isComputed() && !targetFields.some((f) => !f.system)) {
+        UI.toast("该归属还没有可引用的数值属性；公式仍可用数字常量与系统属性组成");
       }
     });
   }
@@ -238,7 +245,7 @@ function fieldDialog({ field = null, onSaved }) {
   syncMode();
 
   const editor = FormulaEditor.create({
-    fields: others, excludeUid: selfUid,
+    fields: others, skuFields, excludeUid: selfUid, target,
     tokens: initials, mount: wrap.querySelector("[data-fd-editor]"),
   });
 
@@ -264,7 +271,7 @@ function fieldDialog({ field = null, onSaved }) {
     if (computed) {
       if (editor.isEmpty()) {
         resultBox.innerHTML = UI.warnHtml("公式还是空的",
-          "请加入属性、系统属性、运算符与数字常量，例如：售价 × 库存数量 − 成本。");
+          "请加入属性、系统属性、运算符与数字常量，例如：属性 A × 库存数量。");
         return;
       }
       if (resEl.value !== "int" && (!Number.isInteger(scale) || scale < 0 || scale > 6)) {
@@ -275,21 +282,24 @@ function fieldDialog({ field = null, onSaved }) {
     try {
       let out;
       if (!computed) {
-        const body = { name, type: typeEl.value, allow_negative: negEl.checked && !negEl.disabled };
+        const body = {
+          target, name, type: typeEl.value,
+          allow_negative: negEl.checked && !negEl.disabled,
+        };
         if (typeEl.value === "decimal" && scaleEl.value !== "") body.scale = scale;
         out = await XM.post("/fields", body);
         UI.ok(`属性「${out.name}」（${typeText(out)}）已创建`);
       } else if (creating) {
         out = await XM.post("/fields", {
-          name, type: resEl.value, scale: resEl.value === "int" ? 0 : scale,
+          target, name, type: resEl.value, scale: resEl.value === "int" ? 0 : scale,
           allow_negative: negEl.checked,
-          formula: { version: 1, tokens: editor.getTokens() },
+          formula: { version: editor.version(), tokens: editor.getTokens() },
         });
         UI.ok(`计算属性「${out.name}」已创建（${typeText(out)}）`);
       } else {
         // 编辑公式不改名称（列表里另有「改名」入口）：名称只读展示，提交时只更新公式与结果格式
         out = await XM.put(`/fields/${field.id}/formula`, {
-          formula: { version: 1, tokens: editor.getTokens() },
+          formula: { version: editor.version(), tokens: editor.getTokens() },
           type: resEl.value, scale: resEl.value === "int" ? 0 : scale,
           allow_negative: negEl.checked,
         });
@@ -331,6 +341,9 @@ function formulaFlow(f) {
 // ---------- 结构转换：预览报告 → 用户选择取整/二次确认清空 → 执行 ----------
 function convertFlow(f) {
   let done = false;
+  const objectLabel = f.target === "spu" ? "SPU" : "单品";
+  const affectedCount = (result) => f.target === "spu"
+    ? result.affected_spus : result.affected_items;
   // 已就「清空值」明确警告过的选项签名；选项一变即失效，避免按旧选项二次确认
   let clearAcked = null;
   const wrap = document.createElement("div");
@@ -416,7 +429,7 @@ function convertFlow(f) {
         $("#cvReport", wrap).innerHTML = "";
         $("#cvError", wrap).innerHTML = UI.warnHtml(
           "本次转换存在精度损失，请先选择取整方式",
-          `将影响 ${res.affected_items} 个值；请选择取整方式后重新点击「预览」。`);
+          `将影响 ${affectedCount(res)} 个值；请选择取整方式后重新点击「预览」。`);
         $("#cvRound", wrap).focus();
         return;
       }
@@ -424,9 +437,9 @@ function convertFlow(f) {
       if (res.requires_clear) {
         $("#cvWarn", wrap).innerHTML = UI.warnHtml("转换将清空该属性的全部值",
           `「${TYPE_LABEL[f.type] || f.type}」与目标类型不可互转，` +
-          `${res.affected_items} 个值将被清空；确认无误后点击「执行转换」。`);
+          `${affectedCount(res)} 个值将被清空；确认无误后点击「执行转换」。`);
       }
-      renderReport($("#cvReport", wrap), res, true);
+      renderReport($("#cvReport", wrap), res, true, f);
     } catch (e) {
       $("#cvReport", wrap).innerHTML = "";
       $("#cvError", wrap).innerHTML = UI.apiFailHtml(e);
@@ -441,7 +454,7 @@ function convertFlow(f) {
     const confirmed = clearAcked === opts();
     try {
       const res = await XM.post(`/fields/${f.id}/convert`, body(confirmed));
-      UI.ok(`属性「${f.name}」转换完成`, { title: "FIELD_CONVERTED" });
+      UI.ok(`${objectLabel}属性「${f.name}」转换完成`, { title: "FIELD_CONVERTED" });
       done = true; dlg.close();
       loadFields();
     } catch (e) {
@@ -460,7 +473,12 @@ function convertFlow(f) {
 }
 
 // 转换报告 / 执行结果渲染（预览与正式执行共用结构）
-function renderReport(box, res, isPreview) {
+function renderReport(box, res, isPreview, field) {
+  const target = field.target;
+  const objectLabel = target === "spu" ? "SPU" : "单品";
+  const count = target === "spu" ? res.affected_spus : res.affected_items;
+  const sampleId = (sample) => target === "spu" ? sample.spu_id : sample.item_id;
+  const sampleName = (sample) => target === "spu" ? sample.spu_name : sample.item_name;
   const bits = [];
   bits.push(isPreview || res.dry_run ? `<span class="badge">预览</span>` : `<span class="badge fill">已执行</span>`);
   // 清空类转换没有值换算可言，不做「无损/有损」判定，只标「清空值」
@@ -474,17 +492,17 @@ function renderReport(box, res, isPreview) {
     html += `<div style="margin-top:.4rem">换算方式：${UI.esc(res.description_text)}</div>`;
   }
   if (res.note) html += `<div style="margin-top:.4rem">${UI.esc(res.note)}</div>`;
-  html += `<div style="margin-top:.4rem">受影响单品：<b>${res.affected_items}</b> 个</div>`;
+  html += `<div style="margin-top:.4rem">受影响${objectLabel}：<b>${count}</b> 个</div>`;
 
   if (res.samples && res.samples.length) {
     html += `<table class="mini-table" style="margin-top:.6rem">
-      <thead><tr><th>单品</th><th>旧值</th><th>新值</th></tr></thead><tbody>` +
+      <thead><tr><th>${objectLabel}</th><th>旧值</th><th>新值</th></tr></thead><tbody>` +
       res.samples.map((s) => `
-        <tr><td>${UI.esc(s.item_id)} ${UI.esc(s.item_name)}</td>
+        <tr><td>${UI.esc(sampleId(s))} ${UI.esc(sampleName(s))}</td>
             <td>${UI.fmtVal(s.old)}</td>
             <td>${s.new === null ? `<span class="muted">清空</span>` : UI.fmtVal(s.new)}</td></tr>`).join("") +
       `</tbody></table>`;
-    if (res.affected_items > res.samples.length) {
+    if (count > res.samples.length) {
       html += `<div class="hint">仅展示前 ${res.samples.length} 条样例</div>`;
     }
   } else {
@@ -495,6 +513,16 @@ function renderReport(box, res, isPreview) {
 }
 
 // ---------- 新建属性入口 ----------
+function setTarget(target) {
+  currentTarget = target;
+  $$("[data-field-target]").forEach((button) => {
+    const active = button.dataset.fieldTarget === target;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  loadFields();
+}
+
 export const page = {
   shell: true, shopContext: "required", requireSyncReady: true, autoUpdatePrompt: true,
   async init() {
@@ -503,7 +531,14 @@ export const page = {
     $("#btnNewField").addEventListener("click", () => {
       fieldDialog({ onSaved: () => loadFields() });
     });
+    $$("[data-field-target]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.dataset.fieldTarget !== currentTarget) {
+          setTarget(button.dataset.fieldTarget);
+        }
+      });
+    });
 
-    await loadFields();
+    setTarget(currentTarget);
   },
 };

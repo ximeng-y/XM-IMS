@@ -47,13 +47,15 @@ def _type_hint_error(t: str) -> ApiError:
 
 
 def _formula_out(tokens) -> dict | None:
-    return None if not tokens else {"version": formulas.VERSION, "tokens": tokens}
+    return None if not tokens else {
+        "version": formulas.version_of(tokens), "tokens": tokens}
 
 
 def _out(defn: dict, dry_run: bool = False, field_id=None, uid=None) -> dict:
     """字段定义 → API 呈现（普通字段与计算字段共用）"""
     computed = bool(defn.get("formula"))
-    out = {"system": False, "id": defn.get("id", field_id), "uid": defn.get("uid", uid),
+    out = {"system": False, "target": defn.get("target", "sku"),
+           "id": defn.get("id", field_id), "uid": defn.get("uid", uid),
            "name": defn["name"], "type": defn["type"], "readonly": computed,
            "allow_negative": bool(defn["allow_negative"]), "scale": defn["scale"],
            "formula": _formula_out(defn.get("formula")), "computed": computed,
@@ -65,8 +67,9 @@ def _field_out(row) -> dict:
     return _out(fields.definition_from_row(row))
 
 
-def _target_def(field_id: int, name: str, t: str, s: int, neg: bool) -> dict:
-    return {"system": False, "id": field_id, "uid": None, "name": name, "type": t,
+def _target_def(field_id: int, name: str, t: str, s: int, neg: bool,
+                target: str = "sku") -> dict:
+    return {"system": False, "target": target, "id": field_id, "uid": None, "name": name, "type": t,
             "readonly": False, "allow_negative": neg, "scale": s, "formula": None,
             "computed": False}
 
@@ -76,15 +79,18 @@ def _def_str(t: str, s: int, neg: bool) -> str:
     return out + ("，允许负数" if neg else "")
 
 
-def _ensure_name_free(conn, name: str) -> None:
-    if name in fields.RESERVED_NAMES:
+def _ensure_name_free(conn, name: str, target: str = "sku") -> None:
+    reserved = fields.RESERVED_NAMES[target]
+    label = fields.TARGET_LABELS[target]
+    if name in reserved:
         raise ApiError("FIELD_NAME_EXISTS", f"字段名「{name}」与系统字段重名",
-                       hint=f"系统字段（保留名）：{'、'.join(sorted(fields.RESERVED_NAMES))}", status=409,
+                       hint=f"{label}系统字段（保留名）：{'、'.join(sorted(reserved))}", status=409,
                        user_message=f"字段名「{name}」与系统字段重名",
-                       user_hint=f"系统字段（保留名）：{'、'.join(sorted(fields.RESERVED_NAMES))}")
-    if conn.execute("SELECT id FROM custom_fields WHERE name = ?", (name,)).fetchone():
-        raise ApiError("FIELD_NAME_EXISTS", f"字段「{name}」已存在", status=409,
-                       user_message=f"字段「{name}」已存在",
+                       user_hint=f"{label}系统字段（保留名）：{'、'.join(sorted(reserved))}")
+    if conn.execute("SELECT id FROM custom_fields WHERE target = ? AND name = ?",
+                    (target, name)).fetchone():
+        raise ApiError("FIELD_NAME_EXISTS", f"{label}字段「{name}」已存在", status=409,
+                       user_message=f"{label}字段「{name}」已存在",
                        user_hint="请换一个字段名称")
 
 
@@ -98,12 +104,19 @@ def _not_found(field_id: int) -> ApiError:
 def _tokens(formula_in) -> list:
     """请求里的公式对象 → 规范化 token 列表（语法校验在 parse 中完成）"""
     result = formulas.parse([t.model_dump() for t in formula_in.tokens])
+    expected = formulas.version_of(result.tokens)
+    if formula_in.version != expected:
+        raise formulas._invalid(
+            f"公式版本与内容不匹配：版本 {formula_in.version}，内容应为版本 {expected}",
+            hint="不含聚合的公式使用版本 1；包含「对子 SKU 求和」的公式使用版本 2",
+            user_message="公式版本与当前内容不一致",
+            user_hint="请关闭窗口后重新打开公式编辑器再保存")
     return result.tokens
 
 
 def _referenced_defs(conn, uid: str) -> list:
     """返回引用了该字段的计算字段名（删除与类型转换的依赖保护）"""
-    defs = fields.load_definitions(conn)
+    defs = fields.load_definitions(conn, target=None)
     parsed = {d["uid"]: formulas.parse(d["formula"]) for d in defs if d["formula"]}
     names = {d["uid"]: d["name"] for d in defs}
     return sorted(names[other] for other in formulas.dependents(parsed, uid))
@@ -119,15 +132,19 @@ def _guard_referenced(conn, row) -> None:
                        user_hint="请先修改这些计算字段的公式，去掉对该字段的引用")
 
 
-def list_fields(shop_id: int) -> dict:
+def list_fields(shop_id: int, target: str = "sku") -> dict:
+    target = fields.validate_target(target)
     d = db.shop_db(shop_id)
     with d.lock:
-        rows = d.conn.execute("SELECT * FROM custom_fields ORDER BY id").fetchall()
-    return {"fields": [dict(f) for f in fields.SYSTEM_FIELDS] + [_field_out(r) for r in rows]}
+        rows = d.conn.execute(
+            "SELECT * FROM custom_fields WHERE target = ? ORDER BY id", (target,)).fetchall()
+    return {"fields": [dict(f) for f in fields.SYSTEM_FIELDS_BY_TARGET[target]]
+            + [_field_out(r) for r in rows]}
 
 
 def create_field(shop_id: int, body) -> dict:
     """创建普通字段或数学计算字段（带 dry_run 时只校验，不落库）"""
+    target = fields.validate_target(body.target)
     name = body.name.strip()
     if not name:
         raise ApiError("FIELD_NAME_INVALID", "字段名不能为空白", status=400)
@@ -159,14 +176,16 @@ def create_field(shop_id: int, body) -> dict:
     d = db.shop_db(shop_id)
     ts = now_iso()
     with d.lock, d.conn:
-        _ensure_name_free(d.conn, name)
+        _ensure_name_free(d.conn, name, target)
         cur = d.conn.execute(
-            "INSERT INTO custom_fields (sync_uid, name, type, allow_negative, scale, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (db.new_uid(), name, type_, int(body.allow_negative), scale, ts, ts))
+            "INSERT INTO custom_fields "
+            "(sync_uid, target, name, type, allow_negative, scale, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (db.new_uid(), target, name, type_, int(body.allow_negative), scale, ts, ts))
         field_id = cur.lastrowid
         db.write_audit(d.conn, "field_create", "field", field_id,
-                       {"name": name, "type": type_, "allow_negative": body.allow_negative,
+                       {"name": name, "target": target, "type": type_,
+                        "allow_negative": body.allow_negative,
                         "scale": scale})
         row = d.conn.execute("SELECT * FROM custom_fields WHERE id = ?", (field_id,)).fetchone()
     return _field_out(row)
@@ -174,30 +193,34 @@ def create_field(shop_id: int, body) -> dict:
 
 def _create_computed(shop_id: int, name: str, body) -> dict:
     """创建数学计算字段：先做语法、引用与完整依赖图校验，再落库"""
+    target = fields.validate_target(body.target)
     tokens = _tokens(body.formula)
     t = body.type
     if t not in COMPUTED_TYPES:
         raise _type_hint_error(t)
     scale = _computed_scale(t, body.scale, 2)
-    defn = {"id": None, "uid": "", "name": name, "type": t, "scale": scale,
+    defn = {"id": None, "uid": "", "target": target, "name": name, "type": t, "scale": scale,
             "allow_negative": bool(body.allow_negative), "formula": tokens}
 
     d = db.shop_db(shop_id)
     with d.lock, d.conn:
-        _ensure_name_free(d.conn, name)
-        defs = fields.load_definitions(d.conn)
+        _ensure_name_free(d.conn, name, target)
+        defs = fields.load_definitions(d.conn, target=None)
         formulas.check(defs, defn)
         if body.dry_run:
             return _out(defn, dry_run=True)
         formula_json = formulas.dump(tokens)
         ts = now_iso()
         cur = d.conn.execute(
-            "INSERT INTO custom_fields (sync_uid, name, type, allow_negative, scale, "
-            "created_at, updated_at, formula_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (db.new_uid(), name, t, int(defn["allow_negative"]), scale, ts, ts, formula_json))
+            "INSERT INTO custom_fields "
+            "(sync_uid, target, name, type, allow_negative, scale, created_at, updated_at, formula_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (db.new_uid(), target, name, t, int(defn["allow_negative"]), scale, ts, ts,
+             formula_json))
         field_id = cur.lastrowid
         db.write_audit(d.conn, "field_create", "field", field_id,
-                       {"name": name, "type": t, "allow_negative": defn["allow_negative"],
+                       {"name": name, "target": target, "type": t,
+                        "allow_negative": defn["allow_negative"],
                         "scale": scale, "formula": tokens})
         row = d.conn.execute("SELECT * FROM custom_fields WHERE id = ?", (field_id,)).fetchone()
     return _field_out(row)
@@ -225,10 +248,12 @@ def update_formula(shop_id: int, field_id: int, body) -> dict:
         # 小数与百分比缺省沿用当前精度（含从整数切换时的 0），整数恒为 0
         s2 = _computed_scale(t2, body.scale, row["scale"])
         neg2 = bool(row["allow_negative"]) if body.allow_negative is None else body.allow_negative
-        defn = {"id": field_id, "uid": row["sync_uid"], "name": row["name"], "type": t2,
+        defn = {"id": field_id, "uid": row["sync_uid"], "target": row["target"],
+                "name": row["name"], "type": t2,
                 "scale": s2, "allow_negative": neg2, "formula": tokens}
 
-        defs = [x for x in fields.load_definitions(d.conn) if x["uid"] != row["sync_uid"]]
+        defs = [x for x in fields.load_definitions(d.conn, target=None)
+                if x["uid"] != row["sync_uid"]]
         formulas.check(defs, defn)
         formula_json = formulas.dump(tokens)
         unchanged = (formula_json == row["formula_json"] and t2 == row["type"]
@@ -263,7 +288,7 @@ def rename_field(shop_id: int, field_id: int, name: str) -> dict:
                            user_message=f"字段 {field_id} 不存在",
                            user_hint="该字段可能已被删除，请刷新页面后重试")
         if row["name"] != name:
-            _ensure_name_free(d.conn, name)
+            _ensure_name_free(d.conn, name, row["target"])
             d.conn.execute("UPDATE custom_fields SET name = ?, updated_at = ? WHERE id = ?",
                            (name, now_iso(), field_id))
             db.write_audit(d.conn, "field_rename", "field", field_id,
@@ -275,10 +300,10 @@ def rename_field(shop_id: int, field_id: int, name: str) -> dict:
 def delete_field(shop_id: int, field_id: int, confirm: bool) -> dict:
     if not confirm:
         raise ApiError("CONFIRM_REQUIRED", "删除字段需要显式确认",
-                       hint="删除将同时清空所有单品的该字段值且不可恢复；确认请附带 ?confirm=true",
+                       hint="删除将同时清空所有对象的该字段值且不可恢复；确认请附带 ?confirm=true",
                        status=400,
                        user_message="删除字段需要再次确认",
-                       user_hint="删除会同时清空所有单品的该字段值且不可恢复，"
+                       user_hint="删除会同时清空该属性的全部值且不可恢复，"
                                  "请在确认框中确认删除")
     d = db.shop_db(shop_id)
     with d.lock, d.conn:
@@ -287,12 +312,15 @@ def delete_field(shop_id: int, field_id: int, confirm: bool) -> dict:
             raise _not_found(field_id)
         # 公式按稳定标识引用字段，删除被引用的字段会让公式失去可计算性
         _guard_referenced(d.conn, row)
+        spec = fields.VALUE_TABLES[row["target"]]
         deleted_values = d.conn.execute(
-            "SELECT COUNT(*) FROM custom_values WHERE field_id = ?", (field_id,)).fetchone()[0]
+            f"SELECT COUNT(*) FROM {spec['table']} WHERE field_id = ?",
+            (field_id,)).fetchone()[0]
         # custom_values 经外键 ON DELETE CASCADE 一并删除
         d.conn.execute("DELETE FROM custom_fields WHERE id = ?", (field_id,))
         db.write_audit(d.conn, "field_delete", "field", field_id,
-                       {"name": row["name"], "type": row["type"], "deleted_values": deleted_values}, entity_uid=row["sync_uid"])
+                       {"name": row["name"], "target": row["target"], "type": row["type"],
+                        "deleted_values": deleted_values}, entity_uid=row["sync_uid"])
     return {"deleted": True, "field": _field_out(row), "deleted_values": deleted_values}
 
 
@@ -350,15 +378,28 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
                            user_message="转换目标与当前结构相同",
                            user_hint="如需转换，请选择不同的目标类型、小数位或负数设置")
 
-        # 取全部现存值（含单品标识，供报告与审计）；对外一律用「SPU 号-组内序号」
-        value_rows = d.conn.execute(
-            "SELECT v.item_id, v.value_int, v.value_text, i.name AS item_name, i.spu_id, i.seq "
-            "FROM custom_values v JOIN items i ON i.id = v.item_id "
-            "WHERE v.field_id = ? ORDER BY i.spu_id, i.seq", (field_id,)).fetchall()
+        target = row["target"]
+        table = fields.VALUE_TABLES[target]["table"]
+        count_key = "affected_items" if target == "sku" else "affected_spus"
+        if target == "sku":
+            value_rows = d.conn.execute(
+                "SELECT v.item_id AS entity_id, v.value_int, v.value_text, "
+                "i.name AS entity_name, i.spu_id, i.seq "
+                "FROM custom_values v JOIN items i ON i.id = v.item_id "
+                "WHERE v.field_id = ? ORDER BY i.spu_id, i.seq", (field_id,)).fetchall()
+        else:
+            value_rows = d.conn.execute(
+                "SELECT v.spu_id AS entity_id, v.value_int, v.value_text, "
+                "s.name AS entity_name FROM spu_custom_values v "
+                "JOIN spus s ON s.id = v.spu_id "
+                "WHERE v.field_id = ? ORDER BY s.id", (field_id,)).fetchall()
 
-        def sample(row, old, new) -> dict:
-            return {"item_id": format_item_ref(row["spu_id"], row["seq"]),
-                    "item_name": row["item_name"], "old": old, "new": new}
+        def sample(value_row, old, new) -> dict:
+            if target == "spu":
+                return {"spu_id": value_row["entity_id"],
+                        "spu_name": value_row["entity_name"], "old": old, "new": new}
+            return {"item_id": format_item_ref(value_row["spu_id"], value_row["seq"]),
+                    "item_name": value_row["entity_name"], "old": old, "new": new}
 
         def stored_value(row):
             return row["value_int"] if row["value_int"] is not None else row["value_text"]
@@ -367,13 +408,16 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
         if not neg2:
             neg_rows = [r for r in value_rows if (r["value_int"] or 0) < 0]
             if neg_rows:
-                neg_items = "、".join(r["item_name"] for r in neg_rows[:3])
+                neg_items = "、".join(r["entity_name"] for r in neg_rows[:3])
+                object_name = fields.TARGET_LABELS[target]
                 raise ApiError("NEGATIVE_VALUES_EXIST",
                                f"字段「{row['name']}」存在 {len(neg_rows)} 个负值，无法关闭允许负数",
-                               hint=f"负值所在单品：{neg_items}；请先修正这些值再转换", status=409,
+                               hint=f"负值所在{object_name}：{neg_items}；请先修正这些值再转换",
+                               status=409,
                                user_message=f"字段「{row['name']}」存在 {len(neg_rows)} 个负值，"
                                             "无法关闭允许负数",
-                               user_hint=f"负值所在单品：{neg_items}；请先修正这些值再转换")
+                               user_hint=f"负值所在{object_name}：{neg_items}；"
+                                         "请先修正这些值再转换")
 
         kind = fieldtypes.conversion_kind(t1, s1, t2, s2)
 
@@ -388,8 +432,8 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
             for r in value_rows[:5]:
                 old = fieldtypes.decode(t1, s1, stored_value(r))
                 samples.append(sample(r, old, old))
-            result = {"field": _target_def(field_id, row["name"], t2, s2, neg2),
-                      "converted": False, "affected_items": len(value_rows),
+            result = {"field": _target_def(field_id, row["name"], t2, s2, neg2, target),
+                      "converted": False, count_key: len(value_rows),
                       "samples": samples,
                       "note": "仅更新了允许负数，字段值不变"}
             if dry_run:
@@ -397,6 +441,7 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
             _update_def(d.conn, field_id, t2, s2, neg2)
             db.write_audit(d.conn, "field_convert", "field", field_id,
                            {"name": row["name"], "only": "allow_negative",
+                            "target": target,
                             "from": _def_str(t1, s1, neg1), "to": _def_str(t2, s2, neg2)})
             return result
 
@@ -407,8 +452,8 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
                        for r in value_rows[:5]]
             if dry_run:
                 return {"dry_run": True, "requires_clear": True,
-                        "affected_items": len(value_rows), "samples": samples,
-                        "field": _target_def(field_id, row["name"], t2, s2, neg2)}
+                        count_key: len(value_rows), "samples": samples,
+                        "field": _target_def(field_id, row["name"], t2, s2, neg2, target)}
             if not confirm_clear:
                 raise ApiError("CONVERT_REQUIRES_CLEAR",
                                f"「{t1}」与「{t2}」不可互转，转换将清空字段「{row['name']}」"
@@ -420,13 +465,13 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
                                             f"{len(value_rows)} 个值",
                                user_hint="该操作会清空字段的全部值且不可恢复；"
                                          "确认无误请再次点击「执行转换」")
-            d.conn.execute("DELETE FROM custom_values WHERE field_id = ?", (field_id,))
+            d.conn.execute(f"DELETE FROM {table} WHERE field_id = ?", (field_id,))
             _update_def(d.conn, field_id, t2, s2, neg2)
             db.write_audit(d.conn, "field_convert", "field", field_id,
-                           {"name": row["name"], "from": _def_str(t1, s1, neg1),
+                           {"name": row["name"], "target": target, "from": _def_str(t1, s1, neg1),
                             "to": _def_str(t2, s2, neg2), "cleared_values": len(value_rows)})
-            return {"field": _target_def(field_id, row["name"], t2, s2, neg2),
-                    "cleared": True, "affected_items": len(value_rows), "samples": samples}
+            return {"field": _target_def(field_id, row["name"], t2, s2, neg2, target),
+                    "cleared": True, count_key: len(value_rows), "samples": samples}
 
         # 数值类转换：逻辑值不变，存储值 ×10^(k2-k1)
         k1, k2 = kind[1], kind[2]
@@ -445,8 +490,8 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
                 return {"dry_run": True, "lossy": True, "rounding_required": True,
                         "description": _describe(k1, k2),
                         "description_text": _describe_text(k1, k2),
-                        "affected_items": len(converted), "samples": samples,
-                        "field": _target_def(field_id, row["name"], t2, s2, neg2)}
+                        count_key: len(converted), "samples": samples,
+                        "field": _target_def(field_id, row["name"], t2, s2, neg2, target)}
             raise ApiError("ROUNDING_REQUIRED", "本次转换存在精度损失，必须指定取整方式",
                            hint="rounding 可选：ceil（向上）/ floor（向下）/ round（四舍五入）",
                            status=400,
@@ -458,21 +503,23 @@ def convert_field(shop_id: int, field_id: int, new_type: str | None, new_scale: 
                    for r, n, new_n in converted[:5]]
         result = {"description": _describe(k1, k2), "description_text": _describe_text(k1, k2),
                   "lossy": lossy,
-                  "affected_items": len(converted), "samples": samples,
-                  "field": _target_def(field_id, row["name"], t2, s2, neg2)}
+                  count_key: len(converted), "samples": samples,
+                  "field": _target_def(field_id, row["name"], t2, s2, neg2, target)}
         if rounding is not None:
             result["rounding"] = rounding
         if dry_run:
             return {"dry_run": True, **result}
+        entity_column = fields.VALUE_TABLES[target]["entity_column"]
         for r, n, new_n in converted:
-            d.conn.execute("UPDATE custom_values SET value_int = ? "
-                           "WHERE item_id = ? AND field_id = ?", (new_n, r["item_id"], field_id))
+            d.conn.execute(f"UPDATE {table} SET value_int = ? "
+                           f"WHERE {entity_column} = ? AND field_id = ?",
+                           (new_n, r["entity_id"], field_id))
         _update_def(d.conn, field_id, t2, s2, neg2)
         db.write_audit(d.conn, "field_convert", "field", field_id,
-                       {"name": row["name"], "from": _def_str(t1, s1, neg1),
+                       {"name": row["name"], "target": target, "from": _def_str(t1, s1, neg1),
                         "to": _def_str(t2, s2, neg2),
                         "rounding": rounding if lossy else None,
-                        "lossy": lossy, "affected_items": len(converted)})
+                        "lossy": lossy, count_key: len(converted)})
         return {"converted": True, **result}
 
 

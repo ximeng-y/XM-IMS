@@ -11,7 +11,8 @@ entity_id 与 detail 原文保持不可变，本次编号变化另记于 sync_me
   （NULL = 普通手填字段；非空 = 公式对象的规范 JSON）。
   仅计算字段使用 decimal/percent 结果类型，不向 type 的 CHECK 增加 formula 项。
   计算字段不落 custom_values 行。
-SHOP_DDL_V3 保留为已知旧快照的校验依据，当前 SHOP_DDL 即 v4。
+- v5：自定义字段增加 sku/spu 归属，字段名按归属唯一；新增 SPU 值表。
+SHOP_DDL_V3 / SHOP_DDL_V4 保留为已知旧快照的校验依据，当前 SHOP_DDL 即 v5。
 """
 
 INDEX_DDL = """
@@ -101,8 +102,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 """
 
-# 当前店铺库模板（v4）：与 v3 的唯一差别是 custom_fields 末尾的 formula_json
-SHOP_DDL = SHOP_DDL_V3.replace(
+# v4：与 v3 的唯一差别是 custom_fields 末尾的 formula_json
+SHOP_DDL_V4 = SHOP_DDL_V3.replace(
     """  scale INTEGER NOT NULL DEFAULT 2,            -- 仅 decimal 用，0~6
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -112,3 +113,48 @@ SHOP_DDL = SHOP_DDL_V3.replace(
   updated_at TEXT NOT NULL,
   formula_json TEXT           -- NULL = 普通手填字段；非空 = 计算字段的公式对象 JSON
 );""")
+
+
+def _shop_v5(script: str) -> str:
+    """把 v4 模板中字段定义与 SKU 值表升级到 v5，其他表原样保留。"""
+    script = script.replace(
+        """  sync_uid TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL CHECK (type IN ('string','bool','int','decimal','percent')),
+  allow_negative INTEGER NOT NULL DEFAULT 0,   -- 仅数值类可为 1
+  scale INTEGER NOT NULL DEFAULT 2,            -- 仅 decimal 用，0~6；计算字段表示显示位数
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  formula_json TEXT           -- NULL = 普通手填字段；非空 = 计算字段的公式对象 JSON
+);""",
+        """  sync_uid TEXT NOT NULL UNIQUE,
+  target TEXT NOT NULL DEFAULT 'sku' CHECK (target IN ('sku','spu')),
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('string','bool','int','decimal','percent')),
+  allow_negative INTEGER NOT NULL DEFAULT 0,   -- 仅数值类可为 1
+  scale INTEGER NOT NULL DEFAULT 2,            -- 仅 decimal 用，0~6；计算字段表示显示位数
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  formula_json TEXT,          -- NULL = 普通手填字段；非空 = 计算字段的公式对象 JSON
+  UNIQUE (target, name)
+);""")
+    script = script.replace(
+        """CREATE INDEX IF NOT EXISTS idx_values_field ON custom_values(field_id);
+""",
+        """CREATE INDEX IF NOT EXISTS idx_values_field ON custom_values(field_id);
+
+-- SPU 自己的普通属性值；计算字段同样不落库
+CREATE TABLE IF NOT EXISTS spu_custom_values (
+  spu_id INTEGER NOT NULL REFERENCES spus(id),
+  field_id INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
+  value_int INTEGER,
+  value_text TEXT,
+  PRIMARY KEY (spu_id, field_id)
+);
+CREATE INDEX IF NOT EXISTS idx_spu_values_field ON spu_custom_values(field_id);
+""")
+    return script
+
+
+# 当前店铺库模板（v5）
+SHOP_DDL = _shop_v5(SHOP_DDL_V4)
