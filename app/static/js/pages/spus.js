@@ -5,52 +5,80 @@ import { XM } from "xm/api";
 import { UI, $, $$ } from "xm/ui";
 import { ShopContext } from "xm/shop-context";
 import { DeleteFlow } from "xm/components/delete-flow";
-import { ItemForm } from "xm/components/item-form";
+import { SpuForm } from "xm/components/spu-form";
+import { AttributeValuesForm } from "xm/components/attribute-values-form";
 import { ViewSettings } from "xm/runtime/view-settings";
 
 // 列的语义标识与位置无关：列顺序和隐藏状态由列设置按店铺保存，
 // 表头与每一行都按同一份可见列顺序渲染，列宽也只认列标识，不认「第几列」
-const COLUMNS = [
-  { key: "id", label: "ID", cls: "col-id", headCls: "num" },
-  { key: "name", label: "名称", cls: "col-name" },
-  { key: "sku_count", label: "SKU 数", cls: "col-sku-count", headCls: "num" },
-  { key: "updated_at", label: "更新时间", cls: "col-updated" },
-  // 操作是交互控件：可以排序，不提供隐藏
-  { key: "actions", label: "操作", cls: "col-actions", control: true },
-];
-
-const CELLS = {
-  id: (s) => `<td class="num mono">${s.id}</td>`,
-  name: (s) => `<td title="${UI.esc(s.name)}">${UI.esc(s.name)}</td>`,
-  sku_count: (s) => `<td class="num">${s.sku_count}</td>`,
-  updated_at: (s) => `<td class="muted">${UI.esc(UI.fmtTime(s.updated_at))}</td>`,
-  actions: (s) => `<td class="row-actions">
-      <button type="button" class="btn-outline btn-sm" data-rename="${s.id}" data-name="${UI.esc(s.name)}">改名</button>
-      <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${s.id}" data-name="${UI.esc(s.name)}" data-count="${s.sku_count}">删除</button>
-    </td>`,
-};
-
+let spuFieldsMeta = [];
 let rows = null;      // 最近一次加载的列表；null 表示还没拿到数据
 let errorText = "";   // 加载失败的文案
 
+function columns() {
+  return [
+    { key: "id", label: "ID", cls: "col-id", headCls: "num" },
+    { key: "name", label: "名称", cls: "col-name" },
+    { key: "sku_count", label: "SKU 数", cls: "col-sku-count", headCls: "num" },
+    ...spuFieldsMeta.map((field) => ({
+      key: `spu-field:${field.uid}`, label: field.name,
+      cls: "col-field col-spu-field", field,
+    })),
+    { key: "updated_at", label: "更新时间", cls: "col-updated" },
+    // 操作是交互控件：可以排序，不提供隐藏
+    { key: "actions", label: "操作", cls: "col-actions", control: true },
+  ];
+}
+
 const settings = ViewSettings.create({
   view: "spus",
-  columns: COLUMNS,
+  columns,
   // 列设置变化（含首次载入）后立即按新顺序与可见性重画表格
   onApply: () => render(),
 });
 
 function headHtml(keys) {
+  const cols = columns();
   return "<tr>" + keys.map((key) => {
-    const col = COLUMNS.find((c) => c.key === key);
+    const col = cols.find((c) => c.key === key);
     const cls = [col.headCls, col.cls].filter(Boolean).join(" ");
     return `<th class="${cls}">${UI.esc(col.label)}</th>`;
   }).join("") + "</tr>";
 }
 
+function fieldCellHtml(field, spu) {
+  if (AttributeValuesForm.isComputed(field)) {
+    const calc = spu.calculations?.[field.name];
+    const full = calc && !calc.error ? calc.display : "";
+    return `<td${full ? ` title="${UI.esc(full)}"` : ""}>${AttributeValuesForm.calcHtml(calc)}</td>`;
+  }
+  const value = spu.values?.[field.name];
+  const text = value === null || value === undefined || value === "" ? "" : String(value);
+  return `<td${text ? ` title="${UI.esc(text)}"` : ""}>${UI.fmtVal(value)}</td>`;
+}
+
+function cellHtml(col, spu) {
+  switch (col.key) {
+    case "id": return `<td class="num mono">${spu.id}</td>`;
+    case "name": return `<td title="${UI.esc(spu.name)}">${UI.esc(spu.name)}</td>`;
+    case "sku_count": return `<td class="num">${spu.sku_count}</td>`;
+    case "updated_at": return `<td class="muted">${UI.esc(UI.fmtTime(spu.updated_at))}</td>`;
+    case "actions": return `<td class="row-actions">
+        <button type="button" class="btn-outline btn-sm" data-edit="${spu.id}">编辑</button>
+        <button type="button" class="btn-outline btn-sm" data-rename="${spu.id}" data-name="${UI.esc(spu.name)}">改名</button>
+        <button type="button" class="btn-outline btn-sm btn-danger-outline" data-del="${spu.id}" data-name="${UI.esc(spu.name)}" data-count="${spu.sku_count}">删除</button>
+      </td>`;
+    default: return col.field
+      ? fieldCellHtml(col.field, spu)
+      : `<td class="muted">—</td>`;
+  }
+}
+
 function render() {
   const keys = settings.visible();
   const tbody = $("#spuRows");
+  const cols = columns();
+  const byKey = new Map(cols.map((col) => [col.key, col]));
   $("#spuHead").innerHTML = headHtml(keys);
   // 全部信息列都隐藏时给出页面级提示；操作列始终保留，恢复入口不会消失
   $("#columnsHiddenHint").hidden = settings.infoVisible();
@@ -68,20 +96,36 @@ function render() {
   }
   tbody.innerHTML = rows.map((s) =>
     `<tr class="spu-row" data-spu="${s.id}">` +
-    keys.map((key) => CELLS[key](s)).join("") + "</tr>").join("");
+    keys.map((key) => cellHtml(byKey.get(key), s)).join("") + "</tr>").join("");
+  $$("button[data-edit]", tbody).forEach((b) => b.addEventListener("click", editFlow));
   $$("button[data-rename]", tbody).forEach((b) => b.addEventListener("click", renameFlow));
   $$("button[data-del]", tbody).forEach((b) => b.addEventListener("click", deleteFlow));
 }
 
 async function loadSpus() {
   try {
-    rows = (await XM.get("/spus")).spus;
+    const [spus, fields] = await Promise.all([
+      XM.get("/spus"),
+      XM.get("/fields?target=spu"),
+    ]);
+    spuFieldsMeta = fields.fields.filter((field) => !field.system);
+    rows = spus.spus;
     errorText = "";
   } catch (e) {
     rows = null;
     errorText = e.message;
   }
   render();
+}
+
+function editFlow(ev) {
+  const id = Number(ev.currentTarget.dataset.edit);
+  const spu = rows?.find((item) => item.id === id);
+  if (!spu) {
+    UI.fail("该 SPU 可能已被删除，请刷新页面后重试");
+    return;
+  }
+  return SpuForm.openEdit({ spu, fields: spuFieldsMeta, onSaved: loadSpus });
 }
 
 async function renameFlow(ev) {
@@ -144,7 +188,7 @@ export const page = {
 
     // 新建入口复用共享组件：成功提示由组件给出，这里只按返回值决定是否刷新列表
     $("#btnNewSpu").addEventListener("click", async () => {
-      if (await ItemForm.openCreateSpu()) loadSpus();
+      if (await SpuForm.openCreate({ fields: spuFieldsMeta })) loadSpus();
     });
 
     // 先取回本页已保存的列设置并应用，首次渲染就是用户上次的顺序

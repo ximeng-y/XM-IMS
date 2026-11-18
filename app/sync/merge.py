@@ -12,12 +12,18 @@ from . import snapshot
 from .common import fail
 from ..storage.files import read_json, dump
 
-REFERENCES = {"items": {"spu_id": "spus"}, "custom_values": {"item_id": "items", "field_id": "custom_fields"},
-              "movements": {"item_id": "items"}}
+REFERENCES = {
+    "items": {"spu_id": "spus"},
+    "custom_values": {"item_id": "items", "field_id": "custom_fields"},
+    "spu_custom_values": {"spu_id": "spus", "field_id": "custom_fields"},
+    "movements": {"item_id": "items"},
+}
+VALUE_TABLES = {"custom_values": "item_id", "spu_custom_values": "spu_id"}
 TECHNICAL = {"_id", "sync_uid", "created_at", "updated_at"}
 # 计算字段的完整定义单元：公式与结果格式必须整体取用，不能跨版本拼装
-DEFINITION_FIELDS = ("type", "scale", "allow_negative", "formula_json")
-SYSTEM_LABEL = {"qty": "库存数量", "spu_id": "SPU ID"}
+DEFINITION_FIELDS = ("target", "type", "scale", "allow_negative", "formula_json")
+SYSTEM_LABEL = {"qty": "库存数量", "total_qty": "合计库存",
+                "sku_count": "SKU 数", "spu_id": "SPU ID"}
 
 
 def load(root):
@@ -26,20 +32,33 @@ def load(root):
     for database in manifest["databases"]:
         key = database["key"]
         meta = read_json(Path(root) / key / "schema.json")
+        version = int(meta["user_version"])
         metas[key] = meta
         tables = {t: list(snapshot.iter_rows(root, key, t)) for t in meta["tables"]}
-        mappings = {t: {r["id"]: r["sync_uid"] for r in data} for t, data in tables.items() if t != "custom_values"}
+        mappings = {t: {r["id"]: r["sync_uid"] for r in data}
+                    for t, data in tables.items() if t not in VALUE_TABLES}
         for table, data in tables.items():
             for original in data:
                 row = dict(original)
-                # v3 快照没有 formula_json 列：只补成 NULL，避免「缺键」与「NULL」被当成业务修改
-                if table == "custom_fields" and "formula_json" not in row:
-                    row["formula_json"] = None
+                if table == "custom_fields":
+                    if version in (3, 4):
+                        row.setdefault("formula_json", None)
+                        row.setdefault("target", "sku")
+                    elif "target" not in row or "formula_json" not in row:
+                        fail("SNAPSHOT_INVALID", "v5 字段定义缺少必要列",
+                             user_message="字段定义的同步数据不完整",
+                             user_hint="请在另一台设备上重新同步一次")
                 if "id" in row:
                     row["_id"] = row.pop("id")
                 for column, target in REFERENCES.get(table, {}).items():
                     row[column] = mappings[target][row[column]]
-                uid = row.get("sync_uid") or row["item_id"] + ":" + row["field_id"]
+                uid = row.get("sync_uid") or (
+                    row[VALUE_TABLES[table]] + ":" + row["field_id"]
+                    if table in VALUE_TABLES else None)
+                if uid is None:
+                    fail("SNAPSHOT_INVALID", "记录缺少稳定标识",
+                         user_message="同步数据中有记录缺少标识",
+                         user_hint="请在另一台设备上重新同步一次")
                 rows[key + "/" + table + "/" + uid] = row
     return {"manifest": manifest, "rows": rows, "metas": metas}
 
@@ -154,7 +173,11 @@ class Merger:
             b, l, r = [s.get(key) for s in sides]
             uid = key.rsplit("/", 1)[1]
             dbkey = key.split("/")[0]
-            related = [k for k in keys if k.startswith(dbkey + "/custom_values/") and k.endswith(":" + uid)]
+            related = [
+                k for k in keys
+                if any(k.startswith(dbkey + "/" + table + "/") for table in VALUE_TABLES)
+                and k.endswith(":" + uid)
+            ]
             definition = lambda row: None if row is None else tuple(row[f] for f in DEFINITION_FIELDS)
             defs = [definition(x) for x in (b, l, r)]
             values = [{k: s.get(k) for k in related} for s in sides]
@@ -206,7 +229,7 @@ class Merger:
                         placement = self.conflict(key, "$placement", placements, "placement")
                     merged.update(placement)
                     fields -= {"spu_id", "seq"}
-                if table == "custom_values":
+                if table in VALUE_TABLES:
                     vals = [{f: row[f] for f in ("value_int", "value_text")} for row in (b, l, r)]
                     value, conflict = three(*vals)
                     if conflict:
@@ -314,12 +337,16 @@ class Merger:
         shop = find("index/shops/" + database).get("name", "全局")
         row = find(key)
         name = row.get("name")
-        if table == "custom_values":
-            item, field = uid.split(":", 1)
-            name = find(database + "/items/" + item).get("name", item[:8]) + " · " + find(database + "/custom_fields/" + field).get("name", field[:8])
+        if table in VALUE_TABLES:
+            entity, field = uid.split(":", 1)
+            entity_table = "items" if table == "custom_values" else "spus"
+            name = find(database + "/" + entity_table + "/" + entity).get("name", entity[:8]) + \
+                " · " + find(database + "/custom_fields/" + field).get("name", field[:8])
         elif table == "movements":
             name = find(database + "/items/" + row.get("item_id", "")).get("name", "SKU") + " · 流水 " + str(row.get("_id", ""))
-        types = {"shops": "店铺", "spus": "SPU", "items": "SKU", "custom_fields": "字段", "custom_values": "字段值", "movements": "库存流水", "audit_log": "审计"}
+        types = {"shops": "店铺", "spus": "SPU", "items": "SKU", "custom_fields": "字段",
+                 "custom_values": "字段值", "spu_custom_values": "SPU 字段值",
+                 "movements": "库存流水", "audit_log": "审计"}
         return shop + " / " + types.get(table, table) + " / " + str(name or row.get("_id", uid[:8]))
 
     def details(self, identity, offset, limit):
@@ -331,7 +358,7 @@ class Merger:
         keys = sorted(set().union(*(set(v) for v in values)))
         def show(side, key):
             row = values[side].get(key)
-            if row and "/custom_values/" in key:
+            if row and any("/" + table + "/" in key for table in VALUE_TABLES):
                 field = self.models[side]["rows"].get(key.split("/")[0] + "/custom_fields/" + row["field_id"])
                 return self.value_display(row, field)
             return display(row)
@@ -372,6 +399,9 @@ class Merger:
                 parts.append(self.field_name(token["uid"]))
             elif token["kind"] == "system":
                 parts.append(SYSTEM_LABEL.get(token["key"], token["key"]))
+            elif token["kind"] == "aggregate":
+                inner = self.formula_text(formulas.dump(token["tokens"]))
+                parts.append("SUM(" + inner + ")")
             else:
                 parts.append(formulas.SYMBOL_TEXT[token["value"]])
         return " ".join(parts)
@@ -439,7 +469,8 @@ class Merger:
         for key, row in result.items():
             database, table, uid = key.split("/", 2)
             if table in ("shops", "custom_fields", "spus"):
-                groups[(database, table, "", row["name"])].append(key)
+                scope = row.get("target", "") if table == "custom_fields" else ""
+                groups[(database, table, scope, row["name"])].append(key)
         return groups
 
     def unique_names(self, result):
@@ -549,7 +580,7 @@ class Merger:
         for database, tables in by_database.items():
             mappings[database] = {}
             for table, rows in tables.items():
-                if table == "custom_values":
+                if table in VALUE_TABLES:
                     continue
                 high = max([r.get("_id", 0) for r in rows.values()] + [m["metas"].get(database, {}).get("sequences", {}).get(table, 0) for m in self.models])
                 allocated = set()

@@ -1,12 +1,12 @@
 """同步数据目录的店铺库版本检查与新库初始化。
 
-新版库使用持久同步标识，结构版本为 4；旧目录不自动迁移。
+新版库使用持久同步标识，结构版本为 5；旧目录不自动迁移。
 历史迁移函数保留供旧版本维护参考，当前入口只接受当前版本。
 """
 from . import schema
 
 # 当前店铺库结构版本；SHOP_DDL 建出的新库直接标记为该值
-CURRENT_VERSION = 4
+CURRENT_VERSION = 5
 
 # 可直接升级的最低版本：v0/v1/v2 属旧目录骨架库，不属于新同步数据目录，一律拒绝
 MIN_UPGRADABLE_VERSION = 3
@@ -97,4 +97,77 @@ def _v4_formula(conn) -> None:
         conn.execute("ALTER TABLE custom_fields ADD COLUMN formula_json TEXT")
 
 
-UPGRADES = {2: _v2_sku_seq, 4: _v4_formula}
+def _v5_targets(conn) -> None:
+    """v4 → v5：字段增加归属，并新建 SPU 值表。
+
+    重建 custom_fields 会触发 custom_values 的级联删除，因此先把值完整转存到临时表，
+    再拆除旧值表。各项 DDL/DML 都通过 execute 执行，保持 migrate_connection 已开启的事务。
+    """
+    seq_row = conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'custom_fields'").fetchone()
+    old_seq = seq_row[0] if seq_row else 0
+
+    conn.execute("DROP TABLE IF EXISTS temp.custom_values_backup")
+    conn.execute(
+        "CREATE TEMP TABLE custom_values_backup AS "
+        "SELECT item_id, field_id, value_int, value_text FROM custom_values")
+    conn.execute("DROP TABLE custom_values")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS custom_fields_v5 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sync_uid TEXT NOT NULL UNIQUE,
+          target TEXT NOT NULL DEFAULT 'sku' CHECK (target IN ('sku','spu')),
+          name TEXT NOT NULL,
+          type TEXT NOT NULL CHECK (type IN ('string','bool','int','decimal','percent')),
+          allow_negative INTEGER NOT NULL DEFAULT 0,
+          scale INTEGER NOT NULL DEFAULT 2,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          formula_json TEXT,
+          UNIQUE (target, name)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO custom_fields_v5
+          (id, sync_uid, target, name, type, allow_negative, scale, created_at, updated_at, formula_json)
+        SELECT id, sync_uid, 'sku', name, type, allow_negative, scale, created_at, updated_at, formula_json
+        FROM custom_fields
+    """)
+    conn.execute("DROP TABLE custom_fields")
+    conn.execute("ALTER TABLE custom_fields_v5 RENAME TO custom_fields")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS custom_values (
+          item_id INTEGER NOT NULL REFERENCES items(id),
+          field_id INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
+          value_int INTEGER,
+          value_text TEXT,
+          PRIMARY KEY (item_id, field_id)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO custom_values (item_id, field_id, value_int, value_text)
+        SELECT item_id, field_id, value_int, value_text FROM custom_values_backup
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_values_field ON custom_values(field_id)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS spu_custom_values (
+          spu_id INTEGER NOT NULL REFERENCES spus(id),
+          field_id INTEGER NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
+          value_int INTEGER,
+          value_text TEXT,
+          PRIMARY KEY (spu_id, field_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spu_values_field ON spu_custom_values(field_id)")
+    conn.execute("DROP TABLE temp.custom_values_backup")
+
+    # 已删除字段的最大编号也不能重新复用；显式写入历史 seq，而不是只依赖现存 MAX(id)。
+    conn.execute("DELETE FROM sqlite_sequence WHERE name = 'custom_fields'")
+    conn.execute(
+        "INSERT INTO sqlite_sequence(name, seq) VALUES ('custom_fields', ?)",
+        (old_seq,))
+
+
+UPGRADES = {2: _v2_sku_seq, 4: _v4_formula, 5: _v5_targets}

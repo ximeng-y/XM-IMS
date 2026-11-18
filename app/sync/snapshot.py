@@ -14,10 +14,11 @@ from .common import fail
 from ..storage.files import atomic_json, dump, read_json
 
 FORMAT = 1
-# 当前导出版本：索引库 1、店铺库 4（custom_fields 带 formula_json）
-VERSIONS = {"index": 1, "shop": 4}
-# 可读取的旧店铺库版本：v3 快照按已验证的旧结构重建后再升到 v4
-READABLE_VERSIONS = {"index": (1,), "shop": (3, 4)}
+# 当前导出版本：索引库 1、店铺库 5（字段按 SKU/SPU 归属，新增 SPU 值表）
+VERSIONS = {"index": 1, "shop": 5}
+# 旧店铺库按已验证结构重建后，统一走 migrate_connection 升到 v5
+READABLE_VERSIONS = {"index": (1,), "shop": (3, 4, 5)}
+VALUE_TABLES = {"custom_values", "spu_custom_values"}
 
 
 def quote(name):
@@ -70,7 +71,7 @@ def expected(kind):
 
 
 def _known_catalogs(kind):
-    """允许出现的 catalog 白名单：标准新建的 v4、已知 v3、以及 v3 执行本次 ALTER 的结果
+    """允许出现的 catalog 白名单：标准 v5/v4/v3，以及 v3 执行 ALTER 后的 v4。
 
     SQLite 会把 ADD COLUMN 后的建表语句按原文本重新保存，所以「v3 + ALTER」与
     「直接建 v4」的 SQL 文本不同。两者都是合法结构，不能只认其中一种，也不能
@@ -78,7 +79,8 @@ def _known_catalogs(kind):
     """
     if kind == "index":
         return [_template(schema.INDEX_DDL)]
-    return [_template(schema.SHOP_DDL), _template(schema.SHOP_DDL_V3),
+    return [_template(schema.SHOP_DDL), _template(schema.SHOP_DDL_V4),
+            _template(schema.SHOP_DDL_V3),
             _template(schema.SHOP_DDL_V3, alter=True)]
 
 
@@ -279,7 +281,7 @@ def validate_business(conn, kind):
              user_hint="请先在另一台设备上完成同步，再回到本机重新同步")
     tables = [o["name"] for o in catalog(conn) if o["type"] == "table"]
     for table in tables:
-        if table != "custom_values":
+        if table not in VALUE_TABLES:
             maximum = conn.execute(f"SELECT COALESCE(MAX(id),0) FROM {quote(table)}").fetchone()[0]
             sequence = conn.execute("SELECT seq FROM sqlite_sequence WHERE name=?", (table,)).fetchone()
             if maximum and (not sequence or sequence[0] < maximum):
@@ -292,8 +294,12 @@ def validate_business(conn, kind):
                          user_message="部分记录缺少有效的标识信息",
                          user_hint="请在另一台设备上完成同步后再回到本机重试")
     if kind == "shop":
-        for name, in conn.execute("SELECT name FROM custom_fields"):
-            if not name.strip() or name in RESERVED_NAMES:
+        for target, name in conn.execute("SELECT target, name FROM custom_fields"):
+            if target not in RESERVED_NAMES:
+                fail("FIELD_INVALID", "自定义字段归属无效",
+                     user_message="自定义字段的归属无法识别",
+                     user_hint="请在另一台设备上检查该字段后再同步")
+            if not name.strip() or name in RESERVED_NAMES[target]:
                 fail("FIELD_INVALID", "自定义字段名称为空或与系统字段冲突",
                      user_message="自定义字段的名称与系统字段重复",
                      user_hint="请在另一台设备上修改该字段名后再同步")
@@ -301,9 +307,16 @@ def validate_business(conn, kind):
             fail("NEGATIVE_STOCK", "候选结果包含负库存，请在库存复核中修正",
                  user_message="合并后的库存会出现负数",
                  user_hint="请在冲突处理中逐项确认最终库存，必要时追加调整流水")
-        for t, scale, negative, vi, vt in conn.execute(
-            "SELECT f.type,f.scale,f.allow_negative,v.value_int,v.value_text "
-            "FROM custom_values v JOIN custom_fields f ON f.id=v.field_id"):
+        for value_target, target, t, scale, negative, vi, vt in conn.execute(
+            "SELECT 'sku',f.target,f.type,f.scale,f.allow_negative,v.value_int,v.value_text "
+            "FROM custom_values v JOIN custom_fields f ON f.id=v.field_id "
+            "UNION ALL "
+            "SELECT 'spu',f.target,f.type,f.scale,f.allow_negative,v.value_int,v.value_text "
+            "FROM spu_custom_values v JOIN custom_fields f ON f.id=v.field_id"):
+            if target not in ("sku", "spu") or target != value_target:
+                fail("FIELD_INVALID", "字段归属无效",
+                     user_message="字段值与字段归属不匹配",
+                     user_hint="请在另一台设备上检查该字段后再同步")
             if not 0 <= scale <= 6:
                 fail("FIELD_INVALID", "字段精度无效",
                      user_message="字段的小数位数超出允许范围",
@@ -324,15 +337,18 @@ def _validate_formulas(conn) -> None:
     某个 SKU 缺值、动态除零或结果为负属于单元格状态，不是拒绝恢复整份快照的理由。
     """
     defs, parsed = [], {}
-    for uid, name, t, scale, negative, text in conn.execute(
-            "SELECT sync_uid,name,type,scale,allow_negative,formula_json FROM custom_fields"):
+    targets = {}
+    for uid, target, name, t, scale, negative, text in conn.execute(
+            "SELECT sync_uid,target,name,type,scale,allow_negative,formula_json "
+            "FROM custom_fields"):
         if not 0 <= scale <= 6:
             fail("FIELD_INVALID", "字段精度无效",
                  user_message="字段的小数位数超出允许范围",
                  user_hint="请在另一台设备上调整该字段的小数位后再同步")
-        row = {"uid": uid, "name": name, "type": t, "scale": scale,
+        row = {"uid": uid, "target": target, "name": name, "type": t, "scale": scale,
                "allow_negative": bool(negative), "formula": None}
         defs.append(row)
+        targets[uid] = target
         if text is None:
             continue
         if t not in formulas.RESULT_TYPES:
@@ -350,9 +366,9 @@ def _validate_formulas(conn) -> None:
             fail(exc.code, exc.message, exc.hint,
                  user_message=exc.user_message, user_hint=exc.user_hint)
     by_uid = {d["uid"]: d for d in defs}
-    for parsed_field in parsed.values():
+    for uid, parsed_field in parsed.items():
         try:
-            formulas.check_refs(parsed_field, by_uid)
+            formulas.check_refs(parsed_field, by_uid, targets[uid])
         except ApiError as exc:
             fail(exc.code, exc.message, exc.hint,
                  user_message=exc.user_message, user_hint=exc.user_hint)
@@ -363,8 +379,11 @@ def _validate_formulas(conn) -> None:
              "请调整公式引用关系后再应用",
              user_message="合并后公式之间出现了循环引用：" + formulas.cycle_text(cycle, names),
              user_hint="请调整公式引用的字段后再应用")
-    if conn.execute("SELECT 1 FROM custom_values v JOIN custom_fields f ON f.id=v.field_id "
-                    "WHERE f.formula_json IS NOT NULL LIMIT 1").fetchone():
+    if conn.execute(
+            "SELECT 1 FROM custom_values v JOIN custom_fields f ON f.id=v.field_id "
+            "WHERE f.formula_json IS NOT NULL LIMIT 1").fetchone() or conn.execute(
+            "SELECT 1 FROM spu_custom_values v JOIN custom_fields f ON f.id=v.field_id "
+            "WHERE f.formula_json IS NOT NULL LIMIT 1").fetchone():
         fail("FIELD_INVALID", "计算字段不应有落库值",
              user_message="计算字段的数据状态异常",
              user_hint="请在另一台设备上重新保存该字段的公式后再同步")

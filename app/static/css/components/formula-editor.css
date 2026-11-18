@@ -86,6 +86,18 @@ dialog.dlg-formula:has(> .dlg-body > .dlg-form-wide) [data-fd-editor] {
   background: #fff;
   line-height: 1.5;
 }
+.fx-tok-edit {
+  width: auto;
+  margin: .12rem 0 0 .3rem;
+  padding: 0;
+  font-size: .72rem;
+  line-height: 1.4;
+  color: var(--blue);
+  background: transparent;
+  border: 0;
+  text-decoration: underline;
+}
+.fx-tok-edit:hover { color: var(--blue-dark); background: transparent; }
 .fx-tok-x {
   position: absolute;
   top: -.5rem; right: -.5rem;

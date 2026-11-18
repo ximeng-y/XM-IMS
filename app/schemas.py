@@ -31,7 +31,8 @@ class FormulaFieldRef(BaseModel):
 
 class FormulaSystemRef(BaseModel):
     kind: Literal["system"]
-    key: Literal["qty"] = Field(description="数值型系统字段：qty 库存数量（SPU ID 是编号，不可参与计算）")
+    key: Literal["qty", "total_qty", "sku_count"] = Field(
+        description="数值型系统字段：qty 库存数量；SPU 外层可用 total_qty 合计库存、sku_count SKU 数")
 
 
 class FormulaSymbol(BaseModel):
@@ -39,12 +40,25 @@ class FormulaSymbol(BaseModel):
     value: Literal["+", "-", "*", "/", "(", ")"] = Field(description="运算符或括号")
 
 
-FormulaToken = Annotated[Union[FormulaNumber, FormulaFieldRef, FormulaSystemRef, FormulaSymbol],
-                         Field(discriminator="kind")]
+FormulaSimpleToken = Annotated[
+    Union[FormulaNumber, FormulaFieldRef, FormulaSystemRef, FormulaSymbol],
+    Field(discriminator="kind")]
+
+
+class FormulaAggregate(BaseModel):
+    kind: Literal["aggregate"]
+    op: Literal["sum"] = Field(description="聚合运算；当前仅支持对子 SKU 的表达式求和")
+    tokens: list[FormulaSimpleToken] = Field(description="聚合内部的子 SKU 表达式")
+
+
+FormulaToken = Annotated[
+    Union[FormulaNumber, FormulaFieldRef, FormulaSystemRef, FormulaSymbol, FormulaAggregate],
+    Field(discriminator="kind")]
 
 
 class Formula(BaseModel):
-    version: int = Field(default=1, description="公式结构版本，当前为 1")
+    version: Literal[1, 2] = Field(default=1,
+                                  description="公式结构版本：普通公式为 1，包含对子 SKU 求和为 2")
     tokens: list[FormulaToken] = Field(description=FORMULA_DESC)
 
 
@@ -79,9 +93,19 @@ class ShopRename(BaseModel):
 
 class SpuCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200, description="SPU（商品）名称，同一店铺内唯一")
+    values: dict[str, Any] = Field(default_factory=dict,
+                                   description="SPU 的自定义普通属性值，按属性名传入")
+
+
+class SpuPatch(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200,
+                                description="SPU 新名称；省略表示不改名")
+    values: Optional[dict[str, Any]] = Field(default=None,
+                                             description="待修改的 SPU 自定义属性值；某属性传 null 表示清除")
 
 
 class FieldCreate(BaseModel):
+    target: Literal["sku", "spu"] = Field(default="sku", description="属性归属：sku 单品或 spu")
     name: str = Field(min_length=1, max_length=50, description="字段显示名，不得与系统字段重名")
     type: str = Field(description="string | bool | int | decimal | percent；带 formula 时为结果类型（int/decimal/percent）")
     allow_negative: bool = Field(default=False, description="是否允许负数，仅数值类（int/decimal/percent）有效")
@@ -203,10 +227,21 @@ class ShopDeleteOut(BaseModel):
     idempotent_replay: bool
 
 
+class CalculationOut(BaseModel):
+    display: Optional[str] = Field(default=None,
+                                   description="后端格式化的结果文本（保留显示位数与百分号）；失败为 null")
+    error: Optional[dict[str, Any]] = Field(default=None,
+                                            description="单元格错误 {code, message, hint?}；成功为 null")
+
+
 class SpuOut(BaseModel):
     id: int
     name: str
     sku_count: int
+    values: dict[str, Any] = Field(default_factory=dict,
+                                   description="SPU 自定义属性值；计算字段成功时为结果数值，失败为 null")
+    calculations: dict[str, CalculationOut] = Field(default_factory=dict,
+                                                    description="SPU 计算字段的结果与错误，按字段名索引")
     created_at: str
     updated_at: str
 
@@ -225,6 +260,7 @@ class SpuList(BaseModel):
 
 class FieldOut(BaseModel):
     system: bool = Field(default=False, description="是否系统字段")
+    target: Literal["sku", "spu"] = Field(default="sku", description="属性归属")
     key: Optional[str] = Field(default=None, description="系统字段标识（系统字段专用）")
     id: Optional[int] = Field(default=None, description="字段 ID（自定义字段专用；dry_run 预览为空）")
     uid: Optional[str] = Field(default=None, description="字段稳定标识 sync_uid（公式引用与同步用）")
@@ -243,13 +279,6 @@ class FieldWriteOut(FieldOut):
 
 class FieldList(BaseModel):
     fields: list[FieldOut]
-
-
-class CalculationOut(BaseModel):
-    display: Optional[str] = Field(default=None,
-                                   description="后端格式化的结果文本（保留显示位数与百分号）；失败为 null")
-    error: Optional[dict[str, Any]] = Field(default=None,
-                                            description="单元格错误 {code, message, hint?}；成功为 null")
 
 
 class ItemOut(BaseModel):

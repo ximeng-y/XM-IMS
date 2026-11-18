@@ -12,6 +12,7 @@ import { ViewSettings } from "xm/runtime/view-settings";
 const LIMIT = 50;
 let offset = 0;
 let fieldsMeta = [];   // 自定义字段定义
+let spuFieldsMeta = []; // SPU 属性定义，仅快捷新建 SPU 时使用
 let spusList = [];     // SPU 列表（与新建单品小窗内的组合框共享引用）
 let rows = null;       // 最近一次取回的列表；null 表示还没拿到数据
 let errorText = "";    // 加载失败的文案
@@ -41,8 +42,13 @@ const settings = ViewSettings.create({
 
 // ---------- 数据加载 ----------
 async function loadMeta() {
-  const [fields, spus] = await Promise.all([XM.get("/fields"), XM.get("/spus")]);
+  const [fields, spuFields, spus] = await Promise.all([
+    XM.get("/fields?target=sku"),
+    XM.get("/fields?target=spu"),
+    XM.get("/spus"),
+  ]);
   fieldsMeta = fields.fields.filter((f) => !f.system);
+  spuFieldsMeta = spuFields.fields.filter((f) => !f.system);
   spusList = spus.spus;
 }
 
@@ -175,6 +181,7 @@ function applySpus(next) {
 function openCreateDialog() {
   ItemForm.openCreateItem({
     fields: fieldsMeta,
+    spuFields: spuFieldsMeta,
     spus: spusList,
     onCreated: () => { offset = 0; loadItems(); },
     onSpuCreated: () => fillSpuSelects(),

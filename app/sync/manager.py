@@ -157,7 +157,7 @@ class SyncManager:
     def upgrade_active_shops(self):
         """内部访问阶段把当前代次的店铺库升到当前结构版本
 
-        必须在开放业务之前完成：升级后的店铺库才与 v4 快照一致，否则首次捕获会因
+        必须在开放业务之前完成：升级后的店铺库才与 v5 快照一致，否则首次捕获会因
         版本不匹配而失败，业务接口也会读到未迁移的结构。
         """
         index = db.index_db()
@@ -1189,7 +1189,7 @@ class SyncManager:
         self.captured_epoch = db.epoch()
         self.save()
         if upgraded:
-            # 恢复来源含 v3 店铺库，实际运行库已升到 v4：不能再把它当成与旧快照相同
+            # 恢复来源含旧版店铺库，实际运行库已升到 v5：不能再把它当成与旧快照相同
             self.invalidate_capture_cache()
 
     def _activate_generation(self, target, dataset):

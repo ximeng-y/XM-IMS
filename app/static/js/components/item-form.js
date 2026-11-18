@@ -9,139 +9,33 @@
 import { XM } from "xm/api";
 import { UI, $ } from "xm/ui";
 import { ItemInfo } from "xm/components/item-info";
+import { AttributeValuesForm } from "xm/components/attribute-values-form";
+import { SpuForm } from "xm/components/spu-form";
 
 const ItemForm = (() => {
   const esc = UI.esc;
+  const {
+    isComputed, calcHtml, computedRowHtml, fieldInputHtml, readFieldInput,
+    gridHtml, collectChanges,
+  } = AttributeValuesForm;
 
-  const isComputed = (f) => !!(f && f.computed);
-
-  // 计算结果的只读呈现统一由 item-info 提供（同名提醒与库存操作弹窗共用一套规则），
-  // 这里保留原有公开出口，页面与编辑小窗的调用方式不变
-  const calcHtml = ItemInfo.calcHtml;
-  const computedRowHtml = ItemInfo.computedRowHtml;
-
-  // ---------- 自定义字段值输入控件 ----------
-  function fieldInputHtml(f, value, { withClear = false } = {}) {
-    const name = esc(f.name);
-    let input;
-    if (f.type === "string") {
-      input = `<input data-fld="${name}" type="text" value="${esc(value ?? "")}" autocomplete="off">`;
-    } else if (f.type === "bool") {
-      const v = value === true ? "yes" : value === false ? "no" : "";
-      input = `<select data-fld="${name}">
-        <option value="" ${v === "" ? "selected" : ""}>（不设置）</option>
-        <option value="yes" ${v === "yes" ? "selected" : ""}>是</option>
-        <option value="no" ${v === "no" ? "selected" : ""}>否</option>
-      </select>`;
-    } else if (f.type === "int") {
-      input = `<input data-fld="${name}" type="number" step="1" ${f.allow_negative ? "" : 'min="0"'} value="${value ?? ""}">`;
-    } else if (f.type === "decimal") {
-      const step = Math.pow(10, -f.scale);
-      input = `<input data-fld="${name}" type="number" step="${step}" ${f.allow_negative ? "" : 'min="0"'} value="${value ?? ""}">`;
-    } else { // percent：显示语义为百分数（25 = 25%）
-      input = `<input data-fld="${name}" type="number" step="0.01" ${f.allow_negative ? "" : 'min="0"'} value="${value ?? ""}">`;
-    }
-    const typeHint = f.type === "percent" ? "（百分数，如 25）" :
-                     f.type === "decimal" ? `（${f.scale} 位小数）` : "";
-    const clear = withClear
-      ? `<span class="form-check" style="padding:0"><input type="checkbox" data-clear="${name}"><label style="margin:0;font-size:.78rem">清除</label></span>`
-      : "";
-    return `<div>
-      <label>${name}${typeHint ? ` <span class="muted" style="font-size:.75rem">${typeHint}</span>` : ""}</label>
-      <div style="display:flex;gap:.5rem;align-items:center">${input}${clear}</div>
-    </div>`;
-  }
-
-  // 从输入控件读值：返回 JS 值；空返回 undefined（表示不提交）
-  function readFieldInput(f, el) {
-    const raw = el.value.trim();
-    if (raw === "") return undefined;
-    if (f.type === "bool") return el.value === "yes";
-    if (f.type === "string") return raw;
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return null; // 交由后端校验报错，验证 422/400 结构
-    return n;
-  }
-
-  // 新建表单的字段值区：只渲染可手填字段，计算字段不出现（没有可填的值）
   function fieldsGridHtml(fields) {
-    const plain = fields.filter((f) => !isComputed(f));
-    return plain.length
-      ? plain.map((f) => fieldInputHtml(f, undefined)).join("")
-      : `<div class="hint">该店铺还没有可填写的自定义属性；可先到「自定义属性」页创建（如：成本 / 售价）</div>`;
+    return gridHtml(fields, {}, {
+      emptyText: "该店铺还没有可填写的自定义属性；可先到「自定义属性」页创建",
+    });
   }
 
-  // ---------- 新建 SPU 小窗 ----------
-  // 成功返回 SPU 对象；未提交就关闭（取消 / Esc）返回 null。
-  // 提交失败时保留窗口与输入，用户可修正后重试，不把 Promise 结算成失败。
-  // 请求进行中关闭窗口不撤销已发出的写入：仍等待结果，成功照常提示并返回 SPU 对象
-  // （调用方据此刷新），失败返回 null，也不重新打开已关闭的窗口。
-  function openCreateSpu({ initialName = "" } = {}) {
-    return new Promise((resolve) => {
-      const wrap = document.createElement("div");
-      wrap.className = "dlg-form";
-      wrap.innerHTML = `
-        <label for="spuNewName">SPU 名称 <span class="fieldreq">*</span></label>
-        <input id="spuNewName" maxlength="200" placeholder="如：纯棉 T 恤" autocomplete="off">
-        <div class="hint">SPU 名称在当前店铺内唯一。创建单品时填写已有 SPU 名称，会直接使用该 SPU。</div>
-        <div data-result></div>`;
-      const { dlg, foot } = UI.baseDialog("新建 SPU", wrap);
-      const input = wrap.querySelector("#spuNewName");
-      const resultBox = wrap.querySelector("[data-result]");
-      input.value = initialName;
-
-      let closed = false;   // 用户已关闭窗口（取消 / Esc）
-      let inFlight = false; // 请求已发出且尚未结算
-      let resolved = false;
-      const finish = (v) => { if (!resolved) { resolved = true; resolve(v); } };
-      // 关闭时若没有在途请求，本次创建就此作废；有在途请求则等它结算
-      const finishIfIdle = () => { if (closed && !inFlight) finish(null); };
-      dlg.addEventListener("close", () => { closed = true; dlg.remove(); finishIfIdle(); });
-
-      const cancel = UI.mkBtn("取消", "btn-outline"), submit = UI.mkBtn("创建");
-      cancel.type = submit.type = "button";
-      foot.append(cancel, submit);
-      cancel.onclick = () => { dlg.close(); };
-
-      const doSubmit = () => UI.withBusy(submit, async () => {
-        if (closed) return;
-        const name = input.value.trim();
-        if (!name) { UI.fail("请填写 SPU 名称"); input.focus(); return; }
-        inFlight = true;
-        resultBox.innerHTML = "";
-        let spu;
-        try {
-          spu = await XM.post("/spus", { name });
-        } catch (e) {
-          inFlight = false;
-          if (closed) { finish(null); return; }
-          resultBox.innerHTML = UI.apiFailHtml(e);
-          return;
-        }
-        inFlight = false;
-        // 先结算成功对象再关闭：关闭回调只负责清理，不会把结果覆盖成 null
-        finish(spu);
-        dlg.close();
-        UI.ok(`SPU「${spu.name}」已创建（#${spu.id}）`);
-      });
-      submit.onclick = doSubmit;
-      // 名称框内回车提交当前 SPU 表单；外层单品表单不在本弹窗内，不会被一并提交
-      input.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        doSubmit();
-      });
-
-      dlg.showModal();
-      setTimeout(() => { input.focus(); if (input.value) input.select(); }, 50);
-    });
+  function openCreateSpu({ initialName = "", fields = [] } = {}) {
+    return SpuForm.openCreate({ initialName, fields });
   }
 
   // ---------- SPU 可搜索组合框 ----------
   // 在容器内构建「输入框 + 下拉」；提供选择、名称匹配与销毁方法。
   // 列表是组件自己的副本：新增 SPU 只改本地列表，再用 onSpusChanged(最新完整列表) 通知调用方
   // initialId 非空时预选该 SPU（库存页右键 SPU 行「在此 SPU 下新建单品」用）
-  function buildSpuCombo(initialSpus, { onSpuCreated, onSpusChanged, initialId = null } = {}) {
+  function buildSpuCombo(initialSpus, {
+    spuFields = [], onSpuCreated, onSpusChanged, initialId = null,
+  } = {}) {
     let spus = initialSpus.slice();
     const notify = () => { if (onSpusChanged) onSpusChanged(spus.slice()); };
     const wrap = document.createElement("div");
@@ -185,7 +79,9 @@ const ItemForm = (() => {
 
     // 快捷新建 SPU：小窗内创建后立即选中，不离开当前页
     async function newSpuDialog() {
-      const spu = await openCreateSpu({ initialName: input.value.trim() });
+      const spu = await openCreateSpu({
+        initialName: input.value.trim(), fields: spuFields,
+      });
       if (!spu) return;
       spus = spus.concat([spu]);
       if (onSpuCreated) onSpuCreated(spu);
@@ -235,7 +131,6 @@ const ItemForm = (() => {
   // onSaved(updated)：保存成功后回调；onSpuCreated()：需要刷新调用方 SPU 列表时回调
   // onSpusChanged(nextSpus)：换挂到新名称的 SPU 后，交回最新完整列表（仅字符串 SPU 会新建）
   function openEditItem({ item, fields = [], spus = [], onSaved, onSpuCreated, onSpusChanged } = {}) {
-    const valStr = (v) => v === true ? "yes" : v === false ? "no" : (v ?? "");
     const wrap = document.createElement("div");
     wrap.innerHTML = `
       <div class="form-grid" style="grid-template-columns:1fr 1fr">
@@ -290,24 +185,9 @@ const ItemForm = (() => {
         if (!sn) { UI.fail("请填写 SPU 名称"); return; }
         body.spu_name = sn;
       }
-      const values = {};
-      let bad = false;
-      fields.filter((f) => !isComputed(f)).forEach((f) => {
-        const el = wrap.querySelector(`[data-fld="${CSS.escape(f.name)}"]`);
-        const clearEl = wrap.querySelector(`[data-clear="${CSS.escape(f.name)}"]`);
-        if (clearEl && clearEl.checked) { values[f.name] = null; return; }
-        const orig = item.values[f.name];
-        const origStr = f.type === "bool" ? (valStr(orig) || "") : String(orig ?? "");
-        const v = readFieldInput(f, el);
-        // 开关改为“不设置”时清空已有值，原本未设置则保持不提交。
-        if (f.type === "bool" && v === undefined) {
-          if (typeof orig === "boolean") values[f.name] = null;
-          return;
-        }
-        if (v === null) { bad = true; return; }
-        if (v !== undefined && el.value.trim() !== origStr) values[f.name] = v;
-      });
-      if (bad) { UI.fail("属性值格式不正确"); return; }
+      const collected = collectChanges(fields, wrap, item.values || {});
+      const values = collected.values;
+      if (collected.bad) { UI.fail("属性值格式不正确"); return; }
       if (Object.keys(values).length) body.values = values;
       if (!Object.keys(body).length) { UI.toast("没有任何修改"); dlg.close(); return; }
       try {
@@ -336,7 +216,8 @@ const ItemForm = (() => {
   // fields：自定义字段定义数组；spus：调用方的 SPU 数组（只读，组件内部持有副本）
   // onCreated(item)：创建成功后回调；onSpuCreated(spu)：快捷新建或单品创建后刷新 SPU 时回调
   // onSpusChanged(nextSpus)：列表有变化时交回最新完整列表，由调用方替换自己的数组
-  function openCreateItem({ fields = [], spus = [], onCreated, onSpuCreated, onSpusChanged,
+  function openCreateItem({ fields = [], spuFields = [], spus = [],
+                            onCreated, onSpuCreated, onSpusChanged,
                             onEditExisting, initialSpuId = null } = {}) {
     const wrap = document.createElement("div");
     wrap.className = "dlg-form dlg-form-wide";
@@ -367,6 +248,7 @@ const ItemForm = (() => {
     const resultBox = wrap.querySelector("[data-result]");
     valueGrid.innerHTML = fieldsGridHtml(fields);
     const combo = buildSpuCombo(spus, {
+      spuFields,
       onSpuCreated,
       onSpusChanged: (next) => { spus = next; if (onSpusChanged) onSpusChanged(next); },
       initialId: initialSpuId,
@@ -511,14 +393,9 @@ const ItemForm = (() => {
         if (!Number.isInteger(q) || q < 0) { UI.fail("初始库存必须是不小于 0 的整数"); return; }
         body.qty = q;
       }
-      let bad = false;
-      UI.$$("[data-fld]", valueGrid).forEach((el) => {
-        const f = fields.find((x) => x.name === el.dataset.fld);
-        const v = readFieldInput(f, el);
-        if (v === null) bad = true;
-        else if (v !== undefined) body.values[f.name] = v;
-      });
-      if (bad) { UI.fail("属性值格式不正确"); return; }
+      const collected = collectChanges(fields, valueGrid);
+      if (collected.bad) { UI.fail("属性值格式不正确"); return; }
+      body.values = collected.values;
       const spu = await resolveSpu();
       if (!spu || done) return;
       if (spu.id !== undefined) {
